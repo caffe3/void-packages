@@ -1,0 +1,40 @@
+# Template file for 'libfev'
+pkgname=libfev
+version=0.1.0
+revision=1
+_commit="c2c674ebe7d8fa2f718ac3b92e303da9a93c4106"
+wrksrc="libfev-${_commit}"
+build_style=cmake
+configure_args="-DBUILD_SHARED_LIBS=ON -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON"
+hostmakedepends="cmake"
+short_desc="A library for events and fibers"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="Apache-2.0, MIT"
+homepage="https://github.com/patrykstefanski/libfev"
+distfiles="${homepage}/archive/${_commit}.tar.gz"
+checksum=01307c33aa5d05f5ee447e3fbb4c745075a0aa7e31693afdbb14591ff383f5be
+
+pre_configure() {
+    local CMAKE_VERSION=$(LC_ALL=C cmake --version | awk 'n++<1 {print $3}')
+    sed -i "s/\(cmake_minimum_required(VERSION\).*/\1 $CMAKE_VERSION)/" CMakeLists.txt
+}
+
+post_install() {
+    vlicense LICENSE-MIT
+    vlicense LICENSE-APACHE
+}
+
+libfev_package() {
+	short_desc+=" - shared library"
+	pkg_install() {
+		vmove "usr/lib/*.so.*"
+	}
+}
+libfev-devel_package() {
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/share/pkgconfig
+		vmove "usr/lib/*.so"
+	}
+}
