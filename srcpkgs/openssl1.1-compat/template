@@ -1,39 +1,29 @@
-# Template file for 'openssl'
-pkgname=openssl
-version=3.0.8
+# Template file for 'openssl1.1-compat'
+pkgname=openssl1.1-compat
+version=1.1.1t
 revision=1
-bootstrap=yes
 build_style=configure
 configure_script="./Configure"
-configure_args="--prefix=/usr --openssldir=/etc/ssl --libdir=lib
+configure_args="--prefix=/usr --openssldir=/etc/ssl1.1 --libdir=lib
  shared no-ssl3-method $(vopt_if asm ' ' 'no-asm')
  -Wa,--noexecstack"
 make_cmd=make
 make_build_args='MAKEDEPPROG="$(CC)'
 make_check_target=test
 make_install_args="MANSUFFIX=ssl"
-short_desc="Toolkit for Secure Sockets Layer and Transport Layer Security"
+hostmakedepends="perl"
+short_desc="Toolkit for Transport Layer Security (version 1.1)"
 maintainer="John <me@johnnynator.dev>"
-license="Apache-2.0"
+license="OpenSSL"
 homepage="https://www.openssl.org"
 distfiles="https://www.openssl.org/source/openssl-${version}.tar.gz"
-checksum=6c13d2bf38fdf31eac3ce2a347073673f5d63263398f1f69d0df4a41253e4b3e
-conf_files="/etc/ssl/openssl.cnf"
+checksum=8dee9b24bdb1dcbf0c3d1e9b02fb8f6bf22165e807f45adeb7c9677536859d3b
+conf_files="/etc/ssl1.1/openssl.cnf"
 replaces="libressl>=0"
+conflicts="openssl>=3.0.8"
 
 build_options=asm
-
-if [ "$CHROOT_READY" ]; then
-	hostmakedepends="perl"
-	build_options_default="asm"
-else
-	# openssl-c_rehash depends on perl, ignore on bootstrap
-	subpackages="libcrypto3.0 libssl3.0 openssl-devel"
-fi
-
-if [ "$XBPS_TARGET_NO_ATOMIC8" ]; then
-	makedepends+=" libatomic-devel"
-fi
+build_options_default="asm"
 
 case $XBPS_TARGET_MACHINE in
 	x86_64*) configure_args+=" enable-ec_nistp_64_gcc_128 linux-x86_64";;
@@ -57,37 +47,28 @@ pre_build() {
 }
 
 post_install() {
-	if [ ! "$CHROOT_READY" ]; then
-		rm -f "${DESTDIR}/usr/bin/c_rehash"
-	fi
+	rm -f "${DESTDIR}/usr/bin/c_rehash"
 }
 
-libcrypto3.0_package() {
+libcrypto1.1_package() {
 	short_desc+=" - crypto library"
 	pkg_install() {
 		vmove "usr/lib/libcrypto.so.*"
-		vmove usr/lib/engines-3
+		vmove usr/lib/engines-1.1
 	}
 }
 
-libssl3.0_package() {
+libssl1.1_package() {
 	short_desc+=" - SSL/TLS library"
 	pkg_install() {
 		vmove "usr/lib/libssl.so.*"
 	}
 }
 
-openssl-c_rehash_package() {
-	short_desc+=" - c_rehash utility"
-	depends="openssl perl"
-	pkg_install() {
-		vmove usr/bin/c_rehash
-	}
-}
-
-openssl-devel_package() {
-	depends="${sourcepkg}>=${version}_${revision} libssl3.0>=${version}_${revision} libcrypto3.0>=${version}_${revision}"
+openssl1.1-devel_package() {
+	depends="libssl1.1>=${version}_${revision} libcrypto1.1>=${version}_${revision}"
 	replaces="libressl-devel>=0"
+	conflicts="openssl-devel>=3.0.8"
 	short_desc+=" - development files"
 	pkg_install() {
 		vmove usr/share/man/man3
