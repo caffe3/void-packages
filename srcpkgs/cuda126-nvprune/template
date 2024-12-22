@@ -1,0 +1,30 @@
+# Template file for cuda126-nvprune
+_pkgname=cuda-nvprune-12-6
+_version=12.6.77-1
+_arch=amd64
+pkgname=cuda126-nvprune
+version=12.6.77
+revision=1
+archs="x86_64"
+build_style=fetch
+hostmakedepends="dpkg binutils xz"
+short_desc="CUDA nvprune prunes host objects and libraries to only contain device code for the specified targets"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+distfiles="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/./${_pkgname}_${_version}_${_arch}.deb"
+checksum=264e0d33859e03a7d1081125c97380d8795616ced56594e86fe1d46debbc9c7f
+repository=nonfree
+nopie=yes
+nostrip=yes
+
+do_extract() {
+  ar x ${XBPS_SRCDISTDIR}/${pkgname}-${version}/${_pkgname}_${_version}_${_arch}.deb
+}
+
+do_install() {
+  bsdtar -C ${DESTDIR} -s '#/usr/local#/opt#' -xf data.tar.*
+  vlicense ${DESTDIR}/usr/share/doc/cuda-nvprune-12-6/copyright LICENSE
+  rm ${DESTDIR}/usr/share/doc/cuda-nvprune-12-6/copyright
+  rm -f ${DESTDIR}/usr/share/doc/${_pkgname}/changelog.Debian.gz
+}

@@ -1,0 +1,31 @@
+# Template file for cuda126-nvcc
+_pkgname=cuda-nvcc-12-6
+_version=12.6.85-1
+_arch=amd64
+pkgname=cuda126-nvcc
+version=12.6.85
+revision=1
+archs="x86_64"
+build_style=fetch
+hostmakedepends="dpkg binutils xz"
+depends="cuda126-crt>=${version}_${revision} cuda126-cudart-devel cuda126-nvvm>=${version}_${revision} gcc>=12 gcc<14"
+short_desc="Compiler for CUDA applications"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+distfiles="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/./${_pkgname}_${_version}_${_arch}.deb"
+checksum=a2e6f3d3709cf5ba4340282e1317518d17b406d536d4101519f463ab20d95385
+repository=nonfree
+nopie=yes
+nostrip=yes
+
+do_extract() {
+  ar x ${XBPS_SRCDISTDIR}/${pkgname}-${version}/${_pkgname}_${_version}_${_arch}.deb
+}
+
+do_install() {
+  bsdtar -C ${DESTDIR} -s '#/usr/local#/opt#' -xf data.tar.*
+  vlicense ${DESTDIR}/usr/share/doc/cuda-nvcc-12-6/copyright LICENSE
+  rm ${DESTDIR}/usr/share/doc/cuda-nvcc-12-6/copyright
+  rm -f ${DESTDIR}/usr/share/doc/${_pkgname}/changelog.Debian.gz
+}
