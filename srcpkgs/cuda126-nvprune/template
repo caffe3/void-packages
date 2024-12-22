@@ -4,8 +4,8 @@ _version=12.6.77-1
 _arch=amd64
 pkgname=cuda126-nvprune
 version=12.6.77
-revision=1
-archs="x86_64"
+revision=2
+archs="x86_64*"
 build_style=fetch
 hostmakedepends="dpkg binutils xz"
 short_desc="CUDA nvprune prunes host objects and libraries to only contain device code for the specified targets"
@@ -17,6 +17,11 @@ checksum=264e0d33859e03a7d1081125c97380d8795616ced56594e86fe1d46debbc9c7f
 repository=nonfree
 nopie=yes
 nostrip=yes
+
+case "$XBPS_TARGET_MACHINE" in
+	# the downloaded toolchains use glibc, this allows them to work on musl
+	*-musl) depends+=" gcompat" ;;
+esac
 
 do_extract() {
   ar x ${XBPS_SRCDISTDIR}/${pkgname}-${version}/${_pkgname}_${_version}_${_arch}.deb

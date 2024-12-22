@@ -1,7 +1,7 @@
 # Template file for cuda126-toolkit-config-common
 pkgname=cuda126-toolkit-config-common
 version=12.6.77
-revision=1
+revision=2
 archs="*"
 build_style=meta
 short_desc="Common config package for CUDA Toolkit 12"

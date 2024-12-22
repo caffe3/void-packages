@@ -4,8 +4,8 @@ _version=12.6.85-1
 _arch=amd64
 pkgname=cuda126-crt
 version=12.6.85
-revision=1
-archs="x86_64"
+revision=2
+archs="x86_64*"
 build_style=fetch
 hostmakedepends="dpkg binutils xz"
 depends="cuda126-cudart-devel gcc>=12 gcc<14"
