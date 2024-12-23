@@ -4,10 +4,11 @@ _version=12.6.77-1
 _arch=amd64
 pkgname=cuda126-cuxxfilt
 version=12.6.77
-revision=2
+revision=3
 archs="x86_64*"
 build_style=fetch
 hostmakedepends="dpkg binutils xz"
+depends="cuda126-toolkit-config-common"
 short_desc="cu++filt decodes (demangles) low-level identifiers that have been mangled by CUDA C++ into user readable names"
 maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
 license="custom:NVIDIA Proprietary"
@@ -29,6 +30,8 @@ do_extract() {
 
 do_install() {
   bsdtar -C ${DESTDIR} -s '#/usr/local#/opt#' -xf data.tar.*
+  rm -f ${DESTDIR}/opt/cuda-12.6/include
+  rm -f ${DESTDIR}/opt/cuda-12.6/lib64
   vlicense ${DESTDIR}/usr/share/doc/cuda-cuxxfilt-12-6/copyright LICENSE
   rm ${DESTDIR}/usr/share/doc/cuda-cuxxfilt-12-6/copyright
   rm -f ${DESTDIR}/usr/share/doc/${_pkgname}/changelog.Debian.gz

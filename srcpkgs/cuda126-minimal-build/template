@@ -1,7 +1,7 @@
 # Template file for cuda126-minimal-build
 pkgname=cuda126-minimal-build
 version=12.6.3
-revision=2
+revision=3
 archs="x86_64*"
 build_style=meta
 depends="cuda126-cccl>=12.6.77 cuda126-compiler>=12.6.3 cuda126-cudart-devel>=12.6.77 cuda126-profiler-api>=12.6.77"
