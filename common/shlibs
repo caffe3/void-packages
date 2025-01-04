@@ -4549,3 +4549,5 @@ libnvJitLink.so.12 libnvjitlink126-12.6.85_1
 libnvJitLink.so libnvjitlink126-12.6.85_1
 libcudart.so.12 cuda126-cudart-12.6.77_1
 libcudart.so cuda126-cudart-12.6.77_1
+libcublas.so.12 libcublas126-12.6.4.1_1
+libcublas.so libcublas126-12.6.4.1_1
