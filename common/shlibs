@@ -4545,3 +4545,7 @@ libflashrom.so.1 flashrom-1.4.0_1
 libpyside6.so.6.7 libpyside6-6.7.2_1
 libpyside6qml.so.6.7 libpyside6-6.7.2_1
 libshiboken6.so.6.7 libshiboken6-6.7.2_1
+libnvJitLink.so.12 libnvjitlink126-12.6.85_1
+libnvJitLink.so libnvjitlink126-12.6.85_1
+libcudart.so.12 cuda126-cudart-12.6.77_1
+libcudart.so cuda126-cudart-12.6.77_1
