@@ -4551,3 +4551,5 @@ libcudart.so.12 cuda126-cudart-12.6.77_1
 libcudart.so cuda126-cudart-12.6.77_1
 libcublas.so.12 libcublas126-12.6.4.1_1
 libcublas.so libcublas126-12.6.4.1_1
+libcusparse.so.12 libcusparse126-12.6.4.2_1
+libcusparse.so libcusparse126-12.6.4.2_1
