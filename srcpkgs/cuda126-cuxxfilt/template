@@ -1,0 +1,38 @@
+# Template file for cuda126-cuxxfilt
+_pkgname=cuda-cuxxfilt-12-6
+_version=12.6.77-1
+_arch=amd64
+pkgname=cuda126-cuxxfilt
+version=12.6.77
+revision=1
+archs="x86_64*"
+build_style=fetch
+hostmakedepends="dpkg binutils xz"
+depends="cuda126-toolkit-config-common"
+short_desc="cu++filt decodes (demangles) low-level identifiers that have been mangled by CUDA C++ into user readable names"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+distfiles="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/./${_pkgname}_${_version}_${_arch}.deb"
+checksum=d2b3d821f9fdeb844456a456fc117c203de769d58c190503591f9441642573b3
+repository=nonfree
+nopie=yes
+nostrip=yes
+
+case "$XBPS_TARGET_MACHINE" in
+	# the downloaded toolchains use glibc, this allows them to work on musl
+	*-musl) depends+=" gcompat" ;;
+esac
+
+do_extract() {
+  ar x ${XBPS_SRCDISTDIR}/${pkgname}-${version}/${_pkgname}_${_version}_${_arch}.deb
+}
+
+do_install() {
+  bsdtar -C ${DESTDIR} -s '#/usr/local#/opt#' -xf data.tar.*
+  rm -f ${DESTDIR}/opt/cuda-12.6/include
+  rm -f ${DESTDIR}/opt/cuda-12.6/lib64
+  vlicense ${DESTDIR}/usr/share/doc/cuda-cuxxfilt-12-6/copyright LICENSE
+  rm ${DESTDIR}/usr/share/doc/cuda-cuxxfilt-12-6/copyright
+  rm -f ${DESTDIR}/usr/share/doc/${_pkgname}/changelog.Debian.gz
+}
