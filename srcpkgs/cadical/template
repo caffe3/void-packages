@@ -1,0 +1,43 @@
+# Template file for 'cadical'
+pkgname=cadical
+version=2.1.2
+revision=1
+build_style=configure
+configure_script="./configure"
+configure_args="-l"
+make_build_args="CXXFLAGS+=-fPIC"
+make_check_target="test"
+short_desc="Simple CDCL satisfiability solver"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="MIT"
+homepage="https://fmv.jku.at/cadical/"
+distfiles="https://github.com/arminbiere/cadical/archive/rel-${version}.tar.gz"
+checksum=292c2bb8d712d6d05fce3d3df63b922b8fa45e03974a79f7bae5bf68c284f131
+
+if [ "$XBPS_TARGET_LIBC" = "musl" ]; then
+	configure_args+=" --no-closefrom"
+fi
+
+post_extract() {
+	sed -i 's/^CXXFLAGS=/override CXXFLAGS\+=/' makefile.in
+}
+
+do_install() {
+	vlicense LICENSE
+
+	vinstall src/ccadical.h 644 usr/include
+	vinstall src/cadical.hpp 644 usr/include
+
+	vbin build/cadical
+	vbin build/mobical
+
+	vinstall build/libcadical.a 644 usr/lib
+}
+
+cadical-devel_package() {
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/lib
+	}
+}
