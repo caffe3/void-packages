@@ -1,0 +1,22 @@
+# Template file for 'libpoly'
+pkgname=libpoly
+version=0.1.13
+revision=1
+build_style=cmake
+hostmakedepends="python3"
+makedepends="gmpxx-devel python3-devel"
+short_desc="C library for manipulating polynomials"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="LGPL-2.1-or-later"
+homepage="https://github.com/SRI-CSL/libpoly"
+distfiles="https://github.com/SRI-CSL/libpoly/archive/v${version}/${pkgname}-${version}.tar.gz"
+checksum=ca7092eeeced3dd8bd86cdd3410207802ef1752d7052d92eee3e9e6bb496763c
+
+libpoly-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove "usr/lib/*.so"
+	}
+}
