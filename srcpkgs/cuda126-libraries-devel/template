@@ -1,0 +1,14 @@
+# Template file for cuda126-libraries-devel
+pkgname=cuda126-libraries-devel
+version=12.6.3
+revision=1
+archs="x86_64*"
+build_style=meta
+depends="cuda126-cccl>=12.6.77 cuda126-cudart-devel>=12.6.77 cuda126-driver-devel>=12.6.77 cuda126-nvrtc-devel>=12.6.85 cuda126-opencl-devel>=12.6.77 cuda126-profiler-api>=12.6.77 libcublas126-devel>=12.6.4.1 libcufft126-devel>=11.3.0.4 libcufile126-devel>=1.11.1.6 libcurand126-devel>=10.3.7.77 libcusolver126-devel>=11.7.1.2 libcusparse126-devel>=12.5.4.2 libnpp126-devel>=12.3.1.54 libnvfatbin126-devel>=12.6.77 libnvjitlink126-devel>=12.6.85 libnvjpeg126-devel>=12.3.3.54"
+short_desc="Meta-package containing all available library development packages"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+repository=nonfree
+nopie=yes
+nostrip=yes
