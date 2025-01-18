@@ -582,6 +582,7 @@ libcublas.so.12 libcublas126-12.6.4.1_1
 libcublasLt.so.12 libcublas126-12.6.4.1_1
 libcusparse.so.12 libcusparse126-12.5.4.2_1
 libcudart.so.12 cuda126-cudart-12.6.77_1
+libcusparse.so.12 libcusparse126-12.5.4.2_1
 libpgtypes.so.3 postgresql-libs-16.1_1
 libpq.so.5 postgresql-libs-16.1_1
 libmypaint.so.0 libmypaint-1.6.1_1
