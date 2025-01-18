@@ -619,6 +619,17 @@ libcamel-1.2.so.64 evolution-data-server-3.46.0_1
 libebackend-1.2.so.11 evolution-data-server-3.46.0_1
 libebook-1.2.so.21 evolution-data-server-3.46.0_1
 libebook-contacts-1.2.so.4 evolution-data-server-3.46.0_1
+libnppc.so.12 libnpp126-devel-12.3.1.54_1
+libnppial.so.12 libnpp126-devel-12.3.1.54_1
+libnppicc.so.12 libnpp126-devel-12.3.1.54_1
+libnppidei.so.12 libnpp126-devel-12.3.1.54_1
+libnppif.so.12 libnpp126-devel-12.3.1.54_1
+libnppig.so.12 libnpp126-devel-12.3.1.54_1
+libnppim.so.12 libnpp126-devel-12.3.1.54_1
+libnppist.so.12 libnpp126-devel-12.3.1.54_1
+libnppisu.so.12 libnpp126-devel-12.3.1.54_1
+libnppitc.so.12 libnpp126-devel-12.3.1.54_1
+libnpps.so.12 libnpp126-devel-12.3.1.54_1
 libecal-2.0.so.3 evolution-data-server-3.52.0_1
 libedata-book-1.2.so.27 evolution-data-server-3.46.0_1
 libedataserver-1.2.so.27 evolution-data-server-3.46.0_1

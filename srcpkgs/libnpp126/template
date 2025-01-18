@@ -1,0 +1,38 @@
+# Template file for libnpp126
+_cudaver=12.6
+_pkgname=libnpp-${_cudaver/./-}
+_version=12.3.1.54-1
+_arch=amd64
+pkgname=libnpp126
+version=12.3.1.54
+revision=1
+archs="x86_64*"
+build_style=fetch
+hostmakedepends="dpkg binutils xz"
+depends="cuda126-toolkit-config-common"
+short_desc="NPP native runtime libraries"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+distfiles="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/./${_pkgname}_${_version}_${_arch}.deb"
+checksum=0d09ed086db8e206b2d5c39a94e65d33b74e2d95c526a7903b7e4aa1f60121b3
+repository=nonfree
+nopie=yes
+nostrip=yes
+
+case "$XBPS_TARGET_MACHINE" in
+	# the downloaded toolchains use glibc, this allows them to work on musl
+	*-musl) depends+=" gcompat" ;;
+esac
+
+do_extract() {
+  ar x ${XBPS_SRCDISTDIR}/${pkgname}-${version}/${_pkgname}_${_version}_${_arch}.deb
+}
+
+do_install() {
+  bsdtar -C ${DESTDIR} -s '#/usr/local#/opt#' -xf data.tar.*
+  rm -f ${DESTDIR}/opt/cuda-${_cudaver}/lib64
+  vlicense ${DESTDIR}/usr/share/doc/${_pkgname}/copyright LICENSE
+  rm ${DESTDIR}/usr/share/doc/${_pkgname}/copyright
+  rm -f ${DESTDIR}/usr/share/doc/${_pkgname}/changelog.Debian.gz
+}
