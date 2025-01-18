@@ -1,0 +1,39 @@
+# Template file for libcusparse126-devel
+_cudaver=12.6
+_pkgname=libcusparse-dev-${_cudaver/./-}
+_version=12.5.4.2-1
+_arch=amd64
+pkgname=libcusparse-devel
+version=12.5.4.2
+revision=1
+archs="x86_64*"
+build_style=fetch
+hostmakedepends="dpkg binutils xz"
+depends="cuda-toolkit-config-common libcusparse>=12.5.4.2"
+short_desc="CUSPARSE native dev links,headers"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+distfiles="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/./${_pkgname}_${_version}_${_arch}.deb"
+checksum=b7af54c0cc799074f0fe9502ddfcf756a1cb2b29fccfea11069243a3312bf0e4
+repository=nonfree
+nopie=yes
+nostrip=yes
+
+case "$XBPS_TARGET_MACHINE" in
+	# the downloaded toolchains use glibc, this allows them to work on musl
+	*-musl) depends+=" gcompat" ;;
+esac
+
+do_extract() {
+  ar x ${XBPS_SRCDISTDIR}/${pkgname}-${version}/${_pkgname}_${_version}_${_arch}.deb
+}
+
+do_install() {
+  bsdtar -C ${DESTDIR} -s '#/usr/local#/opt#' -xf data.tar.*
+  rm -f ${DESTDIR}/opt/cuda-${_cudaver}/include
+  rm -f ${DESTDIR}/opt/cuda-${_cudaver}/lib64
+  vlicense ${DESTDIR}/usr/share/doc/${_pkgname}/copyright LICENSE
+  rm ${DESTDIR}/usr/share/doc/${_pkgname}/copyright
+  rm -f ${DESTDIR}/usr/share/doc/${_pkgname}/changelog.Debian.gz
+}
