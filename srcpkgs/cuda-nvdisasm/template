@@ -1,0 +1,36 @@
+# Template file for cuda126-nvdisasm
+_cudaver=12.6
+_pkgname=cuda-nvdisasm-${_cudaver/./-}
+_version=12.6.77-1
+_arch=amd64
+pkgname=cuda-nvdisasm
+version=12.6.77
+revision=1
+archs="x86_64*"
+build_style=fetch
+hostmakedepends="dpkg binutils xz"
+short_desc="nvdisasm extracts information from standalone cubin files and presents them in human readable format"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+distfiles="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/./${_pkgname}_${_version}_${_arch}.deb"
+checksum=c36030eaa14ec1fcac53021071e71317251bd3aaa5d96008b8e276f50fc1cb2c
+repository=nonfree
+nopie=yes
+nostrip=yes
+
+case "$XBPS_TARGET_MACHINE" in
+	# the downloaded toolchains use glibc, this allows them to work on musl
+	*-musl) depends+=" gcompat" ;;
+esac
+
+do_extract() {
+  ar x ${XBPS_SRCDISTDIR}/${pkgname}-${version}/${_pkgname}_${_version}_${_arch}.deb
+}
+
+do_install() {
+  bsdtar -C ${DESTDIR} -s '#/usr/local#/opt#' -xf data.tar.*
+  vlicense ${DESTDIR}/usr/share/doc/${_pkgname}/copyright LICENSE
+  rm ${DESTDIR}/usr/share/doc/${_pkgname}/copyright
+  rm -f ${DESTDIR}/usr/share/doc/${_pkgname}/changelog.Debian.gz
+}
