@@ -1,0 +1,32 @@
+# Template file for cuda126-crt
+_cudaver=12.6
+_pkgname=cuda-crt-${_cudaver/./-}
+_version=12.6.85-1
+_arch=amd64
+pkgname=cuda-crt
+version=12.6.85
+revision=1
+archs="x86_64*"
+build_style=fetch
+hostmakedepends="dpkg binutils xz"
+depends="cuda-cudart-devel gcc>=12 gcc<14"
+short_desc="CUDA C Runtime headers"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+distfiles="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/./${_pkgname}_${_version}_${_arch}.deb"
+checksum=84173e36605201abeb9d4e1563a2b6348c4c42e501ff0a12744dba0cf859ab8e
+repository=nonfree
+nopie=yes
+nostrip=yes
+
+do_extract() {
+  ar x ${XBPS_SRCDISTDIR}/${pkgname}-${version}/${_pkgname}_${_version}_${_arch}.deb
+}
+
+do_install() {
+  bsdtar -C ${DESTDIR} -s '#/usr/local#/opt#' -xf data.tar.*
+  vlicense ${DESTDIR}/usr/share/doc/${_pkgname}/copyright LICENSE
+  rm ${DESTDIR}/usr/share/doc/${_pkgname}/copyright
+  rm -f ${DESTDIR}/usr/share/doc/${_pkgname}/changelog.Debian.gz
+}
