@@ -1,0 +1,25 @@
+# Template file for cuda126-toolkit-config-common
+pkgname=cuda126-toolkit-config-common
+version=12.6.77
+revision=1
+archs="*"
+build_style=meta
+short_desc="Common config package for CUDA Toolkit 12"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+alternatives="cuda:/opt/cuda:/opt/cuda-12.6 cuda-12:/opt/cuda-12:/opt/cuda-12.6"
+repository=nonfree
+nopie=yes
+nostrip=yes
+
+do_install() {
+  mkdir -p "${DESTDIR}/etc/ld.so.conf.d" "${DESTDIR}/etc/profile.d"
+  echo "/opt/cuda/lib" > "${DESTDIR}/etc/ld.so.conf.d/opt_cuda.conf"
+  chmod 644 "${DESTDIR}/etc/ld.so.conf.d/opt_cuda.conf"
+  echo 'export PATH="/opt/cuda/bin:$PATH"' > "${DESTDIR}/etc/profile.d/cuda.sh"
+  chmod 644 "${DESTDIR}/etc/profile.d/cuda.sh"
+  install -d "${DESTDIR}/opt/cuda-${version%.*}"
+  ln -s "targets/${XBPS_TARGET_MACHINE}-linux/lib" "${DESTDIR}/opt/cuda-${version%.*}/lib64"
+  ln -s "targets/${XBPS_TARGET_MACHINE}-linux/include" "${DESTDIR}/opt/cuda-${version%.*}/include"
+}
