@@ -1,0 +1,14 @@
+# Template file for cuda126-compiler
+pkgname=cuda126-compiler
+version=12.6.3
+revision=1
+archs="x86_64*"
+build_style=meta
+depends="cuda126-cuobjdump>=12.6.77 cuda126-cuxxfilt>=12.6.77 cuda126-nvcc>=12.6.85 cuda126-nvprune>=12.6.77"
+short_desc="Meta-package containing the minimum tools to start developing and compiling a basic CUDA application"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-toolkit"
+repository=nonfree
+nopie=yes
+nostrip=yes
