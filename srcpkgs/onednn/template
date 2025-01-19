@@ -1,0 +1,62 @@
+# Template file for 'onednn'
+pkgname=onednn
+version=3.6.2
+revision=1
+build_style=cmake
+configure_args="-DONEDNN_BUILD_DOC=OFF -DONEDNN_BUILD_EXAMPLES=OFF -DONEDNN_BUILD_GRAPH=OFF"
+makedepends="libgomp-devel"
+short_desc="oneAPI Deep Neural Network Library (oneDNN)"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="Apache-2.0"
+homepage="https://github.com/oneapi-src/oneDNN"
+distfiles="https://github.com/oneapi-src/oneDNN/archive/v${version}.tar.gz"
+checksum="e79db0484dcefe2c7ff6604c295d1de2830c828941898878c80dfb062eb344d1"
+
+if [ "$CROSS_BUILD" ]; then
+	export cmake_crossopts="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_HOST_SYSTEM_NAME=Linux"
+fi
+
+do_configure() {
+
+	cmake -B build-shared -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DONEDNN_LIBRARY_TYPE=SHARED \
+		$configure_args \
+		$cmake_crossopts
+
+
+	cmake -B build-static -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DONEDNN_LIBRARY_TYPE=STATIC \
+		$configure_args \
+		$cmake_crossopts
+}
+
+do_build() {
+	ninja -C build-shared
+	ninja -C build-static
+}
+
+do_install() {
+	DESTDIR=$DESTDIR ninja install -C build-static
+	DESTDIR=$DESTDIR ninja install -C build-shared
+}
+
+post_install() {
+	vlicense LICENSE
+}
+
+onednn-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/lib/cmake
+		vmove "usr/lib/*.a"
+		vmove "usr/lib/*.so"
+	}
+}
