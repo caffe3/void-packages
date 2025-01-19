@@ -1,0 +1,86 @@
+pkgname=python3-torch-nightly
+version=20250119
+revision=1
+build_style=python3-module
+hostmakedepends="python3-setuptools cmake ninja gcc pkg-config git"
+makedepends="python3-devel python3-pybind11 eigen glog-devel gflags-devel
+ libopencv4-devel openmpi-devel libuv-devel python3-numpy ffmpeg-devel
+ openblas-devel libnuma-devel cuda126-libraries-devel libcudnn9-devel libnccl-devel"
+depends="python3-numpy python3-yaml python3-typing_extensions python3-networkx
+ cuda126-minimal-build python3-sympy python3-Jinja2 python3-filelock"
+short_desc="Tensor computation framework with GPU acceleration (nightly, CUDA)"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="BSD-3-Clause"
+homepage="https://pytorch.org/"
+nostrip=yes
+nocross=yes
+
+do_fetch() {
+    git clone https://github.com/pytorch/pytorch ${wrksrc}
+    cd ${wrksrc}
+    git checkout 8cc415774f47b5a50077f72ea493b71b8101e48d
+    git submodule update --init --recursive
+}
+
+pre_build() {
+    export VERBOSE=1
+    export PYTORCH_BUILD_VERSION="${version}"
+    export PYTORCH_BUILD_NUMBER=1
+
+    # Build configuration
+    export ATEN_NO_TEST=ON
+    export BUILD_CUSTOM_PROTOBUF=OFF
+    export BUILD_CAFFE2=OFF
+    export BUILD_CAFFE2_OPS=OFF
+    export USE_FFMPEG=ON
+    export USE_GFLAGS=ON
+    export USE_GLOG=ON
+    export USE_VULKAN=ON
+    export BUILD_BINARY=ON
+    export USE_OBSERVERS=ON
+    export USE_OPENCV=ON
+    export USE_SYSTEM_NCCL=ON
+    export USE_SYSTEM_PYBIND11=ON
+    export USE_SYSTEM_EIGEN_INSTALL=ON
+    export USE_CUPTI_SO=ON
+
+    # CUDA configuration
+    export USE_CUDA=1
+    export USE_CUDNN=1
+    export CUDA_HOME=/usr/lib/cuda
+    export CUDNN_LIB_DIR=/usr/lib
+    export CUDNN_INCLUDE_DIR=/usr/include
+    export TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
+    export TORCH_CUDA_ARCH_LIST="5.2;5.3;6.0;6.1;6.2;7.0;7.2;7.5;8.0;8.6;8.9;9.0;9.0+PTX"
+    export OVERRIDE_TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}"
+
+    # Compiler configuration
+    export CC=/usr/bin/gcc-13
+    export CXX=/usr/bin/g++-13
+    export CUDA_HOST_COMPILER=/usr/bin/gcc-13
+}
+
+post_install() {
+    vlicense LICENSE
+
+    # Fix paths
+    local pyver=$($XBPS_CROSS_BASE/usr/bin/python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    local sitedir="usr/lib/python${pyver}/site-packages/torch"
+
+    # Move CMake files
+    vmkdir usr/lib/cmake
+    mv ${DESTDIR}/${sitedir}/share/cmake/* ${DESTDIR}/usr/lib/cmake/
+
+    # Move headers
+    vmkdir usr/include
+    mv ${DESTDIR}/${sitedir}/include/* ${DESTDIR}/usr/include/
+
+    # Move and link libraries
+    find ${DESTDIR}/${sitedir}/lib -type f -name "*.so*" -exec mv {} ${DESTDIR}/usr/lib/ \;
+
+    # Create symlinks
+    ln -sf /usr/include ${DESTDIR}/${sitedir}/include
+    for lib in ${DESTDIR}/usr/lib/lib*.so*; do
+        ln -sf /${lib#${DESTDIR}/} ${DESTDIR}/${sitedir}/lib/
+    done
+}
