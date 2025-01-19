@@ -1,0 +1,32 @@
+From cd4da15904cff71741eb468f483c2fcac2c4dbaf Mon Sep 17 00:00:00 2001
+From: Tai Chi Minh Ralph Eastwood <caffe@disroot.org>
+Date: Wed, 8 Jan 2025 18:31:16 +0100
+Subject: [PATCH 08/10] add so version to shared libraries
+
+---
+ CMakeLists.txt | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8037b674b..2dedd2595 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -525,6 +525,7 @@ else()
+ 	roc::hipsparse
+ 	)
+     endif()
++    set_target_properties(magma PROPERTIES VERSION 2.8.0 SOVERSION 2)
+ 
+     if (USE_FORTRAN)
+         # make list of Fortran .mod files to install
+@@ -613,6 +614,7 @@ else()
+     roc::hipsparse
+     )
+ endif()
++set_target_properties(magma_sparse PROPERTIES VERSION 2.8.0 SOVERSION 2)
+ add_custom_target( sparse-lib DEPENDS magma_sparse )
+ 
+ 
+-- 
+2.47.1
+
