@@ -1,0 +1,58 @@
+# Template file for 'nccl'
+_cudaver=12.6
+pkgname=nccl
+version=2.23.4
+revision=1
+archs="x86_64*"
+build_style=gnu-makefile
+make_build_args="PREFIX=/usr CUDA_HOME=/opt/cuda-${_cudaver} src.build"
+make_install_args="PREFIX=${DESTDIR}/usr CUDA_HOME=/opt/cuda-${_cudaver}"
+make_use_env=yes
+hostmakedepends="git cuda-compiler which python3"
+makedepends="cuda-crt cuda-cudart-devel rdma-core-devel"
+short_desc="NVIDIA multi-GPU and multi-node collective communication primitives"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="BSD-3-Clause"
+homepage="https://developer.nvidia.com/nccl"
+distfiles="https://github.com/NVIDIA/nccl/archive/refs/tags/v${version}-1.tar.gz"
+checksum=6b946b70a9d2d01871842cbd15ec56488d358abe9a0f3767e372fddc3e241ba7
+
+build_options="sm_52 sm_53 sm_60 sm_61 sm_62 sm_70 sm_72 sm_75 sm_80 sm_86 sm_87 sm_89 sm_90 sm_90a"
+build_options_default="sm_80 sm_86 sm_89 sm_90 sm_90a"
+
+pre_build() {
+    # Replace BUILDDIR to avoid conflict
+    find . -type f -exec sed -i 's/BUILDDIR/_BUILDPATH/g' {} +
+
+    # Construct NVCC_GENCODE based on build options
+    local _nvcc_gencode=""
+    for opt in ${build_options}; do
+        if [ -n "$(vopt_if ${opt} 1)" ]; then
+            arch=${opt#sm_}
+            _nvcc_gencode+=" -gencode=arch=compute_${arch},code=sm_${arch}"
+        fi
+    done
+
+    # Add latest PTX for future compatibility
+    _nvcc_gencode+=" -gencode=arch=compute_90,code=compute_90"
+
+    export NVCC_GENCODE="${_nvcc_gencode}"
+    export CXXFLAGS+=" -ffat-lto-objects"
+		export RDMA_CORE=1
+}
+
+post_install() {
+    chmod 644 ${DESTDIR}/usr/lib/libnccl_static.a
+    vlicense LICENSE.txt
+}
+
+nccl-devel_package() {
+    short_desc+=" - development files"
+    depends="${sourcepkg}>=${version}_${revision}"
+    pkg_install() {
+        vmove usr/include
+        vmove "usr/lib/*.a"
+        vmove "usr/lib/*.so"
+        vmove "usr/lib/pkgconfig"
+    }
+}
