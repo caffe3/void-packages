@@ -1,0 +1,27 @@
+# Template file for 'onednn'
+pkgname=onednn
+version=3.6.2
+revision=1
+build_style=cmake
+makedepends="libgomp-devel"
+short_desc="oneAPI Deep Neural Network Library (oneDNN)"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="Apache-2.0"
+homepage="https://github.com/oneapi-src/oneDNN"
+distfiles="https://github.com/oneapi-src/oneDNN/archive/v${version}.tar.gz"
+checksum="e79db0484dcefe2c7ff6604c295d1de2830c828941898878c80dfb062eb344d1"
+
+post_install() {
+	vlicense LICENSE
+}
+
+onednn-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/lib/cmake
+		vmove usr/lib/pkgconfig
+		vmove "usr/lib/*.so"
+	}
+}
