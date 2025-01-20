@@ -1,0 +1,376 @@
+From e73b991dd6a566f7e4d4995c48de57518f4fc863 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Hans-J=C3=B6rg?= <hansjoergschurr@users.noreply.github.com>
+Date: Tue, 20 Aug 2024 11:08:01 -0500
+Subject: [PATCH 033/312] Add missing support for the assertionNames field of
+ proofToString to Python and Java API and add unit test for all bindings
+ (#11169)
+
+@aniemetz Sorry, this took me longer than I hoped.
+
+---------
+
+Co-authored-by: Haniel Barbosa <hanielbbarbosa@gmail.com>
+---
+ include/cvc5/cvc5.h                     |  2 +-
+ src/api/java/io/github/cvc5/Solver.java | 21 ++++++++
+ src/api/java/jni/solver.cpp             | 68 +++++++++++++++++++++++++
+ src/api/python/cvc5.pxd                 |  2 +-
+ src/api/python/cvc5.pxi                 | 13 ++++-
+ test/unit/api/c/capi_solver_black.cpp   | 32 ++++++++++++
+ test/unit/api/cpp/api_solver_black.cpp  | 31 +++++++++++
+ test/unit/api/java/SolverTest.java      | 29 +++++++++++
+ test/unit/api/python/test_solver.py     | 27 +++++++++-
+ 9 files changed, 220 insertions(+), 5 deletions(-)
+
+diff --git a/include/cvc5/cvc5.h b/include/cvc5/cvc5.h
+index 4bbb4fcbe..7b0ca72df 100644
+--- a/include/cvc5/cvc5.h
++++ b/include/cvc5/cvc5.h
+@@ -6113,7 +6113,7 @@ class CVC5_EXPORT Solver
+    * `modes::ProofFormat::NONE` if the proof is from a component other than
+    * `modes::ProofComponent::FULL`.
+    * @param assertionNames Mapping between assertions and names, if they were
+-   * given by the user.
++   * given by the user.  This is used by the Alethe proof format.
+    * @return The string representation of the proof in the given format.
+    */
+   std::string proofToString(
+diff --git a/src/api/java/io/github/cvc5/Solver.java b/src/api/java/io/github/cvc5/Solver.java
+index e5b3a02aa..2ca3eb59a 100644
+--- a/src/api/java/io/github/cvc5/Solver.java
++++ b/src/api/java/io/github/cvc5/Solver.java
+@@ -2765,6 +2765,27 @@ public class Solver extends AbstractPointer
+ 
+   private native String proofToString(long pointer, long proofs, int format);
+ 
++  /**
++   * Prints a proof into a string with a slected proof format mode.
++   * Other aspects of printing are taken from the solver options.
++   *
++   * @api.note This method is experimental and may change in future versions.
++   *
++   * @param proof A proof.
++   * @param format The proof format used to print the proof. Must be
++   * `PROOF_FORMAT_NONE` if the proof is from a component other than
++   * `PROOF_COMPONENT_FULL`.
++   * @param assertionNames Mapping between assertions and names, if they were
++   * given by the user.  This is used by the Alethe proof format.
++   * @return The proof printed in the current format.
++   */
++  public String proofToString(Proof proof, ProofFormat format, Map assertionNames)
++  {
++    return proofToString(pointer, proof.getPointer(), format.getValue(), assertionNames);
++  }
++
++  private native String proofToString(long pointer, long proofs, int format, Map assertionNames);
++
+   /**
+    * Get the value of the given term in the current model.
+    *
+diff --git a/src/api/java/jni/solver.cpp b/src/api/java/jni/solver.cpp
+index 67cdf23a5..6d5a23385 100644
+--- a/src/api/java/jni/solver.cpp
++++ b/src/api/java/jni/solver.cpp
+@@ -744,6 +744,74 @@ JNIEXPORT jstring JNICALL Java_io_github_cvc5_Solver_proofToString__JJI(
+   CVC5_JAVA_API_TRY_CATCH_END_RETURN(env, 0);
+ }
+ 
++/*
++ * Class:     io_github_cvc5_Solver
++ * Method:    proofToString
++ * Signature: (JJILjava/util/Map;)Ljava/lang/String;
++ */
++JNIEXPORT jstring JNICALL
++Java_io_github_cvc5_Solver_proofToString__JJILjava_util_Map_2(
++    JNIEnv* env,
++    jobject,
++    jlong pointer,
++    jlong proofPointer,
++    jint pfvalue,
++    jobject assertionNames)
++{
++  CVC5_JAVA_API_TRY_CATCH_BEGIN;
++  Solver* solver = reinterpret_cast<Solver*>(pointer);
++  modes::ProofFormat pf = static_cast<modes::ProofFormat>(pfvalue);
++  Proof* proof = reinterpret_cast<Proof*>(proofPointer);
++
++  jclass c_map = env->GetObjectClass(assertionNames);
++  jmethodID id_entrySet =
++      env->GetMethodID(c_map, "entrySet", "()Ljava/util/Set;");
++
++  jclass c_entryset = env->FindClass("java/util/Set");
++  jmethodID id_iterator =
++      env->GetMethodID(c_entryset, "iterator", "()Ljava/util/Iterator;");
++
++  jclass c_iterator = env->FindClass("java/util/Iterator");
++  jmethodID id_hasNext = env->GetMethodID(c_iterator, "hasNext", "()Z");
++  jmethodID id_next =
++      env->GetMethodID(c_iterator, "next", "()Ljava/lang/Object;");
++
++  jclass c_entry = env->FindClass("java/util/Map$Entry");
++  jmethodID id_getKey =
++      env->GetMethodID(c_entry, "getKey", "()Ljava/lang/Object;");
++  jmethodID id_getValue =
++      env->GetMethodID(c_entry, "getValue", "()Ljava/lang/Object;");
++
++  jclass c_term = env->FindClass("io/github/cvc5/Term");
++  jmethodID id_getPointer = env->GetMethodID(c_term, "getPointer", "()J");
++
++  jobject obj_entrySet = env->CallObjectMethod(assertionNames, id_entrySet);
++  jobject obj_iterator = env->CallObjectMethod(obj_entrySet, id_iterator);
++
++  std::map<Term, std::string> namesMap;
++
++  while ((bool)env->CallBooleanMethod(obj_iterator, id_hasNext))
++  {
++    jobject entry = env->CallObjectMethod(obj_iterator, id_next);
++
++    jobject key = env->CallObjectMethod(entry, id_getKey);
++    jstring value = (jstring)env->CallObjectMethod(entry, id_getValue);
++
++    jlong termPointer = (jlong)env->CallObjectMethod(key, id_getPointer);
++    Term term = *reinterpret_cast<Term*>(termPointer);
++
++    const char* termName = (env)->GetStringUTFChars(value, 0);
++    std::string termNameString = std::string(termName);
++    (env)->ReleaseStringUTFChars(value, termName);
++
++    namesMap.insert(std::pair{term, termNameString});
++  }
++
++  std::string proofStr = solver->proofToString(*proof, pf, namesMap);
++  return env->NewStringUTF(proofStr.c_str());
++  CVC5_JAVA_API_TRY_CATCH_END_RETURN(env, 0);
++}
++
+ /*
+  * Class:     io_github_cvc5_Solver
+  * Method:    getValue
+diff --git a/src/api/python/cvc5.pxd b/src/api/python/cvc5.pxd
+index 19642368f..aed3b8650 100644
+--- a/src/api/python/cvc5.pxd
++++ b/src/api/python/cvc5.pxd
+@@ -454,7 +454,7 @@ cdef extern from "<cvc5/cvc5.h>" namespace "cvc5":
+         Term defineFunsRec(vector[Term]& funs, vector[vector[Term]]& bound_vars,
+                            vector[Term]& terms, bint glbl) except +
+         vector[Proof] getProof(ProofComponent c) except +
+-        string proofToString(Proof proof, ProofFormat format) except +
++        string proofToString(Proof proof, ProofFormat format, const map[Term, string]& assertionNames) except +
+         vector[Term] getLearnedLiterals(LearnedLitType type) except +
+         vector[Term] getAssertions() except +
+         string getInfo(const string& flag) except +
+diff --git a/src/api/python/cvc5.pxi b/src/api/python/cvc5.pxi
+index 4bf2620b2..4da547ca7 100644
+--- a/src/api/python/cvc5.pxi
++++ b/src/api/python/cvc5.pxi
+@@ -14,6 +14,7 @@ from libcpp.pair cimport pair
+ from libcpp.set cimport set as c_set
+ from libcpp.string cimport string
+ from libcpp.vector cimport vector
++from libcpp.map cimport map
+ 
+ from cvc5 cimport cout
+ from cvc5 cimport stringstream
+@@ -3591,7 +3592,8 @@ cdef class Solver:
+         return proofs
+ 
+     def proofToString(self, proof,
+-                      format = ProofFormat.DEFAULT):
++                      format = ProofFormat.DEFAULT,
++                      assertionNames = {}):
+         """
+             Prints proof into a string with a selected proof format mode.
+             Other aspects of printing are taken from the solver options.
+@@ -3603,11 +3605,18 @@ cdef class Solver:
+                           :py:meth:`getProof()`.
+             :param format: The proof format used to print the proof.  Must be
+                           "None" if the proof is not a full proof.
++            :param assertionNames: Mapping between assertions and names, if
++                                   they were  given by the user.  This is used
++                                   by the Alethe proof format.
+ 
+             :return: The proof printed in the current format.
+         """
++        cdef map[c_Term, string] assertionMap
++        for k in assertionNames:
++            assertionMap[(<Term> k).cterm] = assertionNames[k].encode('utf-8')
+         return self.csolver.proofToString((<Proof?> proof).cproof,
+-                                         <c_ProofFormat> format.value)
++                                         <c_ProofFormat> format.value,
++                                         assertionMap)
+ 
+     def getLearnedLiterals(self, type = LearnedLitType.INPUT):
+         """
+diff --git a/test/unit/api/c/capi_solver_black.cpp b/test/unit/api/c/capi_solver_black.cpp
+index 130b19af9..2dea2ac5c 100644
+--- a/test/unit/api/c/capi_solver_black.cpp
++++ b/test/unit/api/c/capi_solver_black.cpp
+@@ -1693,6 +1693,38 @@ TEST_F(TestCApiBlackSolver, get_proof_and_proof_to_string)
+   ASSERT_FALSE(proof_str.empty());
+ }
+ 
++TEST_F(TestCApiBlackSolver, proof_to_string_assertion_names)
++{
++  cvc5_set_option(d_solver, "produce-proofs", "true");
++
++  Cvc5Term x = cvc5_mk_const(d_tm, d_uninterpreted, "x");
++  Cvc5Term y = cvc5_mk_const(d_tm, d_uninterpreted, "y");
++
++  std::vector<Cvc5Term> args = {x, y};
++  Cvc5Term x_eq_y =
++      cvc5_mk_term(d_tm, CVC5_KIND_EQUAL, args.size(), args.data());
++  args = {x_eq_y};
++  Cvc5Term not_x_eq_y =
++      cvc5_mk_term(d_tm, CVC5_KIND_NOT, args.size(), args.data());
++
++  cvc5_assert_formula(d_solver, x_eq_y);
++  cvc5_assert_formula(d_solver, not_x_eq_y);
++
++  ASSERT_TRUE(cvc5_result_is_unsat(cvc5_check_sat(d_solver)));
++
++  size_t size;
++  const Cvc5Proof* proofs =
++      cvc5_get_proof(d_solver, CVC5_PROOF_COMPONENT_FULL, &size);
++  ASSERT_TRUE(size > 0);
++  const Cvc5Term assertions[2] = {x_eq_y, not_x_eq_y};
++  const char* names[2] = {"as1", "as2"};
++  std::string proof_str = cvc5_proof_to_string(
++      d_solver, proofs[0], CVC5_PROOF_FORMAT_ALETHE, 2, assertions, names);
++  ASSERT_FALSE(proof_str.empty());
++  ASSERT_LT(proof_str.find("as1"), std::string::npos);
++  ASSERT_LT(proof_str.find("as2"), std::string::npos);
++}
++
+ TEST_F(TestCApiBlackSolver, get_learned_literals)
+ {
+   cvc5_set_option(d_solver, "produce-learned-literals", "true");
+diff --git a/test/unit/api/cpp/api_solver_black.cpp b/test/unit/api/cpp/api_solver_black.cpp
+index 95f355d94..1432f1409 100644
+--- a/test/unit/api/cpp/api_solver_black.cpp
++++ b/test/unit/api/cpp/api_solver_black.cpp
+@@ -1250,6 +1250,37 @@ TEST_F(TestApiBlackSolver, getProofAndProofToString)
+   ASSERT_FALSE(printedProof.empty());
+ }
+ 
++TEST_F(TestApiBlackSolver, proofToStringAssertionNames)
++{
++  d_solver->setOption("produce-proofs", "true");
++
++  std::vector<Proof> proofs;
++
++  Term x = d_tm.mkConst(d_uninterpreted, "x");
++  Term y = d_tm.mkConst(d_uninterpreted, "y");
++
++  Term x_eq_y = d_tm.mkTerm(Kind::EQUAL, {x, y});
++  Term not_x_eq_y = d_tm.mkTerm(Kind::NOT, {x_eq_y});
++
++  std::map<cvc5::Term, std::string> assertionNames;
++  assertionNames.emplace(x_eq_y, "as1");
++  assertionNames.emplace(not_x_eq_y, "as2");
++
++  d_solver->assertFormula(x_eq_y);
++  d_solver->assertFormula(not_x_eq_y);
++
++  ASSERT_TRUE(d_solver->checkSat().isUnsat());
++
++  std::string printedProof;
++  ASSERT_NO_THROW(proofs = d_solver->getProof());
++  ASSERT_FALSE(proofs.empty());
++  ASSERT_NO_THROW(printedProof = d_solver->proofToString(
++                      proofs[0], modes::ProofFormat::ALETHE, assertionNames));
++  ASSERT_FALSE(printedProof.empty());
++  ASSERT_LT(printedProof.find("as1"), std::string::npos);
++  ASSERT_LT(printedProof.find("as2"), std::string::npos);
++}
++
+ TEST_F(TestApiBlackSolver, getDifficulty)
+ {
+   d_solver->setOption("produce-difficulty", "true");
+diff --git a/test/unit/api/java/SolverTest.java b/test/unit/api/java/SolverTest.java
+index eb5c682ad..6d7b119e5 100644
+--- a/test/unit/api/java/SolverTest.java
++++ b/test/unit/api/java/SolverTest.java
+@@ -943,6 +943,35 @@ class SolverTest
+     assertFalse(printedProof.isEmpty());
+   }
+ 
++  @Test
++  void proofToStringAssertionNames()
++  {
++    d_solver.setOption("produce-proofs", "true");
++
++    Sort uSort = d_solver.mkUninterpretedSort("u");
++
++    Term x = d_solver.mkConst(uSort, "x");
++    Term y = d_solver.mkConst(uSort, "y");
++
++    Term x_eq_y = d_solver.mkTerm(Kind.EQUAL, x, y);
++    Term not_x_eq_y = d_solver.mkTerm(Kind.NOT, x_eq_y);
++
++    Map<Term, String> assertionNames = new HashMap();
++    assertionNames.put(x_eq_y, "as1");
++    assertionNames.put(not_x_eq_y, "as2");
++
++    d_solver.assertFormula(x_eq_y);
++    d_solver.assertFormula(not_x_eq_y);
++    assertTrue(d_solver.checkSat().isUnsat());
++
++    Proof[] proofs = d_solver.getProof();
++    assertNotEquals(0, proofs.length);
++    String printedProof = d_solver.proofToString(proofs[0], ProofFormat.ALETHE, assertionNames);
++    assertFalse(printedProof.isEmpty());
++    assertTrue(printedProof.contains("as1"));
++    assertTrue(printedProof.contains("as2"));
++  }
++
+   @Test
+   void getUnsatCoreLemmas1()
+   {
+diff --git a/test/unit/api/python/test_solver.py b/test/unit/api/python/test_solver.py
+index 7d8e221e2..de30138b7 100644
+--- a/test/unit/api/python/test_solver.py
++++ b/test/unit/api/python/test_solver.py
+@@ -584,7 +584,7 @@ def test_get_unsat_core_and_proof(tm, solver):
+ 
+ 
+ def test_get_unsat_core_and_proof_to_string(tm, solver):
+-    solver.setOption("produce-proofs", "true");
++    solver.setOption("produce-proofs", "true")
+ 
+     uSort = tm.mkUninterpretedSort("u")
+     intSort = tm.getIntegerSort()
+@@ -621,6 +621,31 @@ def test_get_unsat_core_and_proof_to_string(tm, solver):
+     printedProof = solver.proofToString(proofs[0], ProofFormat.NONE)
+     assert len(printedProof) > 0
+ 
++
++def test_proof_to_string_assertion_names(tm, solver):
++    solver.setOption("produce-proofs", "true")
++    uSort = tm.mkUninterpretedSort("u")
++    x = tm.mkConst(uSort, "x")
++    y = tm.mkConst(uSort, "y")
++
++    x_eq_y = tm.mkTerm(Kind.EQUAL, x, y)
++    not_x_eq_y = tm.mkTerm(Kind.NOT, x_eq_y)
++
++    names = {x_eq_y: "as1", not_x_eq_y: "as2"}
++
++    solver.assertFormula(x_eq_y)
++    solver.assertFormula(not_x_eq_y)
++
++    assert solver.checkSat().isUnsat()
++
++    proofs = solver.getProof()
++    assert len(proofs) > 0
++    printedProof = solver.proofToString(proofs[0], ProofFormat.ALETHE, names)
++    assert len(printedProof) > 0
++    assert b"as1" in printedProof
++    assert b"as2" in printedProof
++
++
+ def test_learned_literals(solver):
+     solver.setOption("produce-learned-literals", "true")
+     with pytest.raises(RuntimeError):
+-- 
+2.47.1
+

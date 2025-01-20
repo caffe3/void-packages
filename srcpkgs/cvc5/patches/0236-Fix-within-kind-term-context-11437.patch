@@ -1,0 +1,39 @@
+From 4720cdfb28a687082827e73aae94103d38cf4ed1 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 11 Dec 2024 09:44:09 -0600
+Subject: [PATCH 236/312] Fix within-kind term context (#11437)
+
+This ensures we eliminate patterns from quantifiers in a consistent way,
+the logic in the utility was wrong.
+
+Fixes one of the issues in the nightlies.
+---
+ src/expr/term_context.cpp | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/src/expr/term_context.cpp b/src/expr/term_context.cpp
+index 096c4848f..ff0a398d2 100644
+--- a/src/expr/term_context.cpp
++++ b/src/expr/term_context.cpp
+@@ -167,11 +167,15 @@ uint32_t WithinKindTermContext::computeValue(TNode t,
+                                              uint32_t tval,
+                                              size_t index) const
+ {
+-  if (tval == 0 && t.getKind() == d_kind)
++  if (tval == 0)
+   {
+-    return 1;
++    if (t.getKind() == d_kind)
++    {
++      return 1;
++    }
++    return 0;
+   }
+-  return 0;
++  return 1;
+ }
+ 
+ }  // namespace cvc5::internal
+-- 
+2.47.1
+

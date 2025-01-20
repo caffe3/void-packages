@@ -1,0 +1,41 @@
+From dede2eaf5f282736e27444aac4f272796e8c9f21 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 20 Dec 2024 11:36:32 -0600
+Subject: [PATCH 260/312] Minor fixes for printers (#11430)
+
+Minor for AST printer and smt2 printer when using --expr-depth.
+---
+ src/printer/ast/ast_printer.cpp   | 1 +
+ src/printer/smt2/smt2_printer.cpp | 4 ++++
+ 2 files changed, 5 insertions(+)
+
+diff --git a/src/printer/ast/ast_printer.cpp b/src/printer/ast/ast_printer.cpp
+index 21d3f7d5b..678c2a2d8 100644
+--- a/src/printer/ast/ast_printer.cpp
++++ b/src/printer/ast/ast_printer.cpp
+@@ -83,6 +83,7 @@ void AstPrinter::toStream(std::ostream& out,
+   {
+     for (size_t i = 0, nchild = n.getNumChildren(); i < nchild; i++)
+     {
++      out << ' ';
+       // body is re-letified
+       if (i == 1)
+       {
+diff --git a/src/printer/smt2/smt2_printer.cpp b/src/printer/smt2/smt2_printer.cpp
+index 0bee9b74b..a32b81216 100644
+--- a/src/printer/smt2/smt2_printer.cpp
++++ b/src/printer/smt2/smt2_printer.cpp
+@@ -1116,6 +1116,10 @@ void Smt2Printer::toStream(std::ostream& out,
+       {
+         visit.pop_back();
+         out << "(...)";
++        if (cur.getNumChildren() > 0)
++        {
++          out << ')';
++        }
+         continue;
+       }
+     }
+-- 
+2.47.1
+

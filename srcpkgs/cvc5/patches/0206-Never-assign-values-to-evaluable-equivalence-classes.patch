@@ -1,0 +1,238 @@
+From 3ba2c386f97e76b41f047fb5d6105148d772a6dd Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 2 Dec 2024 15:41:26 -0600
+Subject: [PATCH 206/312] Never assign values to evaluable equivalence classes
+ (#11322)
+
+Fixes #10494.
+
+This also changes how the nonlinear solver "buffers" lemmas. Previously,
+it would not report a failure, expect model construction to fail, and
+then immediately send the buffered lemmas at last call effort.
+
+Instead, it now indicates that model construction fails. Note that when
+model construction fails, LAST_CALL effort is not run. Instead, we now
+send these buffered lemmas when being asked if a LAST_CALL effort should
+be performed (prior to model construction).
+---
+ src/theory/arith/theory_arith.cpp             | 31 +++++++--------
+ src/theory/theory_engine.cpp                  |  4 +-
+ src/theory/theory_model_builder.cpp           | 39 ++++++++++++-------
+ test/regress/cli/CMakeLists.txt               |  2 +
+ .../cli/regress0/arrays/issue10494-2.smt2     |  5 +++
+ .../cli/regress0/arrays/issue10494.smt2       |  7 ++++
+ 6 files changed, 57 insertions(+), 31 deletions(-)
+ create mode 100644 test/regress/cli/regress0/arrays/issue10494-2.smt2
+ create mode 100644 test/regress/cli/regress0/arrays/issue10494.smt2
+
+diff --git a/src/theory/arith/theory_arith.cpp b/src/theory/arith/theory_arith.cpp
+index 5091c1f44..4dd3fad92 100644
+--- a/src/theory/arith/theory_arith.cpp
++++ b/src/theory/arith/theory_arith.cpp
+@@ -247,18 +247,8 @@ void TheoryArith::postCheck(Effort level)
+     d_im.clearPending();
+     d_im.clearWaitingLemmas();
+   }
+-  // check with the non-linear solver at last call
+-  if (level == Theory::EFFORT_LAST_CALL)
+-  {
+-    // If we computed lemmas in the last FULL_EFFORT check, send them now.
+-    if (d_im.hasPendingLemma())
+-    {
+-      d_im.doPendingFacts();
+-      d_im.doPendingLemmas();
+-      d_im.doPendingPhaseRequirements();
+-    }
+-    return;
+-  }
++  // we don't check at last call
++  Assert (level != Theory::EFFORT_LAST_CALL);
+   // otherwise, check with the linear solver
+   if (d_internal.postCheck(level))
+   {
+@@ -332,7 +322,14 @@ bool TheoryArith::preNotifyFact(
+ bool TheoryArith::needsCheckLastEffort() {
+   if (d_nonlinearExtension != nullptr)
+   {
+-    return d_nonlinearExtension->hasNlTerms();
++    // If we computed lemmas in the last FULL_EFFORT check, send them now.
++    if (d_im.hasPendingLemma())
++    {
++      Trace("arith-nl-buffer") << "Send buffered lemmas..." << std::endl; 
++      d_im.doPendingFacts();
++      d_im.doPendingLemmas();
++      d_im.doPendingPhaseRequirements();
++    }
+   }
+   return false;
+ }
+@@ -356,12 +353,12 @@ bool TheoryArith::collectModelInfo(TheoryModel* m,
+   // If we have a buffered lemma (from the non-linear extension), then we
+   // do not assert model values, since those values are likely incorrect.
+   // Moreover, the model does not need to satisfy the assertions, so
+-  // arbitrary values can be used for arithmetic terms. Hence, we do
+-  // nothing here. The buffered lemmas will be sent immediately
+-  // at LAST_CALL effort (see postCheck).
++  // arbitrary values can be used for arithmetic terms. Hence, we just return
++  // false here. The buffered lemmas will be sent immediately when asking if
++  // a LAST_CALL effort should be performed (see needsCheckLastEffort).
+   if (d_im.hasPendingLemma())
+   {
+-    return true;
++    return false;
+   }
+   // this overrides behavior to not assert equality engine
+   return collectModelValues(m, termSet);
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index 27e869e53..3c48307aa 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -539,7 +539,9 @@ void TheoryEngine::check(Theory::Effort effort) {
+             {
+               if (!d_tc->buildModel())
+               {
+-                break;
++                // We don't check if the model building fails, but for
++                // uniformity ask all theories needsCheckLastEffort method.
++                continue;
+               }
+               theory->check(Theory::EFFORT_LAST_CALL);
+             }
+diff --git a/src/theory/theory_model_builder.cpp b/src/theory/theory_model_builder.cpp
+index 0b657da06..4ed40f919 100644
+--- a/src/theory/theory_model_builder.cpp
++++ b/src/theory/theory_model_builder.cpp
+@@ -134,8 +134,9 @@ bool TheoryEngineModelBuilder::isAssignerActive(TheoryModel* tm, Assigner& a)
+ 
+ bool TheoryEngineModelBuilder::isAssignable(TNode n)
+ {
+-  if (n.getKind() == Kind::SELECT || n.getKind() == Kind::APPLY_SELECTOR
+-      || n.getKind() == Kind::SEQ_NTH)
++  Kind k = n.getKind();
++  if (k == Kind::SELECT || k == Kind::APPLY_SELECTOR
++      || k == Kind::SEQ_NTH)
+   {
+     // selectors are always assignable (where we guarantee that they are not
+     // evaluatable here)
+@@ -150,12 +151,14 @@ bool TheoryEngineModelBuilder::isAssignable(TNode n)
+       return !n.getType().isFunction();
+     }
+   }
+-  else if (n.getKind() == Kind::FLOATINGPOINT_COMPONENT_SIGN)
++  else if (k == Kind::FLOATINGPOINT_COMPONENT_SIGN || k==Kind::SEP_NIL)
+   {
+-    // Extracting the sign of a floating-point number acts similar to a
++    // - Extracting the sign of a floating-point number acts similar to a
+     // selector on a datatype, i.e. if `(sign x)` wasn't assigned a value, we
+     // can pick an arbitrary one. Note that the other components of a
+     // floating-point number should always be assigned a value.
++    // - sep.nil is a nullary constant that acts like a variable and thus is
++    // assignable.
+     return true;
+   }
+   else
+@@ -164,16 +167,15 @@ bool TheoryEngineModelBuilder::isAssignable(TNode n)
+     if (!logicInfo().isHigherOrder())
+     {
+       // no functions exist, all functions are fully applied
+-      Assert(n.getKind() != Kind::HO_APPLY);
++      Assert(k != Kind::HO_APPLY);
+       Assert(!n.getType().isFunction());
+-      return n.isVar() || n.getKind() == Kind::APPLY_UF;
++      return n.isVar() || k == Kind::APPLY_UF;
+     }
+     else
+     {
+-      // Assert( n.getKind() != Kind::APPLY_UF );
+       return (n.isVar() && !n.getType().isFunction())
+-             || n.getKind() == Kind::APPLY_UF
+-             || (n.getKind() == Kind::HO_APPLY
++             || k == Kind::APPLY_UF
++             || (k == Kind::HO_APPLY
+                  && n[0].getType().getNumChildren() == 2);
+     }
+   }
+@@ -935,6 +937,11 @@ bool TheoryEngineModelBuilder::buildModel(TheoryModel* tm)
+       {
+         i2 = i;
+         ++i;
++        if (evaluableEqc.find(*i2) != evaluableEqc.end())
++        {
++          // we never assign to evaluable equivalence classes
++          continue;
++        }
+         // check whether it has an assigner object
+         itAssignerM = eqcToAssignerMaster.find(*i2);
+         if (itAssignerM != eqcToAssignerMaster.end())
+@@ -956,13 +963,11 @@ bool TheoryEngineModelBuilder::buildModel(TheoryModel* tm)
+         {
+           assignable = assignableEqc.find(*i2) != assignableEqc.end();
+         }
+-        evaluable = evaluableEqc.find(*i2) != evaluableEqc.end();
+         Trace("model-builder-debug")
+             << "    eqc " << *i2 << " is assignable=" << assignable
+-            << ", evaluable=" << evaluable << std::endl;
++            << std::endl;
+         if (assignable)
+         {
+-          Assert(!evaluable || assignOne);
+           // this assertion ensures that if we are assigning to a term of
+           // Boolean type, then the term must be assignable.
+           // Note we only assign to terms of Boolean type if the term occurs in
+@@ -1073,7 +1078,15 @@ bool TheoryEngineModelBuilder::buildModel(TheoryModel* tm)
+     // that has both assignable and evaluable expressions will get assigned.
+     if (!changed)
+     {
+-      Assert(!assignOne);  // check for infinite loop!
++      Trace("model-builder-debug") << "...must assign one" << std::endl;
++      // Avoid infinite loops: if we are in a deadlock, we abort model building
++      // unsuccessfully here.
++      if (assignOne)
++      {
++        Assert (false) << "Reached a deadlock during model construction";
++        Trace("model-builder-debug") << "...avoid loop, fail" << std::endl;
++        return false;
++      }
+       assignOne = true;
+     }
+   }
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index e96497642..142132863 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -148,6 +148,8 @@ set(regress_0_tests
+   regress0/arrays/issue9043_2.smt2
+   regress0/arrays/issue9043_3.smt2
+   regress0/arrays/issue9043_4.smt2
++  regress0/arrays/issue10494.smt2
++  regress0/arrays/issue10494-2.smt2
+   regress0/arrays/proj-issue506-ms-var-elim.smt2
+   regress0/arrays/proj-issue545-array-nconst.smt2
+   regress0/arrays/proj-issue563.smt2
+diff --git a/test/regress/cli/regress0/arrays/issue10494-2.smt2 b/test/regress/cli/regress0/arrays/issue10494-2.smt2
+new file mode 100644
+index 000000000..84be60c17
+--- /dev/null
++++ b/test/regress/cli/regress0/arrays/issue10494-2.smt2
+@@ -0,0 +1,5 @@
++; EXPECT: sat
++(set-logic ALL)
++(declare-const a (Array Int (_ BitVec 1)))
++(assert (= a (store a 0 (bvadd #b1 (select a 1)))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/arrays/issue10494.smt2 b/test/regress/cli/regress0/arrays/issue10494.smt2
+new file mode 100644
+index 000000000..cffd498ae
+--- /dev/null
++++ b/test/regress/cli/regress0/arrays/issue10494.smt2
+@@ -0,0 +1,7 @@
++; EXPECT: sat
++(set-logic ALL)
++(declare-const a (Array (_ BitVec 64) (_ BitVec 64)) ) 
++(declare-const b (_ BitVec 64) ) 
++(assert ( = a ( store a ( bvneg ( bvneg #x1111111111111111 ) ) 
++        ( bvadd #x1111111111111111 ( select a #x0000000000000000 ) ) ) ) ) 
++( check-sat )
+-- 
+2.47.1
+

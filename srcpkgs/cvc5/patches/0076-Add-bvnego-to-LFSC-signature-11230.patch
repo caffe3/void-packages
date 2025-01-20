@@ -1,0 +1,26 @@
+From 073c8b473eda7defa42f03d59c990eea975f6d53 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 25 Sep 2024 12:15:13 -0500
+Subject: [PATCH 076/312] Add bvnego to LFSC signature (#11230)
+
+Fixes issue in nightlies.
+---
+ proofs/lfsc/signatures/theory_def.plf | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/proofs/lfsc/signatures/theory_def.plf b/proofs/lfsc/signatures/theory_def.plf
+index a05aab585..d73de1afa 100644
+--- a/proofs/lfsc/signatures/theory_def.plf
++++ b/proofs/lfsc/signatures/theory_def.plf
+@@ -340,6 +340,8 @@
+ (define bvssubo (# x term (# y term (apply (apply f_bvssubo x) y))))
+ (declare f_bvsdivo term)
+ (define bvsdivo (# x term (# y term (apply (apply f_bvsdivo x) y))))
++(declare f_bvnego term)
++(define bvnego (# x term (apply f_bvnego x)))
+ (declare f_bvredor term)
+ (define bvredor (# x term (apply f_bvredor x)))
+ (declare f_bvredand term)
+-- 
+2.47.1
+

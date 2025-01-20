@@ -1,0 +1,60 @@
+From 6ff3d05708cf0b7b02243a56340075390c43ffb8 Mon Sep 17 00:00:00 2001
+From: Lachnitt <lachnitt@stanford.edu>
+Date: Mon, 2 Dec 2024 04:27:16 -0800
+Subject: [PATCH 204/312] Alethe: add name of trust rule as argument to alethe
+ hole rules (#11398)
+
+Currently, a trust rule is translated into an Alethe proof step that
+looks like this:
+
+`(step t95 (cl @p_34) :rule hole :args ("11" @p_34))`
+
+i.e., the first argument is the trust rule id as a string but encoded as
+an integer.
+
+For debugging and evaluation it is helpful for me to get the name of a
+trust rule instead, so for example:
+
+`(step t95 (cl @p_34) :rule hole :args
+("PREPROCESS_STATIC_LEARNING_LEMMA" @p_34))`
+
+I only see advantages of this since the indices of the ids are cvc5
+internal. If they are needed though maybe we could add both as an
+argument?
+---
+ src/proof/alethe/alethe_post_processor.cpp | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/proof/alethe/alethe_post_processor.cpp b/src/proof/alethe/alethe_post_processor.cpp
+index 839521bc7..0256459ec 100644
+--- a/src/proof/alethe/alethe_post_processor.cpp
++++ b/src/proof/alethe/alethe_post_processor.cpp
+@@ -483,7 +483,8 @@ bool AletheProofPostprocessCallback::update(Node res,
+                              *cdp);
+       }
+       TrustId tid;
+-      if (getTrustId(args[0], tid) && tid == TrustId::THEORY_LEMMA)
++      bool hasTrustId = getTrustId(args[0], tid);
++      if (hasTrustId && tid == TrustId::THEORY_LEMMA)
+       {
+         // if we are in the arithmetic case, we rather add a LIA_GENERIC step
+         if (res.getKind() == Kind::NOT && res[0].getKind() == Kind::AND)
+@@ -514,7 +515,14 @@ bool AletheProofPostprocessCallback::update(Node res,
+         }
+       }
+       std::stringstream ss;
+-      ss << "\"" << args[0] << "\"";
++      if (hasTrustId)
++      {
++        ss << "\"" << tid << "\"";
++      }
++      else
++      {
++        ss << "\"" << args[0] << "\"";
++      }
+       std::vector<Node> newArgs{nm->mkRawSymbol(ss.str(), nm->sExprType())};
+       newArgs.insert(newArgs.end(), args.begin() + 1, args.end());
+       return addAletheStep(AletheRule::HOLE,
+-- 
+2.47.1
+

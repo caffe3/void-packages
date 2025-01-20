@@ -1,0 +1,237 @@
+From 32f56be420900d6a61352698bb98beba80c38cae Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 10 Jan 2025 09:02:30 -0600
+Subject: [PATCH 287/312] Add trust proof generator utility (#11474)
+
+Adds two new trust ids to further classify trusted steps.
+---
+ src/CMakeLists.txt                     |  2 +
+ src/proof/trust_id.cpp                 |  2 +
+ src/proof/trust_id.h                   |  4 ++
+ src/proof/trust_proof_generator.cpp    | 43 ++++++++++++++++++
+ src/proof/trust_proof_generator.h      | 60 ++++++++++++++++++++++++++
+ src/theory/quantifiers/instantiate.cpp |  2 +-
+ src/theory/strings/theory_strings.cpp  |  7 ++-
+ src/theory/strings/theory_strings.h    |  3 ++
+ 8 files changed, 120 insertions(+), 3 deletions(-)
+ create mode 100644 src/proof/trust_proof_generator.cpp
+ create mode 100644 src/proof/trust_proof_generator.h
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index c56a74fa8..b453b5aea 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -230,6 +230,8 @@ libcvc5_add_sources(
+   proof/trust_id.h
+   proof/trust_node.cpp
+   proof/trust_node.h
++  proof/trust_proof_generator.cpp
++  proof/trust_proof_generator.h
+   proof/theory_proof_step_buffer.cpp
+   proof/theory_proof_step_buffer.h
+   proof/unsat_core.cpp
+diff --git a/src/proof/trust_id.cpp b/src/proof/trust_id.cpp
+index 8dfb7f267..e0c300e3e 100644
+--- a/src/proof/trust_id.cpp
++++ b/src/proof/trust_id.cpp
+@@ -102,6 +102,8 @@ const char* toString(TrustId id)
+     case TrustId::ARITH_PRED_CAST_TYPE: return "ARITH_PRED_CAST_TYPE";
+     case TrustId::RE_ELIM: return "RE_ELIM";
+     case TrustId::QUANTIFIERS_PREPROCESS: return "QUANTIFIERS_PREPROCESS";
++    case TrustId::QUANTIFIERS_INST_REWRITE: return "QUANTIFIERS_INST_REWRITE";
++    case TrustId::STRINGS_PP_STATIC_REWRITE: return "STRINGS_PP_STATIC_REWRITE";
+     case TrustId::VALID_WITNESS: return "VALID_WITNESS";
+     case TrustId::SUBTYPE_ELIMINATION: return "SUBTYPE_ELIMINATION";
+     case TrustId::MACRO_THEORY_REWRITE_RCONS:
+diff --git a/src/proof/trust_id.h b/src/proof/trust_id.h
+index 6cb5507d2..42d6a2ab9 100644
+--- a/src/proof/trust_id.h
++++ b/src/proof/trust_id.h
+@@ -192,6 +192,10 @@ enum class TrustId : uint32_t
+   RE_ELIM,
+   /** A quantifiers preprocessing step that was given without a proof */
+   QUANTIFIERS_PREPROCESS,
++  /** A quantifiers rewriting step for instantiations, e.g. virtual term substitution */
++  QUANTIFIERS_INST_REWRITE,
++  /** A rewrite performed at TheoryStrings::ppStaticRewrite */
++  STRINGS_PP_STATIC_REWRITE,
+   /**
+    * An existential corresponding to a witness term introduced e.g. in
+    * quantifier instantiation
+diff --git a/src/proof/trust_proof_generator.cpp b/src/proof/trust_proof_generator.cpp
+new file mode 100644
+index 000000000..2003f8267
+--- /dev/null
++++ b/src/proof/trust_proof_generator.cpp
+@@ -0,0 +1,43 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Trust proof generator utility.
++ */
++
++#include "proof/trust_proof_generator.h"
++
++#include "proof/proof.h"
++
++namespace cvc5::internal {
++
++TrustProofGenerator::TrustProofGenerator(Env& env,
++                                         TrustId id,
++                                         const std::vector<Node>& args)
++    : EnvObj(env), d_tid(id), d_pargs(args)
++{
++}
++
++TrustProofGenerator::~TrustProofGenerator() {}
++
++std::shared_ptr<ProofNode> TrustProofGenerator::getProofFor(Node fact)
++{
++  CDProof cdp(d_env);
++  cdp.addTrustedStep(fact, d_tid, {}, d_pargs);
++  return cdp.getProofFor(fact);
++}
++
++std::string TrustProofGenerator::identify() const
++{
++  return "TrustProofGenerator";
++}
++
++}  // namespace cvc5::internal
+diff --git a/src/proof/trust_proof_generator.h b/src/proof/trust_proof_generator.h
+new file mode 100644
+index 000000000..4e3dad216
+--- /dev/null
++++ b/src/proof/trust_proof_generator.h
+@@ -0,0 +1,60 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Trust proof generator utility.
++ */
++
++#include "cvc5_private.h"
++
++#ifndef CVC5__PROOF__TRUST_PROOF_GENERATOR_H
++#define CVC5__PROOF__TRUST_PROOF_GENERATOR_H
++
++#include "proof/method_id.h"
++#include "proof/proof_generator.h"
++#include "proof/trust_id.h"
++#include "smt/env_obj.h"
++
++namespace cvc5::internal {
++
++class ProofNode;
++class ProofNodeManager;
++
++/**
++ * This class is used as a (lazy) proof generator for trust steps.
++ */
++class TrustProofGenerator : protected EnvObj, public ProofGenerator
++{
++ public:
++  /**
++   * @param env Reference to the environment.
++   * @param id The trust id.
++   * @param args The proof arguments (if any).
++   */
++  TrustProofGenerator(Env& env, TrustId id, const std::vector<Node>& args);
++  virtual ~TrustProofGenerator();
++  /**
++   * Get proof for fact. We return a single step proving fact from d_tid.
++   */
++  std::shared_ptr<ProofNode> getProofFor(Node fact) override;
++  /** identify */
++  std::string identify() const override;
++
++ private:
++  /** The trust id */
++  TrustId d_tid;
++  /** Proof args */
++  std::vector<Node> d_pargs;
++};
++
++}  // namespace cvc5::internal
++
++#endif /* CVC5__PROOF__TRUST_PROOF_GENERATOR_H */
+diff --git a/src/theory/quantifiers/instantiate.cpp b/src/theory/quantifiers/instantiate.cpp
+index 3e1f96e29..75967d3f0 100644
+--- a/src/theory/quantifiers/instantiate.cpp
++++ b/src/theory/quantifiers/instantiate.cpp
+@@ -587,7 +587,7 @@ Node Instantiate::getInstantiation(Node q,
+         Node proven = trn.getProven();
+         pf->addLazyStep(proven,
+                         trn.getGenerator(),
+-                        TrustId::THEORY_PREPROCESS,
++                        TrustId::QUANTIFIERS_INST_REWRITE,
+                         true,
+                         "Instantiate::getInstantiation:rewrite_inst");
+         pf->addStep(newBody, ProofRule::EQ_RESOLVE, {body, proven}, {});
+diff --git a/src/theory/strings/theory_strings.cpp b/src/theory/strings/theory_strings.cpp
+index 4e2c41646..4a6c341b4 100644
+--- a/src/theory/strings/theory_strings.cpp
++++ b/src/theory/strings/theory_strings.cpp
+@@ -100,7 +100,10 @@ TheoryStrings::TheoryStrings(Env& env, OutputChannel& out, Valuation valuation)
+       d_strat(d_env),
+       d_absModelCounter(0),
+       d_strGapModelCounter(0),
+-      d_cpacb(*this)
++      d_cpacb(*this),
++      d_psrewPg(env.isTheoryProofProducing() ? new TrustProofGenerator(
++                    env, TrustId::STRINGS_PP_STATIC_REWRITE, {})
++                                             : nullptr)
+ {
+   d_termReg.finishInit(&d_im);
+ 
+@@ -1228,7 +1231,7 @@ TrustNode TheoryStrings::ppStaticRewrite(TNode atom)
+     Node ret = d_rewriter.rewriteEqualityExt(atom);
+     if (ret != atom)
+     {
+-      return TrustNode::mkTrustRewrite(atom, ret, nullptr);
++      return TrustNode::mkTrustRewrite(atom, ret, d_psrewPg.get());
+     }
+   }
+   return TrustNode::null();
+diff --git a/src/theory/strings/theory_strings.h b/src/theory/strings/theory_strings.h
+index df19f2a16..5ab42758e 100644
+--- a/src/theory/strings/theory_strings.h
++++ b/src/theory/strings/theory_strings.h
+@@ -24,6 +24,7 @@
+ #include "context/cdhashset.h"
+ #include "context/cdlist.h"
+ #include "expr/node_trie.h"
++#include "proof/trust_proof_generator.h"
+ #include "theory/care_pair_argument_callback.h"
+ #include "theory/ext_theory.h"
+ #include "theory/strings/array_solver.h"
+@@ -306,6 +307,8 @@ class TheoryStrings : public Theory {
+   size_t d_strGapModelCounter;
+   /** The care pair argument callback, used for theory combination */
+   CarePairArgumentCallback d_cpacb;
++  /** For proof of ppStaticRewrite */
++  std::shared_ptr<TrustProofGenerator> d_psrewPg;
+ };/* class TheoryStrings */
+ 
+ }  // namespace strings
+-- 
+2.47.1
+

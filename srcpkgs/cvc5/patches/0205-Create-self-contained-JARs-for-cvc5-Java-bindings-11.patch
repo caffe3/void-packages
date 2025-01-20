@@ -1,0 +1,602 @@
+From d8b6d1c33f17f69a06ffddc5bd503054db3a131d Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Mon, 2 Dec 2024 12:53:01 -0600
+Subject: [PATCH 205/312] Create self-contained JARs for cvc5 Java bindings
+ (#11368)
+
+This PR updates the cvc5 Java bindings to search for native libraries
+within JARs in the classpath, in addition to the current search in
+system directories and the paths specified in `java.library.path`. This
+update enables the creation of self-contained JARs that include the cvc5
+Java bindings along with the necessary native libraries. This is the
+first step toward publishing self-contained JARs to Maven Central. For
+now, the CI process creates a JAR for each platform and stores it under
+the latest tag or the version being released.
+---
+ .github/actions/add-jar/action.yml          |  97 ++++++++++++++
+ .github/actions/add-package/action.yml      |  92 +++----------
+ .github/actions/store-to-latest/action.yml  |  70 ++++++++++
+ .github/actions/store-to-release/action.yml |  31 +++++
+ .github/workflows/ci.yml                    |  16 +++
+ src/api/java/io/github/cvc5/Utils.java      | 139 +++++++++++++++++++-
+ 6 files changed, 364 insertions(+), 81 deletions(-)
+ create mode 100644 .github/actions/add-jar/action.yml
+ create mode 100644 .github/actions/store-to-latest/action.yml
+ create mode 100644 .github/actions/store-to-release/action.yml
+
+diff --git a/.github/actions/add-jar/action.yml b/.github/actions/add-jar/action.yml
+new file mode 100644
+index 000000000..ce436287b
+--- /dev/null
++++ b/.github/actions/add-jar/action.yml
+@@ -0,0 +1,97 @@
++name: Add self-contained JAR with the cvc5 Java bindings
++description: |
++  Creates a JAR that includes the cvc5 Java bindings
++  along with the necessary native libraries.
++inputs:
++  install-path:
++    description: path to the directory with installed artifacts
++  jar-libs-dir:
++    description: name of the directory that will contain the libraries within the JAR
++  jar-name:
++    description: target name of the JAR
++  github-token-latest:
++    description: token to upload JAR to latest
++  github-token-release:
++    description: token to upload JAR to release
++  shell:
++    default: bash
++runs:
++  using: composite
++  steps:
++    - name: Create JAR contents (Linux)
++      if: runner.os == 'Linux'
++      shell: ${{ inputs.shell }}
++      run: |
++        echo "::group::Create JAR contents (Linux)"
++        mkdir ${{ inputs.jar-libs-dir }}
++        cd ${{ inputs.jar-libs-dir }}
++        cat > filenames.txt <<EOF
++        libgmp.so.10
++        libpoly.so.0
++        libpolyxx.so.0
++        libcvc5.so.1
++        libcvc5parser.so.1
++        libcvc5jni.so
++        EOF
++        cat filenames.txt | xargs -I {} cp ${{ inputs.install-path }}/lib/{} .
++        echo "::endgroup::"
++
++    - name: Create JAR contents (macOS)
++      if: runner.os == 'macOS'
++      shell: ${{ inputs.shell }}
++      run: |
++        echo "::group::Create JAR contents (macOS)"
++        mkdir ${{ inputs.jar-libs-dir }}
++        cd ${{ inputs.jar-libs-dir }}
++        cat > filenames.txt <<EOF
++        libgmp.10.dylib
++        libpoly.0.dylib
++        libpolyxx.0.dylib
++        libcvc5.1.dylib
++        libcvc5parser.1.dylib
++        libcvc5jni.dylib
++        EOF
++        cat filenames.txt | xargs -I {} cp ${{ inputs.install-path }}/lib/{} .
++        echo "::endgroup::"
++
++    - name: Create JAR contents (Windows)
++      if: runner.os == 'Windows'
++      shell: ${{ inputs.shell }}
++      run: |
++        echo "::group::Create JAR contents (Windows)"
++        mkdir ${{ inputs.jar-libs-dir }}
++        cd ${{ inputs.jar-libs-dir }}
++        cat > filenames.txt <<EOF
++        libwinpthread-1.dll
++        libgcc_s_seh-1.dll
++        libstdc++-6.dll
++        libpoly.dll
++        libpolyxx.dll
++        libcvc5.dll
++        libcvc5parser.dll
++        cvc5jni.dll
++        EOF
++        cat filenames.txt | xargs -I {} cp ${{ inputs.install-path }}/bin/{} .
++        echo "::endgroup::"
++
++    - name: Create JAR
++      shell: ${{ inputs.shell }}
++      run: |
++        echo "::group::Create JAR"
++        unzip ${{ inputs.install-path }}/share/java/cvc5.jar
++        jar cf ${{ inputs.jar-name }}.jar AUTHORS COPYING licenses io ${{ inputs.jar-libs-dir }}
++        echo "::endgroup::"
++
++    - name: Store to latest
++      if: github.ref == 'refs/heads/main'
++      uses: ./.github/actions/store-to-latest
++      with:
++        asset-filename: ${{ inputs.jar-name }}.jar
++        github-token: ${{ inputs.github-token-latest }}
++
++    - name: Store to release
++      if: startsWith(github.ref, 'refs/tags/')
++      uses: ./.github/actions/store-to-release
++      with:
++        asset-filename: ${{ inputs.jar-name }}.jar
++        github-token: ${{ inputs.github-token-release }}
+diff --git a/.github/actions/add-package/action.yml b/.github/actions/add-package/action.yml
+index 0bf970628..dcb0d16d5 100644
+--- a/.github/actions/add-package/action.yml
++++ b/.github/actions/add-package/action.yml
+@@ -11,10 +11,15 @@ inputs:
+     description: token to upload package to release
+   shell:
+     default: bash
++outputs:
++  install-path:
++    description: path to the installation directory
++    value: ${{ steps.create-zip.outputs.install-path }}
+ runs:
+   using: composite
+   steps:
+     - name: Create ZIP file
++      id: create-zip
+       shell: ${{ inputs.shell }}
+       run: |
+         echo "::group::Create ZIP file"
+@@ -46,6 +51,7 @@ runs:
+         # Create ZIP file
+         pushd ${{ inputs.build-dir }}
+         mv install ${{ inputs.package-name }}
++        echo "install-path=${{ inputs.build-dir }}/${{ inputs.package-name }}" >> $GITHUB_OUTPUT
+         zip -r ${{ inputs.package-name }} ${{ inputs.package-name }}
+         popd
+ 
+@@ -53,7 +59,7 @@ runs:
+         mv ${{ inputs.build-dir }}/${{ inputs.package-name }}.zip .
+         echo "::endgroup::"
+ 
+-    - name: install pyGithub
++    - name: Install pyGithub
+       shell: ${{ inputs.shell }}
+       run: |
+         # Upgrading pyopenssl resolves the following error:
+@@ -64,82 +70,14 @@ runs:
+ 
+     - name: Store to latest
+       if: github.ref == 'refs/heads/main'
+-      shell: 'python3 {0}'
+-      env:
+-        GITHUB_TOKEN: ${{ inputs.github-token-latest }}
+-        PACKAGE: ${{ inputs.package-name }}.zip
+-      run: |
+-        import datetime
+-        import os
+-        from github import Github
+-
+-        sha = os.getenv('GITHUB_SHA')
+-
+-        gh = Github(os.getenv('GITHUB_TOKEN'))
+-        repo = gh.get_repo(os.getenv('GITHUB_REPOSITORY'))
+-
+-        try:
+-          ref = repo.get_git_ref('tags/latest')
+-          # update "latest" to current commit if sha changed
+-          if ref.object.sha != sha:
+-            ref.edit(sha)
+-        except:
+-          print('tag `latest` does not exist.')
+-          exit
+-
+-        try:
+-          rel = repo.get_release('latest')
+-        except:
+-          print('New `latest` release')
+-          rel = repo.create_git_release('latest', 'latest', 'Latest builds')
+-
+-        # generate new filename
+-        package = os.getenv('PACKAGE')
+-        name,ext = os.path.splitext(package)
+-        curtime = repo.get_git_commit(sha).committer.date.strftime('%Y-%m-%d')
+-        samedayprefix = '{}-{}-'.format(name, curtime)
+-        filename = '{}-{}-{}{}'.format(name, curtime, sha[:7], ext)
+-
+-        # prune old commits
+-        assets = list(rel.get_assets())
+-        assets.sort(key=lambda x: x.created_at, reverse=True)
+-
+-        for cnt,asset in enumerate(assets):
+-          delete = False
+-          # We generate 10 artifacts per build:
+-          # {Linux-x86_64, Linux-arm64, macOS-x86_64, macOS-arm64, Win64-x86_64} * {static, shared}
+-          if cnt >= 20: # Keep at most 2 builds
+-            delete = True
+-          if asset.name.startswith(samedayprefix):
+-            delete = True
+-          # convert to timezone-aware datetime
+-          age = datetime.datetime.now().replace(tzinfo=datetime.timezone.utc) - asset.created_at
+-          if age.days > 7:
+-            delete = True
+-          if delete:
+-            asset.delete_asset()
+-
+-        # upload as asset with proper name
+-        rel.upload_asset(package, name=filename)
++      uses: ./.github/actions/store-to-latest
++      with:
++        asset-filename: ${{ inputs.package-name }}.zip
++        github-token: ${{ inputs.github-token-latest }}
+ 
+     - name: Store to release
+       if: startsWith(github.ref, 'refs/tags/')
+-      shell: 'python3 {0}'
+-      env:
+-        GITHUB_TOKEN: ${{ inputs.github-token-release }}
+-        PACKAGE: ${{ inputs.package-name }}.zip
+-      run: |
+-        import os
+-        from github import Github
+-
+-        refname = os.getenv('GITHUB_REF_NAME')
+-        gh = Github(os.getenv('GITHUB_TOKEN'))
+-        repo = gh.get_repo(os.getenv('GITHUB_REPOSITORY'))
+-        try:
+-          rel = repo.get_release(refname)
+-        except:
+-          print("New release from " + refname)
+-          ref = repo.get_git_ref('tags/' + refname)
+-          commit = repo.get_git_commit(ref.object.sha)
+-          rel = repo.create_git_release(refname, refname, commit.message)
+-        rel.upload_asset(os.getenv('PACKAGE'))
++      uses: ./.github/actions/store-to-release
++      with:
++        asset-filename: ${{ inputs.package-name }}.zip
++        github-token: ${{ inputs.github-token-release }}
+diff --git a/.github/actions/store-to-latest/action.yml b/.github/actions/store-to-latest/action.yml
+new file mode 100644
+index 000000000..de60c1ca7
+--- /dev/null
++++ b/.github/actions/store-to-latest/action.yml
+@@ -0,0 +1,70 @@
++name: Store to latest
++description: Store an asset on the release page associated to the latest tag
++inputs:
++  asset-filename:
++    description: filename of the asset
++  github-token:
++    description: token to upload asset to latest
++  
++runs:
++  using: composite
++  steps:
++    - name: Store to latest
++      shell: 'python3 {0}'
++      env:
++        GITHUB_TOKEN: ${{ inputs.github-token }}
++        PACKAGE: ${{ inputs.asset-filename }}
++      run: |
++        import datetime
++        import os
++        from github import Github
++
++        sha = os.getenv('GITHUB_SHA')
++
++        gh = Github(os.getenv('GITHUB_TOKEN'))
++        repo = gh.get_repo(os.getenv('GITHUB_REPOSITORY'))
++
++        try:
++          ref = repo.get_git_ref('tags/latest')
++          # update "latest" to current commit if sha changed
++          if ref.object.sha != sha:
++            ref.edit(sha)
++        except:
++          print('tag `latest` does not exist.')
++          exit
++
++        try:
++          rel = repo.get_release('latest')
++        except:
++          print('New `latest` release')
++          rel = repo.create_git_release('latest', 'latest', 'Latest builds')
++
++        # generate new filename
++        package = os.getenv('PACKAGE')
++        name,ext = os.path.splitext(package)
++        curtime = repo.get_git_commit(sha).committer.date.strftime('%Y-%m-%d')
++        samedayprefix = '{}-{}-'.format(name, curtime)
++        filename = '{}-{}-{}{}'.format(name, curtime, sha[:7], ext)
++
++        # prune old commits
++        assets = list(rel.get_assets())
++        assets.sort(key=lambda x: x.created_at, reverse=True)
++
++        for cnt,asset in enumerate(assets):
++          delete = False
++          # We generate 10 packages per build:
++          # {Linux-x86_64, Linux-arm64, macOS-x86_64, macOS-arm64, Win64-x86_64} * {static, shared}
++          # and 4 JARS {Linux-x86_64, macOS-x86_64, macOS-arm64, Win64-x86_64}
++          if cnt >= 28: # Keep at most 2 builds
++            delete = True
++          if asset.name.startswith(samedayprefix):
++            delete = True
++          # convert to timezone-aware datetime
++          age = datetime.datetime.now().replace(tzinfo=datetime.timezone.utc) - asset.created_at
++          if age.days > 7:
++            delete = True
++          if delete:
++            asset.delete_asset()
++
++        # upload as asset with proper name
++        rel.upload_asset(package, name=filename)
+diff --git a/.github/actions/store-to-release/action.yml b/.github/actions/store-to-release/action.yml
+new file mode 100644
+index 000000000..af98727be
+--- /dev/null
++++ b/.github/actions/store-to-release/action.yml
+@@ -0,0 +1,31 @@
++name: Store to release
++description: Store an asset on the release page associated to current release
++inputs:
++  asset-filename:
++    description: filename of the asset
++  github-token:
++    description: token to upload asset to current release
++  
++runs:
++  using: composite
++  steps:
++    - name: Store to release
++      shell: 'python3 {0}'
++      env:
++        GITHUB_TOKEN: ${{ inputs.github-token }}
++        PACKAGE: ${{ inputs.asset-filename }}
++      run: |
++        import os
++        from github import Github
++
++        refname = os.getenv('GITHUB_REF_NAME')
++        gh = Github(os.getenv('GITHUB_TOKEN'))
++        repo = gh.get_repo(os.getenv('GITHUB_REPOSITORY'))
++        try:
++          rel = repo.get_release(refname)
++        except:
++          print("New release from " + refname)
++          ref = repo.get_git_ref('tags/' + refname)
++          commit = repo.get_git_commit(ref.object.sha)
++          rel = repo.create_git_release(refname, refname, commit.message)
++        rel.upload_asset(os.getenv('PACKAGE'))
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 0f1946fce..aab49ca79 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -19,6 +19,7 @@ jobs:
+             cache-key: production
+             strip-bin: strip
+             python-bindings: true
++            java-bindings: true
+             build-documentation: true
+             check-examples: true
+             package-name: cvc5-Linux-x86_64
+@@ -38,6 +39,7 @@ jobs:
+             cache-key: production
+             strip-bin: strip
+             python-bindings: true
++            java-bindings: true
+             check-examples: true
+             package-name: cvc5-macOS-x86_64
+             macos-target: 10.13
+@@ -50,6 +52,7 @@ jobs:
+             cache-key: production-arm64
+             strip-bin: strip
+             python-bindings: true
++            java-bindings: true
+             check-examples: true
+             package-name: cvc5-macOS-arm64
+             macos-target: 11.0
+@@ -69,6 +72,7 @@ jobs:
+             cache-key: production-win64-native
+             strip-bin: strip
+             python-bindings: true
++            java-bindings: true
+             windows-build: true
+             shell: 'msys2 {0}'
+             check-examples: true
+@@ -225,6 +229,7 @@ jobs:
+         build-dir: ${{ steps.configure-and-build.outputs.shared-build-dir }}
+ 
+     - name: Create and add shared package to latest and release
++      id: create-shared-package
+       if: matrix.build.package-name && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+       uses: ./.github/actions/add-package
+       with:
+@@ -245,3 +250,14 @@ jobs:
+         github-token-latest: ${{ secrets.GITHUB_TOKEN }}
+         github-token-release: ${{ secrets.ACTION_USER_TOKEN }}
+         shell: ${{ matrix.build.shell }}
++
++    - name: Create and add JAR to latest and release
++      if: matrix.build.java-bindings && matrix.build.package-name && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
++      uses: ./.github/actions/add-jar
++      with:
++        install-path: ${{ steps.create-shared-package.outputs.install-path }}
++        jar-libs-dir: cvc5-libs
++        jar-name: ${{ matrix.build.package-name }}${{ matrix.build.gpl-tag }}-java-api
++        github-token-latest: ${{ secrets.GITHUB_TOKEN }}
++        github-token-release: ${{ secrets.ACTION_USER_TOKEN }}
++        shell: ${{ matrix.build.shell }}
+diff --git a/src/api/java/io/github/cvc5/Utils.java b/src/api/java/io/github/cvc5/Utils.java
+index ee4803ced..f806ddf1c 100644
+--- a/src/api/java/io/github/cvc5/Utils.java
++++ b/src/api/java/io/github/cvc5/Utils.java
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Mudathir Mohamed, Aina Niemetz, Hans-Joerg Schurr
++ *   Mudathir Mohamed, Aina Niemetz, Hans-Joerg Schurr, Daniel Larraz
+  *
+  * This file is part of the cvc5 project.
+  *
+@@ -15,23 +15,154 @@
+ 
+ package io.github.cvc5;
+ 
++import java.io.BufferedReader;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.io.InputStreamReader;
++import java.io.OutputStream;
+ import java.math.BigInteger;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
+ 
+ public class Utils
+ {
++  public static final String LIBPATH_IN_JAR = "/cvc5-libs";
++
++  private static boolean areLibrariesLoaded = false;
++
+   static
+   {
+     loadLibraries();
+   }
+ 
+   /**
+-   * Load cvc5 jni library.
++   * Reads a text file from the specified path within the JAR file and returns a list of library
++   * filenames.
++   * @param pathInJar The path to the text file inside the JAR
++   * @return a list of filenames read from the file
++   * @throws UnsatisfiedLinkError If the text file does not exist
++   * @throws IOException If an I/O error occurs
++   */
++  public static List<String> readLibraryFilenames(String pathInJar)
++      throws IOException, UnsatisfiedLinkError
++  {
++    List<String> filenames = new ArrayList<>();
++
++    // Load the input stream from the resource path within the JAR
++    try (InputStream inputStream = Utils.class.getResourceAsStream(pathInJar);
++         BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream)))
++    {
++      // Check if the input stream is null (resource not found)
++      if (inputStream == null)
++      {
++        throw new UnsatisfiedLinkError("Resource not found: " + pathInJar);
++      }
++
++      String line;
++      // Read each line from the file and add it to the list
++      while ((line = reader.readLine()) != null)
++      {
++        filenames.add(line);
++      }
++    }
++
++    return filenames;
++  }
++
++  /**
++   * Transfers all bytes from the provided {@link InputStream} to the specified {@link
++   * FileOutputStream}.
++   *
++   * <p>Note: This method replicates the functionality of {@link
++   * InputStream#transferTo(OutputStream)}, which was introduced in Java 9 (currently, the minimum
++   * required Java version is 1.8)</p>
++   *
++   * @param inputStream The input stream from which data is read
++   * @param outputStream The output stream to which data is written
++   * @throws Exception If an I/O error occurs during reading or writing
++   * @see InputStream#transferTo(OutputStream)
++   */
++  public static void transferTo(InputStream inputStream, FileOutputStream outputStream)
++      throws Exception
++  {
++    byte[] buffer = new byte[4096];
++    int bytesRead;
++    while ((bytesRead = inputStream.read(buffer)) != -1)
++    {
++      outputStream.write(buffer, 0, bytesRead);
++    }
++  }
++
++  /**
++   * Loads a native library from a specified path within a JAR file and loads it into the JVM.
++   *
++   * @param path The path inside the JAR where the library is located (e.g., "/cvc5-libs").
++   * @param filename The name of the library file (e.g., "libcvc5.so").
++   * @throws Exception If the library cannot be found, the filename lacks an extension,
++   *                   or any I/O operation fails during extraction.
++   * @throws UnsatisfiedLinkError If the library cannot be located at the specified path.
++   */
++  public static void loadLibraryFromJar(Path tempDir, String path, String filename) throws Exception
++  {
++    String pathInJar = path + "/" + filename;
++    // Extract the library from the JAR
++    InputStream inputStream = Utils.class.getResourceAsStream(pathInJar);
++    if (inputStream == null)
++    {
++      throw new UnsatisfiedLinkError("Library not found: " + pathInJar);
++    }
++
++    // Create a temporary file for the native library
++    File tempLibrary = tempDir.resolve(filename).toFile();
++    tempLibrary.deleteOnExit(); // Mark the file for deletion on exit
++
++    // Write the extracted library to the temp file
++    try (FileOutputStream outputStream = new FileOutputStream(tempLibrary))
++    {
++      transferTo(inputStream, outputStream);
++    }
++
++    // Load the library
++    System.load(tempLibrary.getAbsolutePath());
++  }
++
++  /**
++   * Load cvc5 native libraries.
+    */
+   public static void loadLibraries()
+   {
+-    if (!Boolean.parseBoolean(System.getProperty("cvc5.skipLibraryLoad")))
++    if (!areLibrariesLoaded && !Boolean.parseBoolean(System.getProperty("cvc5.skipLibraryLoad")))
+     {
+-      System.loadLibrary("cvc5jni");
++      try
++      {
++        System.loadLibrary("cvc5jni");
++      }
++      catch (UnsatisfiedLinkError jni_ex)
++      {
++        try
++        {
++          // Try to extract the libraries from a JAR in the classpath
++          List<String> filenames = readLibraryFilenames(LIBPATH_IN_JAR + "/filenames.txt");
++
++          // Create a temporary directory to store the libraries
++          Path tempDir = Files.createTempDirectory("cvc5-libs");
++          tempDir.toFile().deleteOnExit(); // Mark the directory for deletion on exit
++
++          for (String filename : filenames)
++          {
++            loadLibraryFromJar(tempDir, LIBPATH_IN_JAR, filename);
++          }
++        }
++        catch (Exception ex)
++        {
++          throw new UnsatisfiedLinkError("Couldn't load cvc5 native libraries");
++        }
++      }
++      areLibrariesLoaded = true;
+     }
+   }
+ 
+-- 
+2.47.1
+

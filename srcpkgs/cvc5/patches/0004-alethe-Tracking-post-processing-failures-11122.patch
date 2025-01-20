@@ -1,0 +1,332 @@
+From 085ec8134e696333dd3c5caab8997e2a2b81a5d0 Mon Sep 17 00:00:00 2001
+From: Haniel Barbosa <hanielbbarbosa@gmail.com>
+Date: Fri, 9 Aug 2024 14:43:14 -0300
+Subject: [PATCH 004/312] [alethe] Tracking post-processing failures (#11122)
+
+This commit also updates the interface of the post-processor and its
+calling by the proof manager.
+
+Due to upcoming usage of the ASSUME and SCOPE rules in the Alethe
+post-processing, we disable the cvc5's proof checking, in case it is on,
+during post-processing.
+---
+ src/proof/alethe/alethe_post_processor.cpp | 49 +++++++++++---
+ src/proof/alethe/alethe_post_processor.h   | 78 ++++++++++++++--------
+ src/proof/proof_checker.cpp                |  5 ++
+ src/proof/proof_checker.h                  |  3 +
+ src/smt/proof_manager.cpp                  | 21 ++++--
+ 5 files changed, 112 insertions(+), 44 deletions(-)
+
+diff --git a/src/proof/alethe/alethe_post_processor.cpp b/src/proof/alethe/alethe_post_processor.cpp
+index 90cfdba5f..2cca0ac0d 100644
+--- a/src/proof/alethe/alethe_post_processor.cpp
++++ b/src/proof/alethe/alethe_post_processor.cpp
+@@ -60,17 +60,26 @@ AletheProofPostprocessCallback::AletheProofPostprocessCallback(
+   d_false = nm->mkConst(false);
+ }
+ 
++const std::string& AletheProofPostprocessCallback::getError()
++{
++  return d_reasonForConversionFailure;
++}
++
+ bool AletheProofPostprocessCallback::shouldUpdate(std::shared_ptr<ProofNode> pn,
+                                                   const std::vector<Node>& fa,
+                                                   bool& continueUpdate)
+ {
+-  return pn->getRule() != ProofRule::ALETHE_RULE;
++  return d_reasonForConversionFailure.empty()
++         && pn->getRule() != ProofRule::ALETHE_RULE;
+ }
+ 
+ bool AletheProofPostprocessCallback::shouldUpdatePost(
+     std::shared_ptr<ProofNode> pn, const std::vector<Node>& fa)
+ {
+-  Assert(!pn->getArguments().empty());
++  if (!d_reasonForConversionFailure.empty() || pn->getArguments().empty())
++  {
++    return false;
++  }
+   AletheRule rule = getAletheRule(pn->getArguments()[0]);
+   return rule == AletheRule::RESOLUTION_OR || rule == AletheRule::REORDERING
+          || rule == AletheRule::CONTRACTION;
+@@ -2356,10 +2365,22 @@ bool AletheProofPostprocessCallback::addAletheStep(
+   std::vector<Node> newArgs{
+       nodeManager()->mkConstInt(Rational(static_cast<uint32_t>(rule)))};
+   newArgs.push_back(res);
+-  newArgs.push_back(d_anc.convert(conclusion));
++  conclusion = d_anc.maybeConvert(conclusion);
++  if (conclusion.isNull())
++  {
++    d_reasonForConversionFailure = d_anc.getError();
++    return false;
++  }
++  newArgs.push_back(conclusion);
+   for (const Node& arg : args)
+   {
+-    newArgs.push_back(d_anc.convert(arg));
++    Node conv = d_anc.maybeConvert(arg);
++    if (conv.isNull())
++    {
++      d_reasonForConversionFailure = d_anc.getError();
++      return false;
++    }
++    newArgs.push_back(conv);
+   }
+   Trace("alethe-proof") << "... add alethe step " << res << " / " << conclusion
+                         << " " << rule << " " << children << " / " << newArgs
+@@ -2381,15 +2402,19 @@ bool AletheProofPostprocessCallback::addAletheStepFromOr(
+ }
+ 
+ AletheProofPostprocess::AletheProofPostprocess(Env& env,
+-                                               AletheNodeConverter& anc,
+-                                               bool resPivots)
+-    : EnvObj(env), d_cb(env, anc, resPivots)
++                                               AletheNodeConverter& anc)
++    : EnvObj(env), d_cb(env, anc, options().proof.proofAletheResPivots)
+ {
+ }
+ 
+ AletheProofPostprocess::~AletheProofPostprocess() {}
+ 
+-void AletheProofPostprocess::process(std::shared_ptr<ProofNode> pf)
++const std::string& AletheProofPostprocess::getError()
++{
++  return d_reasonForConversionFailure;
++}
++
++bool AletheProofPostprocess::process(std::shared_ptr<ProofNode> pf)
+ {
+   // first two nodes are scopes for definitions and other assumptions. We
+   // process only the internal proof node. And we merge these two scopes
+@@ -2427,8 +2452,14 @@ void AletheProofPostprocess::process(std::shared_ptr<ProofNode> pf)
+     d_env.getProofNodeManager()->updateNode(pf.get(), npn.get());
+     Trace("pf-process-debug") << "...update node finished." << std::endl;
+   }
++  // Since the final step may also lead to issues, need to test here again
++  if (!d_cb.getError().empty())
++  {
++    d_reasonForConversionFailure = d_cb.getError();
++    return false;
++  }
++  return true;
+ }
+ 
+ }  // namespace proof
+-
+ }  // namespace cvc5::internal
+diff --git a/src/proof/alethe/alethe_post_processor.h b/src/proof/alethe/alethe_post_processor.h
+index c3817bbe0..2a029b5fc 100644
+--- a/src/proof/alethe/alethe_post_processor.h
++++ b/src/proof/alethe/alethe_post_processor.h
+@@ -32,12 +32,20 @@ class AletheProofPostprocessCallback : protected EnvObj,
+                                        public ProofNodeUpdaterCallback
+ {
+  public:
++  /** The callback for post-processing proof nodes into the Alethe format.
++   *
++   * @param env The environment
++   * @param anc The Alethe node converter
++   * @param resPivots Whether pivots should be used in resolution
++   */
+   AletheProofPostprocessCallback(Env& env,
+                                  AletheNodeConverter& anc,
+                                  bool resPivots);
++
+   ~AletheProofPostprocessCallback() {}
++
+   /** Should proof pn be updated? Only if its top-level proof rule is not an
+-   *  Alethe proof rule.
++   *  Alethe proof rule and d_reasonForConversionFailure is not set.
+    */
+   bool shouldUpdate(std::shared_ptr<ProofNode> pn,
+                     const std::vector<Node>& fa,
+@@ -55,7 +63,8 @@ class AletheProofPostprocessCallback : protected EnvObj,
+   /** Should proof pn be updated at post-visit?
+    *
+    * Only if its top-level Alethe proof rule is RESOLUTION_OR, REORDERING, or
+-   * CONTRACTION.
++   * CONTRACTION, which may require updates depending on how the children have
++   * changed. And as long as d_reasonForConversionFailure is not set.
+    */
+   bool shouldUpdatePost(std::shared_ptr<ProofNode> pn,
+                         const std::vector<Node>& fa) override;
+@@ -88,27 +97,30 @@ class AletheProofPostprocessCallback : protected EnvObj,
+                  const std::vector<Node>& args,
+                  CDProof* cdp);
+ 
++  /** Retrieve the saved error message, if any. */
++  const std::string& getError();
++
+  private:
+   /** The Alethe node converter */
+   AletheNodeConverter& d_anc;
+-  /** Whether to keep the pivots in the alguments of the resolution rule */
++  /** Error message saved during failed conversion. */
++  std::string d_reasonForConversionFailure;
++
++  /** Whether to keep the pivots in the arguments of the resolution rule. */
+   bool d_resPivots;
+-  /** The cl operator
+-   * For every step the conclusion is a clause. But since the or operator
+-   *requires at least two arguments it is extended by the cl operator. In case
+-   *of more than one argument it corresponds to or otherwise it is the identity.
+-   **/
++  /** The cl operator. */
+   Node d_cl;
+-  /**
+-   * This method adds a new ALETHE_RULE step to the proof, with `rule` as the
++  /** Adds an Alethe step to the CDProof argument
++   *
++   * The added step to `cdp` uses ProofRule::ALETHE_RULE with `rule` as the
+    * first argument, the original conclusion `res` as the second and
+    * `conclusion`, the result to be printed (which may or may not differ from
+    * `res`), as the third.
+    *
+-   * @param rule The id of the Alethe rule,
+-   * @param res The expected result of the application,
++   * @param rule The id of the Alethe rule
++   * @param res The original conclusion
+    * @param conclusion The conclusion to be printed for the step
+-   * @param children The children of the application,
++   * @param children The children of the application
+    * @param args The arguments of the application
+    * @param cdp The proof to add to
+    * @return True if the step could be added, or false if not.
+@@ -120,15 +132,12 @@ class AletheProofPostprocessCallback : protected EnvObj,
+                      const std::vector<Node>& args,
+                      CDProof& cdp);
+   /**
+-   * As above, but for proof nodes with original conclusions of the form `(or F1
+-   * ... Fn)` whose conclusion-to-be-printed must be `(cl F1 ... Fn)`.
+-   *
+-   * This method internally calls addAletheStep. The kind of the given Node has
+-   * to be OR.
++   * As above, but `res` must be a node of the form `(or F1 ... Fn)` and the
++   * conclusion to be printed will be the clause `(cl F1 ... Fn)`.
+    *
+    * @param rule The id of the Alethe rule,
+-   * @param res The expected result of the application in form (or F1 ... Fn),
+-   * @param children The children of the application,
++   * @param res The original conclusion
++   * @param children The children of the application
+    * @param args The arguments of the application
+    * @param cdp The proof to add to
+    * @return True if the step could be added, or false if not.
+@@ -139,12 +148,13 @@ class AletheProofPostprocessCallback : protected EnvObj,
+                            const std::vector<Node>& args,
+                            CDProof& cdp);
+ 
+-  /** Test whether resolution premise is wrongly derived as a non-singleton
+-   * clause. Fix if needed.
++  /** Test whether the given resolution premise is being used as a singleton
++   * clause but is justified as a non-singleton clause, and fix if needed.
+    *
+-   * If the premise is used as a singleton but its proof concludes a
+-   * non-singleton clause, a new proof of its derivation as a singleton is added
+-   * to cdp.
++   * This happens with `premise` is a node (or F1 ... Fn) whose proof in `cdp`
++   * justifies `(cl (or F1 ... Fn))`, but should justify `(cl F1 ... Fn)`. If
++   * that is the case, steps will be added to `cdp` to justify the needed
++   * clause.
+    */
+   bool maybeReplacePremiseProof(Node premise, CDProof* cdp);
+ 
+@@ -160,18 +170,28 @@ class AletheProofPostprocessCallback : protected EnvObj,
+ class AletheProofPostprocess : protected EnvObj
+ {
+  public:
+-  AletheProofPostprocess(Env& env, AletheNodeConverter& anc, bool resPivots);
++  AletheProofPostprocess(Env& env, AletheNodeConverter& anc);
+   ~AletheProofPostprocess();
+-  /** post-process */
+-  void process(std::shared_ptr<ProofNode> pf);
++  /** Convert the proof node into the Alethe proof format
++   *
++   * If the conversion is possible, true is returned. Otherwise, false. The
++   * conversion may fail if the proof contains unsupported elements in the
++   * Alethe proof calculus, such as uncategorized Skolems.
++   */
++  bool process(std::shared_ptr<ProofNode> pf);
++
++  /** Retrieve the saved error message, if any. */
++  const std::string& getError();
+ 
+  private:
+   /** The post process callback */
+   AletheProofPostprocessCallback d_cb;
++
++  /** The reason for conversion failure, if any. */
++  std::string d_reasonForConversionFailure;
+ };
+ 
+ }  // namespace proof
+-
+ }  // namespace cvc5::internal
+ 
+ #endif
+diff --git a/src/proof/proof_checker.cpp b/src/proof/proof_checker.cpp
+index f69ed9dee..374f78a68 100644
+--- a/src/proof/proof_checker.cpp
++++ b/src/proof/proof_checker.cpp
+@@ -141,6 +141,11 @@ Node ProofChecker::checkDebug(ProofRule id,
+   return res;
+ }
+ 
++void ProofChecker::setProofCheckMode(options::ProofCheckMode pcMode)
++{
++  d_pcMode = pcMode;
++}
++
+ Node ProofChecker::checkInternal(ProofRule id,
+                                  const std::vector<Node>& cchildren,
+                                  const std::vector<Node>& args,
+diff --git a/src/proof/proof_checker.h b/src/proof/proof_checker.h
+index e6e35c030..ed5c5aea2 100644
+--- a/src/proof/proof_checker.h
++++ b/src/proof/proof_checker.h
+@@ -125,6 +125,9 @@ class ProofChecker
+    */
+   bool isPedanticFailure(ProofRule id, std::ostream* out) const;
+ 
++  /** Assigns argument pcMode to d_pcMode. */
++  void setProofCheckMode(options::ProofCheckMode pcMode);
++
+  private:
+   /** statistics class */
+   ProofCheckerStatistics d_stats;
+diff --git a/src/smt/proof_manager.cpp b/src/smt/proof_manager.cpp
+index 1ea34ad57..3871f77dc 100644
+--- a/src/smt/proof_manager.cpp
++++ b/src/smt/proof_manager.cpp
+@@ -293,12 +293,21 @@ void PfManager::printProof(std::ostream& out,
+   }
+   else if (mode == options::ProofFormatMode::ALETHE)
+   {
+-    proof::AletheNodeConverter anc(nodeManager());
+-    proof::AletheProofPostprocess vpfpp(
+-        d_env, anc, options().proof.proofAletheResPivots);
+-    vpfpp.process(fp);
+-    proof::AletheProofPrinter vpp(d_env, anc);
+-    vpp.print(out, fp, assertionNames);
++    options::ProofCheckMode oldMode = options().proof.proofCheck;
++    d_pnm->getChecker()->setProofCheckMode(options::ProofCheckMode::NONE);
++    proof::AletheNodeConverter anc(nodeManager(),
++                                   options().proof.proofAletheDefineSkolems);
++    proof::AletheProofPostprocess vpfpp(d_env, anc);
++    if (vpfpp.process(fp))
++    {
++      proof::AletheProofPrinter vpp(d_env, anc);
++      vpp.print(out, fp, assertionNames);
++    }
++    else
++    {
++      out << "(error " << vpfpp.getError() << ")";
++    }
++    d_pnm->getChecker()->setProofCheckMode(oldMode);
+   }
+   else if (mode == options::ProofFormatMode::LFSC)
+   {
+-- 
+2.47.1
+

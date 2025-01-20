@@ -1,0 +1,53 @@
+From 8bd495169b9332c640bb8f00cb274a2d56041d9b Mon Sep 17 00:00:00 2001
+From: Eric Wieser <wieser.eric@gmail.com>
+Date: Fri, 1 Nov 2024 22:54:21 +0000
+Subject: [PATCH 153/312] Remove implicit conversion from char const* to bool
+ (#11328)
+
+`convert` expects a boolean as its second argument, but the callers were
+passing string literals.
+As the default is `true`, we can omit the argument entirely.
+
+Co-authored-by: Haniel Barbosa <hanielbbarbosa@gmail.com>
+---
+ src/proof/dot/dot_printer.cpp | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/proof/dot/dot_printer.cpp b/src/proof/dot/dot_printer.cpp
+index 61e3ae4a5..41e3a8cc8 100644
+--- a/src/proof/dot/dot_printer.cpp
++++ b/src/proof/dot/dot_printer.cpp
+@@ -348,7 +348,7 @@ void DotPrinter::printProofNodeInfo(std::ostream& out, const ProofNode* pn)
+ 
+   out << "\t" << d_ruleID << " [ label = \"{";
+ 
+-  resultStr << d_lbind.convert(pn->getResult(), "let");
++  resultStr << d_lbind.convert(pn->getResult());
+   std::string astring = resultStr.str();
+   out << sanitizeString(astring);
+ 
+@@ -503,7 +503,7 @@ void DotPrinter::ruleArguments(std::ostringstream& currentArguments,
+     // if two arguments, ignore first and print second
+     if (args.size() == 2)
+     {
+-      currentArguments << d_lbind.convert(args[1], "let");
++      currentArguments << d_lbind.convert(args[1]);
+     }
+     else
+     {
+@@ -527,10 +527,10 @@ void DotPrinter::ruleArguments(std::ostringstream& currentArguments,
+   }
+   else
+   {
+-    currentArguments << d_lbind.convert(args[0], "let");
++    currentArguments << d_lbind.convert(args[0]);
+     for (size_t i = 1, size = args.size(); i < size; i++)
+     {
+-      currentArguments << ", " << d_lbind.convert(args[i], "let");
++      currentArguments << ", " << d_lbind.convert(args[i]);
+     }
+   }
+   currentArguments << " ]";
+-- 
+2.47.1
+

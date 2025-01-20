@@ -1,0 +1,152 @@
+From 973ec555d552c7e0d0747308f18498f9838327e2 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 3 Oct 2024 10:00:24 -0500
+Subject: [PATCH 099/312] Disable checking options in subsolvers used by
+ quantifiers modules (#11240)
+
+This should be done regardless but is necessary for a new proof logging
+infrastructure, where we do not want to log proofs in subsolvers.
+---
+ src/theory/quantifiers/cegqi/nested_qe.cpp            | 7 ++++++-
+ src/theory/quantifiers/inst_strategy_mbqi.cpp         | 6 +++++-
+ src/theory/quantifiers/inst_strategy_mbqi.h           | 2 ++
+ src/theory/quantifiers/inst_strategy_sub_conflict.cpp | 2 ++
+ src/theory/quantifiers/mbqi_fast_sygus.cpp            | 5 ++++-
+ src/theory/quantifiers/mbqi_fast_sygus.h              | 2 ++
+ 6 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/src/theory/quantifiers/cegqi/nested_qe.cpp b/src/theory/quantifiers/cegqi/nested_qe.cpp
+index 5062600c5..e9554130c 100644
+--- a/src/theory/quantifiers/cegqi/nested_qe.cpp
++++ b/src/theory/quantifiers/cegqi/nested_qe.cpp
+@@ -21,6 +21,7 @@
+ #include "smt/env.h"
+ #include "theory/rewriter.h"
+ #include "theory/smt_engine_subsolver.h"
++#include "smt/set_defaults.h"
+ 
+ namespace cvc5::internal {
+ namespace theory {
+@@ -140,7 +141,11 @@ Node NestedQe::doQe(Env& env, Node q)
+   NodeManager* nm = NodeManager::currentNM();
+   q = nm->mkNode(Kind::EXISTS, q[0], q[1].negate());
+   std::unique_ptr<SolverEngine> smt_qe;
+-  initializeSubsolver(smt_qe, env);
++  Options subOptions;
++  subOptions.copyValues(env.getOptions());
++  smt::SetDefaults::disableChecking(subOptions);
++  SubsolverSetupInfo ssi(env, subOptions);
++  initializeSubsolver(smt_qe, ssi);
+   Node qqe = smt_qe->getQuantifierElimination(q, true);
+   if (expr::hasBoundVar(qqe))
+   {
+diff --git a/src/theory/quantifiers/inst_strategy_mbqi.cpp b/src/theory/quantifiers/inst_strategy_mbqi.cpp
+index ba21731ff..a938b332d 100644
+--- a/src/theory/quantifiers/inst_strategy_mbqi.cpp
++++ b/src/theory/quantifiers/inst_strategy_mbqi.cpp
+@@ -27,6 +27,7 @@
+ #include "theory/smt_engine_subsolver.h"
+ #include "theory/strings/theory_strings_utils.h"
+ #include "theory/uf/function_const.h"
++#include "smt/set_defaults.h"
+ 
+ using namespace std;
+ using namespace cvc5::internal::kind;
+@@ -53,6 +54,8 @@ InstStrategyMbqi::InstStrategyMbqi(Env& env,
+   {
+     d_msenum.reset(new MbqiFastSygus(env, *this));
+   }
++  d_subOptions.copyValues(options());
++  smt::SetDefaults::disableChecking(d_subOptions);
+ }
+ 
+ void InstStrategyMbqi::reset_round(Theory::Effort e) { d_quantChecked.clear(); }
+@@ -220,7 +223,8 @@ void InstStrategyMbqi::process(Node q)
+   Node query = nm->mkAnd(constraints);
+ 
+   std::unique_ptr<SolverEngine> mbqiChecker;
+-  initializeSubsolver(mbqiChecker, d_env);
++  SubsolverSetupInfo ssi(d_env, d_subOptions);
++  initializeSubsolver(mbqiChecker, ssi);
+   mbqiChecker->setOption("produce-models", "true");
+   mbqiChecker->assertFormula(query);
+   Trace("mbqi") << "*** Check sat..." << std::endl;
+diff --git a/src/theory/quantifiers/inst_strategy_mbqi.h b/src/theory/quantifiers/inst_strategy_mbqi.h
+index b46823651..7f5a80a20 100644
+--- a/src/theory/quantifiers/inst_strategy_mbqi.h
++++ b/src/theory/quantifiers/inst_strategy_mbqi.h
+@@ -132,6 +132,8 @@ class InstStrategyMbqi : public QuantifiersModule
+   std::unordered_set<Kind, kind::KindHashFunction> d_nonClosedKinds;
+   /** Submodule for sygus enum */
+   std::unique_ptr<MbqiFastSygus> d_msenum;
++  /** The options for subsolver calls */
++  Options d_subOptions;
+ };
+ 
+ }  // namespace quantifiers
+diff --git a/src/theory/quantifiers/inst_strategy_sub_conflict.cpp b/src/theory/quantifiers/inst_strategy_sub_conflict.cpp
+index 74d18565f..ab998f08e 100644
+--- a/src/theory/quantifiers/inst_strategy_sub_conflict.cpp
++++ b/src/theory/quantifiers/inst_strategy_sub_conflict.cpp
+@@ -38,6 +38,8 @@ InstStrategySubConflict::InstStrategySubConflict(
+   // determine the options to use for the verification subsolvers we spawn
+   // we start with the provided options
+   d_subOptions.copyValues(options());
++  // disable checking first
++  smt::SetDefaults::disableChecking(d_subOptions);
+   // requires full proofs
+   d_subOptions.write_smt().produceProofs = true;
+   // don't do simplification, which can preprocess quantifiers to those not
+diff --git a/src/theory/quantifiers/mbqi_fast_sygus.cpp b/src/theory/quantifiers/mbqi_fast_sygus.cpp
+index 7007cc530..6bc584edf 100644
+--- a/src/theory/quantifiers/mbqi_fast_sygus.cpp
++++ b/src/theory/quantifiers/mbqi_fast_sygus.cpp
+@@ -24,6 +24,7 @@
+ #include "theory/quantifiers/sygus/sygus_grammar_cons.h"
+ #include "theory/smt_engine_subsolver.h"
+ #include "util/random.h"
++#include "smt/set_defaults.h"
+ 
+ namespace cvc5::internal {
+ namespace theory {
+@@ -182,6 +183,8 @@ bool MQuantInfo::shouldEnumerate(const TypeNode& tn)
+ MbqiFastSygus::MbqiFastSygus(Env& env, InstStrategyMbqi& parent)
+     : EnvObj(env), d_parent(parent)
+ {
++  d_subOptions.copyValues(options());
++  smt::SetDefaults::disableChecking(d_subOptions);
+ }
+ 
+ MQuantInfo& MbqiFastSygus::getOrMkQuantInfo(const Node& q)
+@@ -212,6 +215,7 @@ bool MbqiFastSygus::constructInstantiation(
+           << "  " << q[0][i] << " -> " << mvs[i] << std::endl;
+     }
+   }
++  SubsolverSetupInfo ssi(d_env, d_subOptions);
+   MQuantInfo& qi = getOrMkQuantInfo(q);
+   std::vector<size_t> indices = qi.getInstIndices();
+   std::vector<size_t> nindices = qi.getNoInstIndices();
+@@ -285,7 +289,6 @@ bool MbqiFastSygus::constructInstantiation(
+       Node queryCheck = queryCurr.substitute(v, TNode(retc));
+       queryCheck = rewrite(queryCheck);
+       Trace("mbqi-model-enum") << "...check " << queryCheck << std::endl;
+-      SubsolverSetupInfo ssi(d_env);
+       Result r = checkWithSubsolver(queryCheck, ssi);
+       if (r == Result::SAT)
+       {
+diff --git a/src/theory/quantifiers/mbqi_fast_sygus.h b/src/theory/quantifiers/mbqi_fast_sygus.h
+index 5e650e802..93d0b39e6 100644
+--- a/src/theory/quantifiers/mbqi_fast_sygus.h
++++ b/src/theory/quantifiers/mbqi_fast_sygus.h
+@@ -152,6 +152,8 @@ class MbqiFastSygus : protected EnvObj
+   std::map<Node, MQuantInfo> d_qinfo;
+   /** Reference to the parent instantiation strategy */
+   InstStrategyMbqi& d_parent;
++  /** The options for subsolver calls */
++  Options d_subOptions;
+ };
+ 
+ }  // namespace quantifiers
+-- 
+2.47.1
+

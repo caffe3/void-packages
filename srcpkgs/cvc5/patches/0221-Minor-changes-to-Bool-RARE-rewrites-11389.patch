@@ -1,0 +1,197 @@
+From 6d47d158a4ef43c13a494c6dabab210b862959fc Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 5 Dec 2024 14:06:40 -0600
+Subject: [PATCH 221/312] Minor changes to Bool RARE rewrites (#11389)
+
+Note this eliminates some rewrites which are subsumed by ACI_NORM.
+---
+ include/cvc5/cvc5_proof_rule.h  | 18 ++++++++----------
+ proofs/eo/cpc/rules/Rewrites.eo | 30 +++++++++++++-----------------
+ src/theory/booleans/rewrites    | 16 +++++++++++-----
+ 3 files changed, 32 insertions(+), 32 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 46217c2dc..c437cb138 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -3123,20 +3123,12 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(BOOL_IMPL_ELIM),
+   /** Auto-generated from RARE rule bool-or-true */
+   EVALUE(BOOL_OR_TRUE),
+-  /** Auto-generated from RARE rule bool-or-false */
+-  EVALUE(BOOL_OR_FALSE),
+   /** Auto-generated from RARE rule bool-or-flatten */
+   EVALUE(BOOL_OR_FLATTEN),
+-  /** Auto-generated from RARE rule bool-or-dup */
+-  EVALUE(BOOL_OR_DUP),
+-  /** Auto-generated from RARE rule bool-and-true */
+-  EVALUE(BOOL_AND_TRUE),
+   /** Auto-generated from RARE rule bool-and-false */
+   EVALUE(BOOL_AND_FALSE),
+   /** Auto-generated from RARE rule bool-and-flatten */
+   EVALUE(BOOL_AND_FLATTEN),
+-  /** Auto-generated from RARE rule bool-and-dup */
+-  EVALUE(BOOL_AND_DUP),
+   /** Auto-generated from RARE rule bool-and-conf */
+   EVALUE(BOOL_AND_CONF),
+   /** Auto-generated from RARE rule bool-and-conf2 */
+@@ -3151,6 +3143,8 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(BOOL_IMPLIES_DE_MORGAN),
+   /** Auto-generated from RARE rule bool-and-de-morgan */
+   EVALUE(BOOL_AND_DE_MORGAN),
++  /** Auto-generated from RARE rule bool-or-and-distrib */
++  EVALUE(BOOL_OR_AND_DISTRIB),
+   /** Auto-generated from RARE rule bool-xor-refl */
+   EVALUE(BOOL_XOR_REFL),
+   /** Auto-generated from RARE rule bool-xor-nrefl */
+@@ -3165,8 +3159,10 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(BOOL_XOR_ELIM),
+   /** Auto-generated from RARE rule bool-not-xor-elim */
+   EVALUE(BOOL_NOT_XOR_ELIM),
+-  /** Auto-generated from RARE rule bool-not-eq-elim */
+-  EVALUE(BOOL_NOT_EQ_ELIM),
++  /** Auto-generated from RARE rule bool-not-eq-elim1 */
++  EVALUE(BOOL_NOT_EQ_ELIM1),
++  /** Auto-generated from RARE rule bool-not-eq-elim2 */
++  EVALUE(BOOL_NOT_EQ_ELIM2),
+   /** Auto-generated from RARE rule ite-neg-branch */
+   EVALUE(ITE_NEG_BRANCH),
+   /** Auto-generated from RARE rule ite-then-true */
+@@ -3185,6 +3181,8 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(ITE_THEN_LOOKAHEAD_NOT_SELF),
+   /** Auto-generated from RARE rule ite-else-lookahead-not-self */
+   EVALUE(ITE_ELSE_LOOKAHEAD_NOT_SELF),
++  /** Auto-generated from RARE rule ite-expand */
++  EVALUE(ITE_EXPAND),
+   /** Auto-generated from RARE rule bool-not-ite-elim */
+   EVALUE(BOOL_NOT_ITE_ELIM),
+   /** Auto-generated from RARE rule ite-true-cond */
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index 361156448..5472cc688 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -262,22 +262,10 @@
+   :args (xs1 ys1)
+   :conclusion (= ($singleton_elim (or xs1 true ys1)) true)
+ )
+-(declare-rule bool-or-false ((xs1 Bool :list) (ys1 Bool :list))
+-  :args (xs1 ys1)
+-  :conclusion (= ($singleton_elim (or xs1 false ys1)) ($singleton_elim (or xs1 ys1)))
+-)
+ (declare-rule bool-or-flatten ((xs1 Bool :list) (b1 Bool) (ys1 Bool :list) (zs1 Bool :list))
+   :args (xs1 b1 ys1 zs1)
+   :conclusion (= ($singleton_elim (or xs1 ($singleton_elim (or b1 ys1)) zs1)) ($singleton_elim (or xs1 b1 ys1 zs1)))
+ )
+-(declare-rule bool-or-dup ((xs1 Bool :list) (b1 Bool) (ys1 Bool :list) (zs1 Bool :list))
+-  :args (xs1 b1 ys1 zs1)
+-  :conclusion (= (or xs1 b1 ys1 b1 zs1) ($singleton_elim (or xs1 b1 ys1 zs1)))
+-)
+-(declare-rule bool-and-true ((xs1 Bool :list) (ys1 Bool :list))
+-  :args (xs1 ys1)
+-  :conclusion (= ($singleton_elim (and xs1 true ys1)) ($singleton_elim (and xs1 ys1)))
+-)
+ (declare-rule bool-and-false ((xs1 Bool :list) (ys1 Bool :list))
+   :args (xs1 ys1)
+   :conclusion (= ($singleton_elim (and xs1 false ys1)) false)
+@@ -286,10 +274,6 @@
+   :args (xs1 b1 ys1 zs1)
+   :conclusion (= ($singleton_elim (and xs1 ($singleton_elim (and b1 ys1)) zs1)) ($singleton_elim (and xs1 b1 ys1 zs1)))
+ )
+-(declare-rule bool-and-dup ((xs1 Bool :list) (b1 Bool) (ys1 Bool :list) (zs1 Bool :list))
+-  :args (xs1 b1 ys1 zs1)
+-  :conclusion (= (and xs1 b1 ys1 b1 zs1) ($singleton_elim (and xs1 b1 ys1 zs1)))
+-)
+ (declare-rule bool-and-conf ((xs1 Bool :list) (w1 Bool) (ys1 Bool :list) (zs1 Bool :list))
+   :args (xs1 w1 ys1 zs1)
+   :conclusion (= (and xs1 w1 ys1 (not w1) zs1) false)
+@@ -318,6 +302,10 @@
+   :args (x1 y1 zs1)
+   :conclusion (= (not (and x1 y1 zs1)) (or (not x1) (not ($singleton_elim (and y1 zs1)))))
+ )
++(declare-rule bool-or-and-distrib ((y1 Bool) (y2 Bool) (y3 Bool :list) (zs1 Bool :list))
++  :args (y1 y2 y3 zs1)
++  :conclusion (= ($singleton_elim (or (and y1 y2 y3) zs1)) (and ($singleton_elim (or y1 zs1)) ($singleton_elim (or ($singleton_elim (and y2 y3)) zs1))))
++)
+ (declare-rule bool-xor-refl ((x1 Bool))
+   :args (x1)
+   :conclusion (= (xor x1 x1) false)
+@@ -346,10 +334,14 @@
+   :args (x1 y1)
+   :conclusion (= (not (xor x1 y1)) (= x1 y1))
+ )
+-(declare-rule bool-not-eq-elim ((x1 Bool) (y1 Bool))
++(declare-rule bool-not-eq-elim1 ((x1 Bool) (y1 Bool))
+   :args (x1 y1)
+   :conclusion (= (not (= x1 y1)) (= (not x1) y1))
+ )
++(declare-rule bool-not-eq-elim2 ((x1 Bool) (y1 Bool))
++  :args (x1 y1)
++  :conclusion (= (not (= x1 y1)) (= x1 (not y1)))
++)
+ (declare-rule ite-neg-branch ((c1 Bool) (x1 Bool) (y1 Bool))
+   :premises ((= (not y1) x1))
+   :args (c1 x1 y1)
+@@ -387,6 +379,10 @@
+   :args (c1 x1)
+   :conclusion (= (ite c1 x1 (not c1)) (ite c1 x1 true))
+ )
++(declare-rule ite-expand ((c1 Bool) (x1 Bool) (y1 Bool))
++  :args (c1 x1 y1)
++  :conclusion (= (ite c1 x1 y1) (and (or (not c1) x1) (or c1 y1)))
++)
+ (declare-rule bool-not-ite-elim ((c1 Bool) (x1 Bool) (y1 Bool))
+   :args (c1 x1 y1)
+   :conclusion (= (not (ite c1 x1 y1)) (ite c1 (not x1) (not y1)))
+diff --git a/src/theory/booleans/rewrites b/src/theory/booleans/rewrites
+index 9a8d55f35..b071b9f52 100644
+--- a/src/theory/booleans/rewrites
++++ b/src/theory/booleans/rewrites
+@@ -15,14 +15,10 @@
+ (define-rule bool-impl-elim ((t Bool) (s Bool)) (=> t s) (or (not t) s))
+ 
+ (define-rule bool-or-true ((xs Bool :list) (ys Bool :list)) (or xs true ys) true)
+-(define-rule* bool-or-false ((xs Bool :list) (ys Bool :list)) (or xs false ys) (or xs ys))
+ (define-rule* bool-or-flatten ((xs Bool :list) (b Bool) (ys Bool :list) (zs Bool :list)) (or xs (or b ys) zs) (or xs b ys zs))
+-(define-rule* bool-or-dup ((xs Bool :list) (b Bool) (ys Bool :list) (zs Bool :list)) (or xs b ys b zs) (or xs b ys zs))
+ 
+-(define-rule* bool-and-true ((xs Bool :list) (ys Bool :list)) (and xs true ys) (and xs ys))
+ (define-rule bool-and-false ((xs Bool :list) (ys Bool :list)) (and xs false ys) false)
+ (define-rule* bool-and-flatten ((xs Bool :list) (b Bool) (ys Bool :list) (zs Bool :list)) (and xs (and b ys) zs) (and xs b ys zs))
+-(define-rule* bool-and-dup ((xs Bool :list) (b Bool) (ys Bool :list) (zs Bool :list)) (and xs b ys b zs) (and xs b ys zs))
+ 
+ (define-rule bool-and-conf ((xs Bool :list) (w Bool) (ys Bool :list) (zs Bool :list)) (and xs w ys (not w) zs) false)
+ (define-rule bool-and-conf2 ((xs Bool :list) (w Bool) (ys Bool :list) (zs Bool :list)) (and xs (not w) ys w zs) false)
+@@ -41,6 +37,13 @@
+   (not (and y zs))
+   (or (not x) _))
+ 
++; We only permit distributing from the first child, or otherwise this rule
++; could apply to fix point on all AND children of an OR at once.
++(define-rule* bool-or-and-distrib ((y1 Bool) (y2 Bool) (y3 Bool :list) (zs Bool :list))
++  (or (and y1 y2 y3) zs)
++  (or (and y2 y3) zs)
++  (and (or y1 zs) _))
++
+ (define-rule bool-xor-refl ((x Bool)) (xor x x) false)
+ (define-rule bool-xor-nrefl ((x Bool)) (xor x (not x)) true)
+ (define-rule bool-xor-false ((x Bool)) (xor x false) x)
+@@ -49,7 +52,8 @@
+ (define-rule bool-xor-elim ((x Bool) (y Bool)) (xor x y) (= (not x) y))
+ (define-rule bool-not-xor-elim ((x Bool) (y Bool)) (not (xor x y)) (= x y))
+ 
+-(define-rule bool-not-eq-elim ((x Bool) (y Bool)) (not (= x y)) (= (not x) y))
++(define-rule bool-not-eq-elim1 ((x Bool) (y Bool)) (not (= x y)) (= (not x) y))
++(define-rule bool-not-eq-elim2 ((x Bool) (y Bool)) (not (= x y)) (= x (not y)))
+ 
+ (define-cond-rule ite-neg-branch ((c Bool) (x Bool) (y Bool)) (= (not y) x) (ite c x y) (= c x))
+ 
+@@ -64,4 +68,6 @@
+ (define-rule ite-then-lookahead-not-self ((c Bool) (x Bool)) (ite c (not c) x) (ite c false x))
+ (define-rule ite-else-lookahead-not-self ((c Bool) (x Bool)) (ite c x (not c)) (ite c x true))
+ 
++(define-rule ite-expand ((c Bool) (x Bool) (y Bool)) (ite c x y) (and (or (not c) x) (or c y)))
++
+ (define-rule bool-not-ite-elim ((c Bool) (x Bool) (y Bool)) (not (ite c x y)) (ite c (not x) (not y)))
+-- 
+2.47.1
+

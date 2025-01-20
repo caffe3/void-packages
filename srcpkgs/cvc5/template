@@ -1,0 +1,30 @@
+# Template file for 'cvc5'
+pkgname=cvc5
+version=1.2.0
+revision=1
+build_style=cmake
+configure_args="-DUSE_EDITLINE=ON -DBUILD_SHARED_LIBS=ON -DUSE_POLY=ON -DENABLE_IPO=ON -DCMAKE_BUILD_TYPE=Production"
+#python3-scikit-build python3-Cython python3-tomli
+hostmakedepends="python3 python3-parsing python3-pexpect python3-pip git pkg-config mold"
+makedepends="gmp-devel gmpxx-devel cadical-devel libpoly-devel symfpu-cvc5-git-devel libedit-devel ncurses-libtinfo-devel libbsd-devel"
+short_desc="Automatic theorem prover for Satisfiability Modulo Theories"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="BSD-3-Clause"
+homepage="https://github.com/cvc5/cvc5"
+distfiles="https://github.com/cvc5/cvc5/archive/refs/tags/cvc5-${version}.tar.gz"
+checksum="7877b1f89f8b6a6bcc643d9ab1c60535911f6a30e32233eafa9db8a3eae5e34e"
+python_version=3
+
+post_install() {
+	vlicense COPYING
+}
+
+cvc5-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove "usr/lib/*.so"
+		vmove usr/lib/cmake
+	}
+}

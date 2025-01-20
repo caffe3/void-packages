@@ -1,0 +1,72 @@
+From 5ee60a5f289aaa876ba25a8a33400129f2878777 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 20 Dec 2024 11:37:41 -0600
+Subject: [PATCH 261/312] Do not print BITVECTOR_EAGER_ATOM in cpc proofs
+ (#11377)
+
+BV_EAGER_ATOM can now be `refl`.
+
+Note that I've opened a wishue if we want a deeper refactoring to never
+print this kind at all, which will require changes to the smt2 printer.
+---
+ proofs/eo/cpc/theories/BitVectors.eo | 2 --
+ src/proof/alf/alf_node_converter.cpp | 7 +++++++
+ src/proof/alf/alf_printer.cpp        | 4 +++-
+ 3 files changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/proofs/eo/cpc/theories/BitVectors.eo b/proofs/eo/cpc/theories/BitVectors.eo
+index 258365b13..833d4eb1f 100644
+--- a/proofs/eo/cpc/theories/BitVectors.eo
++++ b/proofs/eo/cpc/theories/BitVectors.eo
+@@ -343,8 +343,6 @@
+   (BitVec m) Int)
+ )
+ 
+-(declare-const BITVECTOR_EAGER_ATOM (-> Bool Bool))
+-
+ ; internal operators
+ 
+ (declare-const @bit
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index 17df4681d..c0ae25145 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -295,6 +295,13 @@ Node AlfNodeConverter::postConvert(Node n)
+       return mkInternalApp("to_fp_bv", children, tn);
+     }
+   }
++  else if (k == Kind::BITVECTOR_EAGER_ATOM)
++  {
++    // For now, we explicity remove the application.
++    // https://github.com/cvc5/cvc5-wishues/issues/156: if the smt2 printer
++    // is refactored to silently ignore this kind, this case can be deleted.
++    return n[0];
++  }
+   else if (GenericOp::isIndexedOperatorKind(k))
+   {
+     TypeNode tn = n.getType();
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 151873738..30db9ff22 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -180,6 +180,7 @@ bool AlfPrinter::isHandled(const Options& opts, const ProofNode* pfn)
+     case ProofRule::QUANT_VAR_REORDERING:
+     case ProofRule::ENCODE_EQ_INTRO:
+     case ProofRule::HO_APP_ENCODE:
++    case ProofRule::BV_EAGER_ATOM:
+     case ProofRule::ACI_NORM:
+     case ProofRule::ARITH_POLY_NORM:
+     case ProofRule::ARITH_POLY_NORM_REL:
+@@ -496,7 +497,8 @@ std::string AlfPrinter::getRuleName(const ProofNode* pfn) const
+     ss << id;
+     return ss.str();
+   }
+-  else if (r == ProofRule::ENCODE_EQ_INTRO || r == ProofRule::HO_APP_ENCODE)
++  else if (r == ProofRule::ENCODE_EQ_INTRO || r == ProofRule::HO_APP_ENCODE
++           || r == ProofRule::BV_EAGER_ATOM)
+   {
+     // ENCODE_EQ_INTRO proves (= t (convert t)) from argument t,
+     // where (convert t) is indistinguishable from t according to the proof.
+-- 
+2.47.1
+

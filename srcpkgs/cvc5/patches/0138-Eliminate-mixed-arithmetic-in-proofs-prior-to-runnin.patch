@@ -1,0 +1,225 @@
+From 6cf35bbcc2f9c43b1a641c3f94dbea0d85c7d485 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 23 Oct 2024 10:00:16 -0500
+Subject: [PATCH 138/312] Eliminate mixed arithmetic in proofs prior to running
+ RARE reconstruction (#11308)
+
+This makes it so `--proof-elim-subtypes` is run before running RARE
+reconstruction and after macro elaboration.
+
+This requires another visit pass of the proof to recollect trusted
+steps.
+
+This is clearly the better order of operations, since it allows us to
+search for RARE rewrites for the santized version of rewrites instead of
+trying to repair RARE rewrites for the unsanitized versions.
+
+---------
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ src/proof/proof_node_algorithm.cpp            | 10 +++++-
+ src/proof/proof_node_algorithm.h              | 10 ++++++
+ src/smt/proof_post_processor.cpp              | 32 +++++++++++++------
+ src/smt/proof_post_processor.h                |  4 +--
+ src/smt/proof_post_processor_dsl.cpp          |  6 +++-
+ src/smt/proof_post_processor_dsl.h            |  2 +-
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../proofs/subtype-elim-rare-fail.smt2        |  7 ++++
+ 8 files changed, 57 insertions(+), 15 deletions(-)
+ create mode 100644 test/regress/cli/regress0/proofs/subtype-elim-rare-fail.smt2
+
+diff --git a/src/proof/proof_node_algorithm.cpp b/src/proof/proof_node_algorithm.cpp
+index 5608dd3f5..7dbe8df06 100644
+--- a/src/proof/proof_node_algorithm.cpp
++++ b/src/proof/proof_node_algorithm.cpp
+@@ -90,6 +90,14 @@ void getFreeAssumptionsMap(
+ void getSubproofRule(std::shared_ptr<ProofNode> pn,
+                      ProofRule r,
+                      std::vector<std::shared_ptr<ProofNode>>& pfs)
++{
++  std::unordered_set<ProofRule> rs{r};
++  getSubproofRules(pn, rs, pfs);
++}
++
++void getSubproofRules(std::shared_ptr<ProofNode> pn,
++                      std::unordered_set<ProofRule> rs,
++                      std::vector<std::shared_ptr<ProofNode>>& pfs)
+ {
+   // proof should not be cyclic
+   std::unordered_set<ProofNode*> visited;
+@@ -105,7 +113,7 @@ void getSubproofRule(std::shared_ptr<ProofNode> pn,
+     if (it == visited.end())
+     {
+       visited.insert(cur.get());
+-      if (cur->getRule() == r)
++      if (rs.find(cur->getRule()) != rs.end())
+       {
+         pfs.push_back(cur);
+       }
+diff --git a/src/proof/proof_node_algorithm.h b/src/proof/proof_node_algorithm.h
+index 8ea8eef26..454e89138 100644
+--- a/src/proof/proof_node_algorithm.h
++++ b/src/proof/proof_node_algorithm.h
+@@ -67,6 +67,16 @@ void getSubproofRule(std::shared_ptr<ProofNode> pn,
+                      ProofRule r,
+                      std::vector<std::shared_ptr<ProofNode>>& pfs);
+ 
++/**
++ * Get the subproofs of pn that have a rule in rs.
++ * @param pn The proof node.
++ * @param rs The rules to find.
++ * @param pfs The list of subproofs of pn that have rule r.
++ */
++void getSubproofRules(std::shared_ptr<ProofNode> pn,
++                      std::unordered_set<ProofRule> rs,
++                      std::vector<std::shared_ptr<ProofNode>>& pfs);
++
+ /**
+  * Return true if pn contains a subproof whose rule is ASSUME. Notice that we
+  * do *not* distinguish between free vs. non-free assumptions in this call.
+diff --git a/src/smt/proof_post_processor.cpp b/src/smt/proof_post_processor.cpp
+index 37fac7108..3b2d1f229 100644
+--- a/src/smt/proof_post_processor.cpp
++++ b/src/smt/proof_post_processor.cpp
+@@ -68,7 +68,7 @@ void ProofPostprocessCallback::setCollectAllTrustedRules()
+   d_collectAllTrusted = true;
+ }
+ 
+-std::unordered_set<std::shared_ptr<ProofNode>>&
++std::vector<std::shared_ptr<ProofNode>>&
+ ProofPostprocessCallback::getTrustedProofs()
+ {
+   return d_trustedPfs;
+@@ -107,7 +107,7 @@ bool ProofPostprocessCallback::shouldUpdatePost(std::shared_ptr<ProofNode> pn,
+   if (d_collectAllTrusted
+       && (id == ProofRule::TRUST_THEORY_REWRITE || id == ProofRule::TRUST))
+   {
+-    d_trustedPfs.insert(pn);
++    d_trustedPfs.emplace_back(pn);
+   }
+   return false;
+ }
+@@ -1106,14 +1106,6 @@ void ProofPostprocess::process(std::shared_ptr<ProofNode> pf,
+   // now, process
+   d_updater.process(pf);
+ 
+-  // run the reconstruction algorithm on the proofs to eliminate
+-  std::unordered_set<std::shared_ptr<ProofNode>>& tproofs =
+-      d_cb.getTrustedProofs();
+-  if (!tproofs.empty())
+-  {
+-    d_ppdsl->reconstruct(tproofs);
+-  }
+-
+   // eliminate subtypes if option is specified
+   if (options().proof.proofElimSubtypes)
+   {
+@@ -1123,6 +1115,26 @@ void ProofPostprocess::process(std::shared_ptr<ProofNode> pf,
+     AlwaysAssert(pfc != nullptr);
+     // now update
+     d_env.getProofNodeManager()->updateNode(pf.get(), pfc.get());
++    // go back and find the (possibly new) trusted steps
++    std::vector<std::shared_ptr<ProofNode>> tproofs;
++    std::unordered_set<ProofRule> trustRules{ProofRule::TRUST,
++                                             ProofRule::TRUST_THEORY_REWRITE};
++    expr::getSubproofRules(pf, trustRules, tproofs);
++    if (d_ppdsl != nullptr)
++    {
++      d_ppdsl->reconstruct(tproofs);
++    }
++  }
++  else
++  {
++    // As an optimization, we have tracked the trusted steps while running
++    // the updater. Now run the reconstruction algorithm on the proofs to
++    // eliminate.
++    std::vector<std::shared_ptr<ProofNode>>& tproofs = d_cb.getTrustedProofs();
++    if (d_ppdsl != nullptr)
++    {
++      d_ppdsl->reconstruct(tproofs);
++    }
+   }
+ 
+   // take stats and check pedantic
+diff --git a/src/smt/proof_post_processor.h b/src/smt/proof_post_processor.h
+index eff4ff9e7..0bafcc7f6 100644
+--- a/src/smt/proof_post_processor.h
++++ b/src/smt/proof_post_processor.h
+@@ -72,7 +72,7 @@ class ProofPostprocessCallback : public ProofNodeUpdaterCallback, protected EnvO
+    * that were encountered in the last call to process, collected at
+    * post-order traversal.
+    */
+-  std::unordered_set<std::shared_ptr<ProofNode>>& getTrustedProofs();
++  std::vector<std::shared_ptr<ProofNode>>& getTrustedProofs();
+   /** Should proof pn be updated? */
+   bool shouldUpdate(std::shared_ptr<ProofNode> pn,
+                     const std::vector<Node>& fa,
+@@ -111,7 +111,7 @@ class ProofPostprocessCallback : public ProofNodeUpdaterCallback, protected EnvO
+   /** Whether we are collecting all trusted rules */
+   bool d_collectAllTrusted;
+   /** Set of all proofs to attempt to reconstruct */
+-  std::unordered_set<std::shared_ptr<ProofNode>> d_trustedPfs;
++  std::vector<std::shared_ptr<ProofNode>> d_trustedPfs;
+   /** Whether we post-process assumptions in scope. */
+   bool d_updateScopedAssumptions;
+   //---------------------------------reset at the begining of each update
+diff --git a/src/smt/proof_post_processor_dsl.cpp b/src/smt/proof_post_processor_dsl.cpp
+index 41a50b752..9f036320a 100644
+--- a/src/smt/proof_post_processor_dsl.cpp
++++ b/src/smt/proof_post_processor_dsl.cpp
+@@ -35,8 +35,12 @@ ProofPostprocessDsl::ProofPostprocessDsl(Env& env, rewriter::RewriteDb* rdb)
+ }
+ 
+ void ProofPostprocessDsl::reconstruct(
+-    std::unordered_set<std::shared_ptr<ProofNode>>& pfs)
++    std::vector<std::shared_ptr<ProofNode>>& pfs)
+ {
++  if (pfs.empty())
++  {
++    return;
++  }
+   Trace("pp-dsl") << "Reconstruct proofs for " << pfs.size()
+                   << " trusted steps..." << std::endl;
+   // run an updater for this callback
+diff --git a/src/smt/proof_post_processor_dsl.h b/src/smt/proof_post_processor_dsl.h
+index 005c101ef..659f8a081 100644
+--- a/src/smt/proof_post_processor_dsl.h
++++ b/src/smt/proof_post_processor_dsl.h
+@@ -44,7 +44,7 @@ class ProofPostprocessDsl : protected EnvObj, public ProofNodeUpdaterCallback
+    * Run the DSL reconstruction on each proof in pfs. This updates pfs
+    * in-place based on the rewrite rule reconstruction algorithm.
+    */
+-  void reconstruct(std::unordered_set<std::shared_ptr<ProofNode>>& pfs);
++  void reconstruct(std::vector<std::shared_ptr<ProofNode>>& pfs);
+ 
+   /** Should proof pn be updated? */
+   bool shouldUpdate(std::shared_ptr<ProofNode> pn,
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index d2bde0b2f..3a0356d02 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1368,6 +1368,7 @@ set(regress_0_tests
+   regress0/proofs/scope.smt2
+   regress0/proofs/subtype-elim-1.smt2
+   regress0/proofs/subtype-elim-2.smt2
++  regress0/proofs/subtype-elim-rare-fail.smt2
+   regress0/proofs/str-term-276-indexof-eval.smt2
+   regress0/proofs/t1-difficulty-filter.smt2
+   regress0/proofs/tricky-sat-assumption-incremental-bookeeping.smt2
+diff --git a/test/regress/cli/regress0/proofs/subtype-elim-rare-fail.smt2 b/test/regress/cli/regress0/proofs/subtype-elim-rare-fail.smt2
+new file mode 100644
+index 000000000..c4932a747
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/subtype-elim-rare-fail.smt2
+@@ -0,0 +1,7 @@
++; COMMAND-LINE: --proof-elim-subtypes
++; EXPECT: unsat
++(set-logic LRA)
++(declare-const b Real)
++(assert (< (+ 3.0 b) (+ b 2.0)))
++(assert (not false))
++(check-sat)
+-- 
+2.47.1
+

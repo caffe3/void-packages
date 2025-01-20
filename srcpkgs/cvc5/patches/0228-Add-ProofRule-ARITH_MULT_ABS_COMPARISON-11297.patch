@@ -1,0 +1,1094 @@
+From 7dc488168898321ac4d5b94a8ead1036e22726fe Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 9 Dec 2024 17:10:23 -0600
+Subject: [PATCH 228/312] Add ProofRule::ARITH_MULT_ABS_COMPARISON (#11297)
+
+This adds proofs for a commonly used nonlinear lemma schema that
+compares the absolute value of non-linear terms.
+
+It does some minor refactoring of the nonlinear solver (e.g. to
+eliminate use of mixed arithmetic) to setup these proofs and uses a new
+rule `ProofRule::ARITH_MULT_ABS_COMPARISON`. As part of the
+reconstruction for this rule, we require 3 new RARE rewrites. FYI
+@Lachnitt
+
+This appears in 69 lemmas in our regressions.
+
+A followup PR will add the Eunoia definition for this rule.
+
+---------
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ include/cvc5/cvc5_proof_rule.h                |  26 ++
+ proofs/eo/cpc/rules/Rewrites.eo               |  12 +
+ src/CMakeLists.txt                            |   2 +
+ src/api/cpp/cvc5_proof_rule_template.cpp      |   2 +
+ src/proof/trust_id.cpp                        |   2 +
+ src/proof/trust_id.h                          |   6 +
+ src/theory/arith/arith_utilities.cpp          |   6 +
+ src/theory/arith/arith_utilities.h            |   6 +
+ .../nl/ext/arith_nl_compare_proof_gen.cpp     | 344 ++++++++++++++++++
+ .../arith/nl/ext/arith_nl_compare_proof_gen.h | 108 ++++++
+ src/theory/arith/nl/ext/ext_state.cpp         |   3 +-
+ src/theory/arith/nl/ext/monomial.cpp          |   4 +-
+ src/theory/arith/nl/ext/monomial_check.cpp    | 123 +++++--
+ src/theory/arith/nl/ext/monomial_check.h      |  15 +-
+ src/theory/arith/nl/ext/proof_checker.cpp     |  89 +++++
+ src/theory/arith/rewrites                     |  26 ++
+ 16 files changed, 736 insertions(+), 38 deletions(-)
+ create mode 100644 src/theory/arith/nl/ext/arith_nl_compare_proof_gen.cpp
+ create mode 100644 src/theory/arith/nl/ext/arith_nl_compare_proof_gen.h
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index c437cb138..7f531a177 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -1828,6 +1828,26 @@ enum ENUM(ProofRule)
+    * \endverbatim
+    */
+   EVALUE(MACRO_ARITH_SCALE_SUM_UB),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Arithmetic -- Non-linear multiply absolute value comparison**
++   *
++   * .. math::
++   *   \inferrule{F_1 \dots F_n \mid -}{F}
++   * 
++   * where :math:`F` is of the form 
++   * :math:`\left| t_1 \cdot t_n \right| \diamond \left| s_1 \cdot s_n \right|`.
++   * If :math:`\diamond` is :math:`=`, then each :math:`F_i` is
++   * :math:`\left| t_i \right| = \left| s_i \right|`.
++   *
++   * If :math:`\diamond` is :math:`>`, then
++   * each :math:`F_i` is either :math:`\left| t_i \right| > \left| s_i \right|` or
++   * :math:`\left| t_i \right| = \left| s_i \right| \land \left| t_i \right| \neq 0`,
++   * and :math:`F_1` is of the former form.
++   *
++   * \endverbatim
++   */
++  EVALUE(ARITH_MULT_ABS_COMPARISON),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Arithmetic -- Sum upper bounds**
+@@ -3089,6 +3109,12 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(ARITH_COTANGENT_ELIM),
+   /** Auto-generated from RARE rule arith-pi-not-int */
+   EVALUE(ARITH_PI_NOT_INT),
++  /** Auto-generated from RARE rule arith-abs-eq */
++  EVALUE(ARITH_ABS_EQ),
++  /** Auto-generated from RARE rule arith-abs-int-gt */
++  EVALUE(ARITH_ABS_INT_GT),
++  /** Auto-generated from RARE rule arith-abs-real-gt */
++  EVALUE(ARITH_ABS_REAL_GT),
+   /** Auto-generated from RARE rule array-read-over-write */
+   EVALUE(ARRAY_READ_OVER_WRITE),
+   /** Auto-generated from RARE rule array-read-over-write2 */
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index ecc4bfd0b..83179849e 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -191,6 +191,18 @@
+   :args ()
+   :conclusion (= (is_int real.pi) false)
+ )
++(declare-rule arith-abs-eq ((@T0 Type) (@T1 Type) (x1 @T0) (y1 @T1))
++  :args (x1 y1)
++  :conclusion (= (= (abs x1) (abs y1)) (or (= x1 y1) (= x1 (- y1))))
++)
++(declare-rule arith-abs-int-gt ((x1 Int) (y1 Int))
++  :args (x1 y1)
++  :conclusion (= (> (abs x1) (abs y1)) (eo::define ((_let_1 (- y1))) (eo::define ((_let_2 (- x1))) (eo::define ((_let_3 (>= y1 0))) (ite (>= x1 0) (ite _let_3 (> x1 y1) (> x1 _let_1)) (ite _let_3 (> _let_2 y1) (> _let_2 _let_1)))))))
++)
++(declare-rule arith-abs-real-gt ((x1 Real) (y1 Real))
++  :args (x1 y1)
++  :conclusion (= (> (abs x1) (abs y1)) (eo::define ((_let_1 (- y1))) (eo::define ((_let_2 (- x1))) (eo::define ((_let_3 (>= y1 0/1))) (ite (>= x1 0/1) (ite _let_3 (> x1 y1) (> x1 _let_1)) (ite _let_3 (> _let_2 y1) (> _let_2 _let_1)))))))
++)
+ (declare-rule array-read-over-write ((@T0 Type) (@T1 Type) (@T2 Type) (@T3 Type) (t1 (Array @T0 @T1)) (i1 @T2) (e1 @T3))
+   :args (t1 i1 e1)
+   :conclusion (= (select (store t1 i1 e1) i1) e1)
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index cb2ed3886..9679a76d6 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -477,6 +477,8 @@ libcvc5_add_sources(
+   theory/arith/nl/coverings/variable_ordering.h
+   theory/arith/nl/equality_substitution.cpp
+   theory/arith/nl/equality_substitution.h
++  theory/arith/nl/ext/arith_nl_compare_proof_gen.cpp
++  theory/arith/nl/ext/arith_nl_compare_proof_gen.h
+   theory/arith/nl/ext/constraint.cpp
+   theory/arith/nl/ext/constraint.h
+   theory/arith/nl/ext/factoring_check.cpp
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index fcf658bbf..b34cf2c43 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -166,6 +166,8 @@ const char* toString(ProofRule rule)
+     case ProofRule::ARITH_MULT_POS: return "ARITH_MULT_POS";
+     case ProofRule::ARITH_MULT_NEG: return "ARITH_MULT_NEG";
+     case ProofRule::ARITH_MULT_TANGENT: return "ARITH_MULT_TANGENT";
++    case ProofRule::ARITH_MULT_ABS_COMPARISON:
++      return "ARITH_MULT_ABS_COMPARISON";
+     case ProofRule::ARITH_REDUCTION: return "ARITH_REDUCTION";
+     case ProofRule::ARITH_POLY_NORM: return "ARITH_POLY_NORM";
+     case ProofRule::ARITH_POLY_NORM_REL: return "ARITH_POLY_NORM_REL";
+diff --git a/src/proof/trust_id.cpp b/src/proof/trust_id.cpp
+index 8c9f56891..01306f84c 100644
+--- a/src/proof/trust_id.cpp
++++ b/src/proof/trust_id.cpp
+@@ -81,6 +81,8 @@ const char* toString(TrustId id)
+     case TrustId::ARITH_NL_COVERING_DIRECT: return "ARITH_NL_COVERING_DIRECT";
+     case TrustId::ARITH_NL_COVERING_RECURSIVE:
+       return "ARITH_NL_COVERING_RECURSIVE";
++    case TrustId::ARITH_NL_COMPARE_LIT_TRANSFORM:
++      return "ARITH_NL_COMPARE_LIT_TRANSFORM";
+     case TrustId::ARITH_DIO_LEMMA: return "ARITH_DIO_LEMMA";
+     case TrustId::EXT_THEORY_REWRITE: return "EXT_THEORY_REWRITE";
+     case TrustId::REWRITE_NO_ELABORATE: return "REWRITE_NO_ELABORATE";
+diff --git a/src/proof/trust_id.h b/src/proof/trust_id.h
+index 348573612..6f29b9bb9 100644
+--- a/src/proof/trust_id.h
++++ b/src/proof/trust_id.h
+@@ -141,6 +141,12 @@ enum class TrustId : uint32_t
+    * no :math:`x_i` exists that extends the cell and satisfies all assumptions.
+    */
+   ARITH_NL_COVERING_RECURSIVE,
++  /**
++   * A conversion between a literal used in the inference id lemma
++   * InferenceId::ARITH_NL_COMPARISON and a relation between absolute
++   * values as used by ProofRule::ARITH_MULT_ABS_COMPARISON.
++   */
++  ARITH_NL_COMPARE_LIT_TRANSFORM,
+   /** A lemma from the DIO solver */
+   ARITH_DIO_LEMMA,
+   /** An extended theory rewrite */
+diff --git a/src/theory/arith/arith_utilities.cpp b/src/theory/arith/arith_utilities.cpp
+index c4e74f3c6..a6971449a 100644
+--- a/src/theory/arith/arith_utilities.cpp
++++ b/src/theory/arith/arith_utilities.cpp
+@@ -294,6 +294,12 @@ Node mkEquality(const Node& a, const Node& b)
+   return nm->mkNode(Kind::EQUAL, diff, mkZero(diff.getType()));
+ }
+ 
++Node castToReal(NodeManager* nm, const Node& n)
++{
++  return n.isConst() ? nm->mkConstReal(n.getConst<Rational>())
++                     : nm->mkNode(Kind::TO_REAL, n);
++}
++
+ std::pair<Node,Node> mkSameType(const Node& a, const Node& b)
+ {
+   TypeNode at = a.getType();
+diff --git a/src/theory/arith/arith_utilities.h b/src/theory/arith/arith_utilities.h
+index 524fd83fd..dc736d4be 100644
+--- a/src/theory/arith/arith_utilities.h
++++ b/src/theory/arith/arith_utilities.h
+@@ -331,6 +331,12 @@ Node multConstants(const Node& c1, const Node& c2);
+  */
+ Node mkEquality(const Node& a, const Node& b);
+ 
++/**
++ * Return the real cast of n. If n is a constant integer, we return a
++ * constant real. Otherwise we apply TO_REAL to n.
++ */
++Node castToReal(NodeManager* nm, const Node& n);
++
+ /**
+  * Ensures that the returned pair has equal type, where a and b have
+  * real or integer type. We add TO_REAL if not.
+diff --git a/src/theory/arith/nl/ext/arith_nl_compare_proof_gen.cpp b/src/theory/arith/nl/ext/arith_nl_compare_proof_gen.cpp
+new file mode 100644
+index 000000000..fc3979270
+--- /dev/null
++++ b/src/theory/arith/nl/ext/arith_nl_compare_proof_gen.cpp
+@@ -0,0 +1,344 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * A proof generator for lemmas that use ProofRule::ARITH_MULT_ABS_COMPARISON.
++ */
++
++#include "theory/arith/nl/ext/arith_nl_compare_proof_gen.h"
++
++#include "expr/attribute.h"
++#include "proof/proof.h"
++#include "theory/arith/arith_utilities.h"
++#include "theory/arith/nl/ext/monomial_check.h"
++
++namespace cvc5::internal {
++namespace theory {
++namespace arith {
++namespace nl {
++
++ArithNlCompareProofGenerator::ArithNlCompareProofGenerator(Env& env)
++    : EnvObj(env)
++{
++}
++
++ArithNlCompareProofGenerator::~ArithNlCompareProofGenerator() {}
++
++std::shared_ptr<ProofNode> ArithNlCompareProofGenerator::getProofFor(Node fact)
++{
++  Assert(fact.getKind() == Kind::IMPLIES);
++  std::vector<Node> exp;
++  if (fact[0].getKind() == Kind::AND)
++  {
++    exp.insert(exp.end(), fact[0].begin(), fact[0].end());
++  }
++  else
++  {
++    exp.emplace_back(fact[0]);
++  }
++  Node conc = fact[1];
++  Trace("arith-nl-compare")
++      << "Comparsion prove: " << exp << " => " << conc << std::endl;
++  // get the expected form of the literals
++  CDProof cdp(d_env);
++  std::vector<Node> expc;
++  std::map<Node, Node> deq;
++  for (const Node& e : exp)
++  {
++    Node ec = getCompareLit(e);
++    if (ec.isNull())
++    {
++      // not a comparison literal, likely a disequality to zero
++      Node v = isDisequalZero(e);
++      Assert(!v.isNull());
++      deq[v] = e;
++      continue;
++    }
++    expc.emplace_back(ec);
++    // a comparsion literal
++    if (e != ec)
++    {
++      Node eeq = e.eqNode(ec);
++      Node eeqSym = ec.eqNode(e);
++      cdp.addTrustedStep(
++          eeqSym, TrustId::ARITH_NL_COMPARE_LIT_TRANSFORM, {}, {});
++      cdp.addStep(ec, ProofRule::EQ_RESOLVE, {e, eeq}, {});
++    }
++    // add to product
++    Assert(ec.getNumChildren() == 2);
++  }
++  // reorder the explanation based on the order it appears in the conclusion
++  Node concc = getCompareLit(conc);
++  Assert(!concc.isNull());
++  Assert(concc.getNumChildren() == 2);
++  Assert(concc[0].getKind() == Kind::ABS);
++  std::vector<Node> cprod[2];
++  Kind ck = decomposeCompareLit(concc, cprod[0], cprod[1]);
++  // convert to exponent counts
++  std::map<Node, size_t> mexp[2];
++  for (size_t i = 0; i < 2; i++)
++  {
++    std::vector<Node>& cpi = cprod[i];
++    std::map<Node, size_t>& mi = mexp[i];
++    for (const Node& p : cpi)
++    {
++      mi[p]++;
++    }
++  }
++  // if GT conclusion, ensure the first explanation is GT, which makes checking
++  // simpler
++  if (ck == Kind::GT)
++  {
++    for (size_t i = 0, nexp = expc.size(); i < nexp; i++)
++    {
++      if (expc[i].getKind() == Kind::GT)
++      {
++        if (i > 0)
++        {
++          Node tmp = expc[i];
++          expc[i] = expc[0];
++          expc[0] = tmp;
++        }
++        break;
++      }
++    }
++  }
++  std::vector<size_t> eexp;
++  // reorder the conclusion based on the explanation
++  NodeManager* nm = nodeManager();
++  std::vector<Node> cprodt[2];
++  for (const Node& e : expc)
++  {
++    std::vector<Node> eprod[2];
++    decomposeCompareLit(e, eprod[0], eprod[1]);
++    Assert(eprod[0].size() <= 1 && eprod[1].size() <= 1);
++    for (size_t i = 0; i < 2; i++)
++    {
++      if (eprod[i].empty())
++      {
++        size_t ii = 1 - i;
++        Node a = eprod[ii][0];
++        size_t na = mexp[ii][a];
++        size_t nb = mexp[i][a];
++        // Don't take more than this side has. This handles cases like
++        // (> (abs x) (abs 1)) => (> (abs (* x x)) (abs x)),
++        // where we should only consume one copy of x.
++        size_t n = na - nb;
++        Node one = mkOne(a.getType());
++        for (size_t j = 0; j < n; j++)
++        {
++          cprodt[i].push_back(one);
++          cprodt[ii].push_back(a);
++        }
++        mexp[ii][a] -= n;
++        eexp.emplace_back(n);
++        break;
++      }
++      else if (i == 1)
++      {
++        // both non-empty, take min
++        // Note that in theory it is possible to construct a lemma where this
++        // would be incorrect, e.g. x>a ^ x>b ^ y>a => xxy > aab, although
++        // lemmas of this form are not generated. In particular, we consider
++        // premises where monomials on RHS/LHS occur in consecutive premises,
++        // as they are ordered by model value in the MonomialCheck solver.
++        Node a = eprod[0][0];
++        Node b = eprod[1][0];
++        size_t na = mexp[0][a];
++        size_t nb = mexp[1][b];
++        size_t n = na > nb ? nb : na;
++        for (size_t j = 0; j < 2; j++)
++        {
++          const Node& c = eprod[j][0];
++          for (size_t k = 0; k < n; k++)
++          {
++            cprodt[j].push_back(c);
++          }
++          mexp[j][c] -= n;
++        }
++        eexp.emplace_back(n);
++      }
++    }
++  }
++  // now get the leftover factors, one by one
++  for (const std::pair<const Node, size_t>& m : mexp[0])
++  {
++    if (m.second > 0)
++    {
++      for (size_t k = 0; k < m.second; k++)
++      {
++        cprodt[0].push_back(m.first);
++        cprodt[1].push_back(m.first);
++      }
++      Node v = nm->mkNode(Kind::ABS, m.first);
++      Node veq = v.eqNode(v);
++      cdp.addStep(veq, ProofRule::REFL, {}, {v});
++      expc.emplace_back(veq);
++      eexp.push_back(m.second);
++    }
++  }
++  // if strict version, we go back and guard zeroes
++  if (ck == Kind::GT)
++  {
++    std::map<Node, Node>::iterator itd;
++    for (size_t i = 0, nexp = expc.size(); i < nexp; i++)
++    {
++      Node e = expc[i];
++      if (e.getKind() != ck)
++      {
++        // needs to have a disequal to zero explanation
++        std::vector<Node> eprod[2];
++        decomposeCompareLit(e, eprod[0], eprod[1]);
++        if (eprod[0].size() != 1)
++        {
++          Assert(false) << "ArithNlCompareProofGenerator failed explain";
++          return nullptr;
++        }
++        itd = deq.find(eprod[0][0]);
++        if (itd == deq.end())
++        {
++          Assert(false) << "ArithNlCompareProofGenerator failed explain deq";
++          return nullptr;
++        }
++        Node guardEq = nm->mkNode(Kind::AND, e, itd->second);
++        cdp.addStep(guardEq, ProofRule::AND_INTRO, {e, itd->second}, {});
++        expc[i] = guardEq;
++      }
++    }
++  }
++  Assert(eexp.size() == expc.size());
++  // use repetition of explanation to match the exponents
++  std::vector<Node> expcFinal;
++  for (size_t i = 0, nexp = expc.size(); i < nexp; i++)
++  {
++    size_t n = eexp[i];
++    for (size_t j = 0; j < n; j++)
++    {
++      expcFinal.emplace_back(expc[i]);
++    }
++  }
++  Node opa = mkProduct(nm, cprodt[0]);
++  Node opb = mkProduct(nm, cprodt[1]);
++  Node newConc = mkLit(nm, ck, opa, opb);
++  Trace("arith-nl-compare")
++      << "...processed prove: " << expc << " => " << concc << std::endl;
++  Trace("arith-nl-compare")
++      << "...grouped conclusion is " << newConc << std::endl;
++  cdp.addStep(newConc, ProofRule::ARITH_MULT_ABS_COMPARISON, expcFinal, {});
++  // the grouped literal should be equivalent by rewriting
++  if (newConc != concc)
++  {
++    cdp.addStep(concc, ProofRule::MACRO_SR_PRED_TRANSFORM, {newConc}, {concc});
++  }
++  if (conc != concc)
++  {
++    Node ceq = concc.eqNode(conc);
++    cdp.addTrustedStep(ceq, TrustId::ARITH_NL_COMPARE_LIT_TRANSFORM, {}, {});
++    cdp.addStep(conc, ProofRule::EQ_RESOLVE, {concc, ceq}, {});
++  }
++  cdp.addStep(fact, ProofRule::SCOPE, {conc}, exp);
++  return cdp.getProofFor(fact);
++}
++
++std::string ArithNlCompareProofGenerator::identify() const
++{
++  return "ArithNlCompareProofGenerator";
++}
++
++Node ArithNlCompareProofGenerator::mkProduct(NodeManager* nm,
++                                             const std::vector<Node>& c)
++{
++  Assert(!c.empty());
++  return c.size() == 1 ? c[0] : nm->mkNode(Kind::NONLINEAR_MULT, c);
++}
++
++Node ArithNlCompareProofGenerator::mkLit(NodeManager* nm,
++                                         Kind k,
++                                         const Node& a,
++                                         const Node& b)
++{
++  Assert(a.getType() == b.getType());
++  // add absolute value
++  Node au = nm->mkNode(Kind::ABS, a);
++  Node bu = nm->mkNode(Kind::ABS, b);
++  return nm->mkNode(k, au, bu);
++}
++
++struct ArithNlCompareLitAttributeId
++{
++};
++
++using ArithNlCompareLitAttribute =
++    expr::Attribute<ArithNlCompareLitAttributeId, Node>;
++
++void ArithNlCompareProofGenerator::setCompareLit(
++    NodeManager* nm, Node olit, Kind k, const Node& a, const Node& b)
++{
++  Node lit = mkLit(nm, k, a, b);
++  ArithNlCompareLitAttribute ancla;
++  olit.setAttribute(ancla, lit);
++}
++
++Node ArithNlCompareProofGenerator::getCompareLit(const Node& olit)
++{
++  ArithNlCompareLitAttribute ancla;
++  return olit.getAttribute(ancla);
++}
++
++Kind ArithNlCompareProofGenerator::decomposeCompareLit(const Node& lit,
++                                                       std::vector<Node>& a,
++                                                       std::vector<Node>& b)
++{
++  Kind k = lit.getKind();
++  if (k != Kind::EQUAL && k != Kind::GT)
++  {
++    return Kind::UNDEFINED_KIND;
++  }
++  if (lit[0].getKind() != Kind::ABS || lit[1].getKind() != Kind::ABS)
++  {
++    return Kind::UNDEFINED_KIND;
++  }
++  addProduct(lit[0][0], a);
++  addProduct(lit[1][0], b);
++  return k;
++}
++
++void ArithNlCompareProofGenerator::addProduct(const Node& n,
++                                              std::vector<Node>& vec)
++{
++  if (n.getKind() == Kind::NONLINEAR_MULT)
++  {
++    vec.insert(vec.end(), n.begin(), n.end());
++  }
++  else if (n.isConst() && n.getConst<Rational>().isOne())
++  {
++    // do nothing
++  }
++  else
++  {
++    vec.emplace_back(n);
++  }
++}
++
++Node ArithNlCompareProofGenerator::isDisequalZero(const Node& g)
++{
++  if (g.getKind() == Kind::NOT && g[0].getKind() == Kind::EQUAL
++      && g[0][1].isConst() && g[0][1].getConst<Rational>().isZero())
++  {
++    return g[0][0];
++  }
++  return Node::null();
++}
++
++}  // namespace nl
++}  // namespace arith
++}  // namespace theory
++}  // namespace cvc5::internal
+diff --git a/src/theory/arith/nl/ext/arith_nl_compare_proof_gen.h b/src/theory/arith/nl/ext/arith_nl_compare_proof_gen.h
+new file mode 100644
+index 000000000..15dbb5fd5
+--- /dev/null
++++ b/src/theory/arith/nl/ext/arith_nl_compare_proof_gen.h
+@@ -0,0 +1,108 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * A proof generator for lemmas that use ProofRule::ARITH_MULT_ABS_COMPARISON.
++ */
++
++#ifndef CVC5__THEORY__ARITH__NL__EXT__ARITH_NL_COMPARE_PROOF_GEN_H
++#define CVC5__THEORY__ARITH__NL__EXT__ARITH_NL_COMPARE_PROOF_GEN_H
++
++#include "proof/proof_generator.h"
++#include "smt/env_obj.h"
++
++namespace cvc5::internal {
++namespace theory {
++namespace arith {
++namespace nl {
++
++/**
++ * A proof generator that takes lemmas InferenceId::ARITH_NL_COMPARISON and
++ * gives them a proof in terms of ProofRule::ARITH_MULT_ABS_COMPARISON.
++ *
++ * This involves several things:
++ * (1) It makes the proof involve literals of the form (abs x) ~ (abs y)
++ * instead of their rewritten form (MonomialCheck::mkLit).
++ * (2) Reorders the explanation to match the conclusion.
++ * (3) Groups the disequalities with the proper explanation.
++ * (4) Uses repetition of the explanation to match exponents > 1.
++ *
++ * For example, after santizing the literals in (1), the lemma:
++ * (=> (and (= (abs x) (abs z)) (> (abs w) (abs y)) (> (abs w) (abs 1)) (not (=
++ * x 0)))
++ *     (> (abs (* x x w w)) (abs (* z z y))))
++ * is based on the proof step:
++ * (=> (and
++ *        (and (= (abs x) (abs z)) (not (= x 0)))
++ *        (and (= (abs x) (abs z)) (not (= x 0)))
++ *        (> (abs w) (abs y))
++ *        (> (abs w) (abs 1))
++ *     )
++ *     (> (abs (* x x w w)) (abs (* z z y 1)))
++ * )
++ *
++ */
++class ArithNlCompareProofGenerator : protected EnvObj, public ProofGenerator
++{
++ public:
++  ArithNlCompareProofGenerator(Env& env);
++  virtual ~ArithNlCompareProofGenerator();
++  /**
++   * Get the proof for fact, which is a lemma with id
++   * InferenceId::ARITH_NL_COMPARISON.
++   */
++  std::shared_ptr<ProofNode> getProofFor(Node fact) override;
++  /** identify */
++  std::string identify() const override;
++  /**
++   * Make the product of terms in c.
++   */
++  static Node mkProduct(NodeManager* nm, const std::vector<Node>& c);
++  /**
++   * Make literal that compares the absolute value of a and b with kind k.
++   */
++  static Node mkLit(NodeManager* nm, Kind k, const Node& a, const Node& b);
++  /**
++   * Mark that the formula olit corresponds to the literal that compares the
++   * absolute values of a and b with kind k.
++   */
++  static void setCompareLit(
++      NodeManager* nm, Node olit, Kind k, const Node& a, const Node& b);
++  /**
++   * Get the literal that was marked by the above method for olit, if the
++   * null node is not applicable.
++   */
++  static Node getCompareLit(const Node& olit);
++  /**
++   * Given a literal lit constructed by mkLit above, this decomposes lit
++   * into the arguments passed to mkLit above and adds the left hand side
++   * to a and right hand side to b.
++   */
++  static Kind decomposeCompareLit(const Node& lit,
++                                  std::vector<Node>& a,
++                                  std::vector<Node>& b);
++  /**
++   * Adds the product terms of n to vec.
++   */
++  static void addProduct(const Node& n, std::vector<Node>& vec);
++  /**
++   * Is lit a disequality with zero? If lit is of the form (not (= t 0)), this
++   * method returns t, otherwise it returns the null node.
++   */
++  static Node isDisequalZero(const Node& lit);
++};
++
++}  // namespace nl
++}  // namespace arith
++}  // namespace theory
++}  // namespace cvc5::internal
++
++#endif /* CVC5__THEORY__ARITH__NL_MONOMIAL_H */
+diff --git a/src/theory/arith/nl/ext/ext_state.cpp b/src/theory/arith/nl/ext/ext_state.cpp
+index 15834b552..847cdd9ee 100644
+--- a/src/theory/arith/nl/ext/ext_state.cpp
++++ b/src/theory/arith/nl/ext/ext_state.cpp
+@@ -87,9 +87,8 @@ void ExtState::init(const std::vector<Node>& xts)
+ 
+   // register variables
+   Trace("nl-ext-mv") << "Variables in monomials : " << std::endl;
+-  for (unsigned i = 0; i < d_ms_vars.size(); i++)
++  for (const Node& v : d_ms_vars)
+   {
+-    Node v = d_ms_vars[i];
+     d_mdb.registerMonomial(v);
+     d_model.computeConcreteModelValue(v);
+     d_model.computeAbstractModelValue(v);
+diff --git a/src/theory/arith/nl/ext/monomial.cpp b/src/theory/arith/nl/ext/monomial.cpp
+index 257918253..25dbf80f0 100644
+--- a/src/theory/arith/nl/ext/monomial.cpp
++++ b/src/theory/arith/nl/ext/monomial.cpp
+@@ -124,7 +124,6 @@ void MonomialIndex::addTerm(Node n,
+ 
+ MonomialDb::MonomialDb()
+ {
+-  d_one = NodeManager::currentNM()->mkConstReal(Rational(1));
+ }
+ 
+ void MonomialDb::registerMonomial(Node n)
+@@ -150,8 +149,9 @@ void MonomialDb::registerMonomial(Node n)
+     }
+     d_m_degree[n] = nchild;
+   }
+-  else if (n == d_one)
++  else if (n.isConst())
+   {
++    Assert(n.getConst<Rational>().isOne());
+     d_m_exp[n].clear();
+     d_m_vlist[n].clear();
+     d_m_degree[n] = 0;
+diff --git a/src/theory/arith/nl/ext/monomial_check.cpp b/src/theory/arith/nl/ext/monomial_check.cpp
+index 48274a4c0..7557f53f3 100644
+--- a/src/theory/arith/nl/ext/monomial_check.cpp
++++ b/src/theory/arith/nl/ext/monomial_check.cpp
+@@ -31,7 +31,11 @@ namespace arith {
+ namespace nl {
+ 
+ MonomialCheck::MonomialCheck(Env& env, ExtState* data)
+-    : EnvObj(env), d_data(data)
++    : EnvObj(env),
++      d_data(data),
++      d_ancPfGen(env.isTheoryProofProducing()
++                     ? new ArithNlCompareProofGenerator(env)
++                     : nullptr)
+ {
+   d_order_points.push_back(d_data->d_neg_one);
+   d_order_points.push_back(d_data->d_zero);
+@@ -419,17 +423,20 @@ bool MonomialCheck::compareMonomial(
+           << "infer : " << oa << " <" << status << "> " << ob << std::endl;
+       if (status == 2)
+       {
+-        // must state that all variables are non-zero
+         for (const Node& v : vla)
+         {
+           exp.push_back(v.eqNode(mkZero(v.getType())).negate());
+         }
+       }
+-      Node clem = nm->mkNode(
+-          Kind::IMPLIES, nm->mkAnd(exp), mkLit(oa, ob, status, true));
++      Kind k = status == 0 ? Kind::EQUAL : Kind::GT;
++      Node conc = mkAndNotifyAbsLit(k, oa, ob);
++      Node clem = nm->mkNode(Kind::IMPLIES, nm->mkAnd(exp), conc);
+       Trace("nl-ext-comp-lemma") << "comparison lemma : " << clem << std::endl;
+-      lem.emplace_back(
+-          InferenceId::ARITH_NL_COMPARISON, clem, LemmaProperty::NONE, nullptr);
++      // use dedicated proof generator d_ancPfGen
++      lem.emplace_back(InferenceId::ARITH_NL_COMPARISON,
++                       clem,
++                       LemmaProperty::NONE,
++                       d_ancPfGen.get());
+       cmp_infers[status][oa][ob] = clem;
+     }
+     return true;
+@@ -504,7 +511,8 @@ bool MonomialCheck::compareMonomial(
+       Trace("nl-ext-comp-debug") << "...take leading " << bv << std::endl;
+       // can multiply b by <=1
+       Node one = mkOne(bv.getType());
+-      exp.push_back(mkLit(one, bv, bvo == ovo ? 0 : 2, true));
++      Kind k = bvo == ovo ? Kind::EQUAL : Kind::GT;
++      exp.push_back(mkAndNotifyAbsLit(k, one, bv));
+       return compareMonomial(oa,
+                              a,
+                              a_index,
+@@ -529,7 +537,8 @@ bool MonomialCheck::compareMonomial(
+       Trace("nl-ext-comp-debug") << "...take leading " << av << std::endl;
+       // can multiply a by >=1
+       Node one = mkOne(av.getType());
+-      exp.push_back(mkLit(av, one, avo == ovo ? 0 : 2, true));
++      Kind k = avo == ovo ? Kind::EQUAL : Kind::GT;
++      exp.push_back(mkAndNotifyAbsLit(k, av, one));
+       return compareMonomial(oa,
+                              a,
+                              a_index + 1,
+@@ -555,7 +564,8 @@ bool MonomialCheck::compareMonomial(
+       Trace("nl-ext-comp-debug") << "...take leading " << av << std::endl;
+       // do avo>=1 instead
+       Node one = mkOne(av.getType());
+-      exp.push_back(mkLit(av, one, avo == ovo ? 0 : 2, true));
++      Kind k = avo == ovo ? Kind::EQUAL : Kind::GT;
++      exp.push_back(mkAndNotifyAbsLit(k, av, one));
+       return compareMonomial(oa,
+                              a,
+                              a_index + 1,
+@@ -574,7 +584,8 @@ bool MonomialCheck::compareMonomial(
+     b_exp_proc[bv] += min_exp;
+     Trace("nl-ext-comp-debug") << "...take leading " << min_exp << " from "
+                                << av << " and " << bv << std::endl;
+-    exp.push_back(mkLit(av, bv, avo == bvo ? 0 : 2, true));
++    Kind k = avo == bvo ? Kind::EQUAL : Kind::GT;
++    exp.push_back(mkAndNotifyAbsLit(k, av, bv));
+     bool ret = compareMonomial(oa,
+                                a,
+                                a_index,
+@@ -595,7 +606,9 @@ bool MonomialCheck::compareMonomial(
+   {
+     Trace("nl-ext-comp-debug") << "...take leading " << bv << std::endl;
+     // try multiply b <= 1
+-    exp.push_back(mkLit(d_data->d_one, bv, bvo == ovo ? 0 : 2, true));
++    Node one = mkOne(bv.getType());
++    Kind k = bvo == ovo ? Kind::EQUAL : Kind::GT;
++    exp.push_back(mkAndNotifyAbsLit(k, one, bv));
+     return compareMonomial(oa,
+                            a,
+                            a_index,
+@@ -717,41 +730,85 @@ void MonomialCheck::assignOrderIds(std::vector<Node>& vars,
+     order_index++;
+   }
+ }
++
++Node MonomialCheck::mkAndNotifyAbsLit(Kind k, Node a, Node b) const
++{
++  NodeManager* nm = nodeManager();
++  // must ensure types match now
++  TypeNode at = a.getType();
++  TypeNode bt = b.getType();
++  if (at != bt)
++  {
++    if (at.isInteger())
++    {
++      a = castToReal(nm, a);
++    }
++    else
++    {
++      Assert(bt.isInteger());
++      b = castToReal(nm, b);
++    }
++  }
++  int status = k == Kind::EQUAL ? 0 : 2;
++  Node ret = mkLit(a, b, status, true);
++  // if proofs are enabled, we ensure we remember what the literal represents
++  if (d_ancPfGen != nullptr)
++  {
++    ArithNlCompareProofGenerator::setCompareLit(nm, ret, k, a, b);
++  }
++  return ret;
++}
++
+ Node MonomialCheck::mkLit(Node a, Node b, int status, bool isAbsolute) const
+ {
+   NodeManager* nm = nodeManager();
++  if (status < 0)
++  {
++    status = -status;
++    Node tmp = a;
++    a = b;
++    b = tmp;
++  }
+   Assert(a.getType().isRealOrInt() && b.getType().isRealOrInt());
++  Node ret;
++  Kind k;
+   if (status == 0)
+   {
++    k = Kind::EQUAL;
+     Node a_eq_b = mkEquality(a, b);
+     if (!isAbsolute)
+     {
+-      return a_eq_b;
++      ret = a_eq_b;
++    }
++    else
++    {
++      Node negate_b = nm->mkNode(Kind::NEG, b);
++      ret = a_eq_b.orNode(mkEquality(a, negate_b));
+     }
+-    Node negate_b = nm->mkNode(Kind::NEG, b);
+-    return a_eq_b.orNode(mkEquality(a, negate_b));
+-  }
+-  else if (status < 0)
+-  {
+-    return mkLit(b, a, -status);
+   }
+-  Assert(status == 1 || status == 2);
+-  Kind greater_op = status == 1 ? Kind::GEQ : Kind::GT;
+-  if (!isAbsolute)
++  else
+   {
+-    return nm->mkNode(greater_op, a, b);
++    Assert(status == 1 || status == 2);
++    k = status == 1 ? Kind::GEQ : Kind::GT;
++    if (!isAbsolute)
++    {
++      ret = nm->mkNode(k, a, b);
++    }
++    else
++    {
++      Node zero = mkZero(a.getType());
++      Node a_is_nonnegative = nm->mkNode(Kind::GEQ, a, zero);
++      Node b_is_nonnegative = nm->mkNode(Kind::GEQ, b, zero);
++      Node negate_a = nm->mkNode(Kind::NEG, a);
++      Node negate_b = nm->mkNode(Kind::NEG, b);
++      ret = a_is_nonnegative.iteNode(
++          b_is_nonnegative.iteNode(nm->mkNode(k, a, b),
++                                   nm->mkNode(k, a, negate_b)),
++          b_is_nonnegative.iteNode(nm->mkNode(k, negate_a, b),
++                                   nm->mkNode(k, negate_a, negate_b)));
++    }
+   }
+-  // return nm->mkNode( greater_op, mkAbs( a ), mkAbs( b ) );
+-  Node zero = mkZero(a.getType());
+-  Node a_is_nonnegative = nm->mkNode(Kind::GEQ, a, zero);
+-  Node b_is_nonnegative = nm->mkNode(Kind::GEQ, b, zero);
+-  Node negate_a = nm->mkNode(Kind::NEG, a);
+-  Node negate_b = nm->mkNode(Kind::NEG, b);
+-  return a_is_nonnegative.iteNode(
+-      b_is_nonnegative.iteNode(nm->mkNode(greater_op, a, b),
+-                               nm->mkNode(greater_op, a, negate_b)),
+-      b_is_nonnegative.iteNode(nm->mkNode(greater_op, negate_a, b),
+-                               nm->mkNode(greater_op, negate_a, negate_b)));
++  return ret;
+ }
+ 
+ void MonomialCheck::setMonomialFactor(Node a,
+diff --git a/src/theory/arith/nl/ext/monomial_check.h b/src/theory/arith/nl/ext/monomial_check.h
+index 8991ec2bc..7d6001433 100644
+--- a/src/theory/arith/nl/ext/monomial_check.h
++++ b/src/theory/arith/nl/ext/monomial_check.h
+@@ -18,6 +18,7 @@
+ 
+ #include "expr/node.h"
+ #include "smt/env_obj.h"
++#include "theory/arith/nl/ext/arith_nl_compare_proof_gen.h"
+ #include "theory/arith/nl/ext/monomial.h"
+ #include "theory/theory_inference.h"
+ 
+@@ -175,7 +176,17 @@ class MonomialCheck : protected EnvObj
+                       NodeMultiset& d_order,
+                       bool isConcrete,
+                       bool isAbsolute);
+-  /** Make literal */
++  /**
++   * Make and notify absolute value literal. If proofs are enabled, this
++   * notifies the nl compare proof generator (d_ancPfGen) that the returned
++   * literal corresponds to the given associate comparison literal between a
++   * and b.
++   */
++  Node mkAndNotifyAbsLit(Kind k, Node a, Node b) const;
++  /**
++   * Make literal that compares (the absolute value of) a and b based on
++   * status.
++   */
+   Node mkLit(Node a, Node b, int status, bool isAbsolute = false) const;
+   /** register monomial */
+   void setMonomialFactor(Node a, Node b, const NodeMultiset& common);
+@@ -191,6 +202,8 @@ class MonomialCheck : protected EnvObj
+   // list of monomials with factors whose model value is non-constant in model
+   //  e.g. y*cos( x )
+   std::map<Node, bool> d_m_nconst_factor;
++  /** A proof generator for MACRO_ARITH_NL_COMPARISON steps */
++  std::shared_ptr<ArithNlCompareProofGenerator> d_ancPfGen;
+ };
+ 
+ }  // namespace nl
+diff --git a/src/theory/arith/nl/ext/proof_checker.cpp b/src/theory/arith/nl/ext/proof_checker.cpp
+index 1e6ef0e74..d5d8612df 100644
+--- a/src/theory/arith/nl/ext/proof_checker.cpp
++++ b/src/theory/arith/nl/ext/proof_checker.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "expr/sequence.h"
+ #include "theory/arith/arith_utilities.h"
++#include "theory/arith/nl/ext/arith_nl_compare_proof_gen.h"
+ #include "theory/rewriter.h"
+ 
+ using namespace cvc5::internal::kind;
+@@ -34,6 +35,7 @@ void ExtProofRuleChecker::registerTo(ProofChecker* pc)
+ {
+   pc->registerChecker(ProofRule::ARITH_MULT_SIGN, this);
+   pc->registerChecker(ProofRule::ARITH_MULT_TANGENT, this);
++  pc->registerChecker(ProofRule::ARITH_MULT_ABS_COMPARISON, this);
+ }
+ 
+ Node ExtProofRuleChecker::checkInternal(ProofRule id,
+@@ -150,6 +152,93 @@ Node ExtProofRuleChecker::checkInternal(ProofRule id,
+                        nm->mkNode(Kind::GEQ, x, a),
+                        nm->mkNode(sgn == -1 ? Kind::LEQ : Kind::GEQ, y, b))));
+   }
++  else if (id == ProofRule::ARITH_MULT_ABS_COMPARISON)
++  {
++    Assert(!children.empty());
++    Assert(args.empty());
++    // the conclusion kind is kind of the first premise
++    Kind k = children[0].getKind();
++    std::vector<Node> concProd[2];
++    for (size_t cindex = 0, nchildren = children.size(); cindex < nchildren;
++         cindex++)
++    {
++      const Node& c = children[cindex];
++      Kind ck = c.getKind();
++      Node zeroGuard;
++      Node lit = c;
++      if (ck == Kind::AND)
++      {
++        zeroGuard = ArithNlCompareProofGenerator::isDisequalZero(c[1]);
++        // it should be a disequality with zero
++        if (c.getNumChildren() == 2 && !zeroGuard.isNull())
++        {
++          lit = c[0];
++        }
++        else
++        {
++          return Node::null();
++        }
++      }
++      ck = lit.getKind();
++      if (k == Kind::EQUAL)
++      {
++        // should be an equality
++        if (ck != Kind::EQUAL)
++        {
++          return Node::null();
++        }
++      }
++      else if (k == Kind::GT)
++      {
++        if (ck != Kind::GT)
++        {
++          // if an equality, needs a disequal to zero guard
++          if (ck == Kind::EQUAL)
++          {
++            // guarded zero disequality should be for LHS
++            if (zeroGuard.isNull() || lit[0].getKind() != Kind::ABS
++                || zeroGuard != lit[0][0])
++            {
++              return Node::null();
++            }
++          }
++          else
++          {
++            return Node::null();
++          }
++        }
++      }
++      Assert(ck == Kind::EQUAL || ck == Kind::GT);
++      if (lit[0].getKind() != Kind::ABS || lit[1].getKind() != Kind::ABS)
++      {
++        return Node::null();
++      }
++      // add to the product
++      for (size_t j = 0; j < 2; j++)
++      {
++        if (lit[j][0].isConst())
++        {
++          if (!lit[j][0].getConst<Rational>().isOne())
++          {
++            return Node::null();
++          }
++          size_t jj = 1 - j;
++          if (lit[jj][0].isConst())
++          {
++            return Node::null();
++          }
++          // always ensure type matches
++          Node one = nm->mkConstRealOrInt(lit[jj][0].getType(), Rational(1));
++          concProd[j].emplace_back(one);
++          continue;
++        }
++        concProd[j].emplace_back(lit[j][0]);
++      }
++    }
++    Node lhs = ArithNlCompareProofGenerator::mkProduct(nm, concProd[0]);
++    Node rhs = ArithNlCompareProofGenerator::mkProduct(nm, concProd[1]);
++    return ArithNlCompareProofGenerator::mkLit(nm, k, lhs, rhs);
++  }
+   return Node::null();
+ }
+ 
+diff --git a/src/theory/arith/rewrites b/src/theory/arith/rewrites
+index dfd2411bf..e3b526bcf 100644
+--- a/src/theory/arith/rewrites
++++ b/src/theory/arith/rewrites
+@@ -79,3 +79,29 @@
+ (define-rule arith-cotangent-elim ((x Real)) (cot x) (/ (cos x) (sin x)))
+ 
+ (define-rule arith-pi-not-int () (is_int real.pi) false)
++
++; absolute value comparisons
++
++(define-rule arith-abs-eq ((x ?) (y ?))
++  (= (abs x) (abs y))
++  (or (= x y) (= x (- y))))
++
++(define-rule arith-abs-int-gt ((x Int) (y Int))
++  (> (abs x) (abs y))
++  (ite (>= x 0)
++    (ite (>= y 0)
++      (> x y)
++      (> x (- y)))
++    (ite (>= y 0)
++      (> (- x) y)
++      (> (- x) (- y)))))
++  
++(define-rule arith-abs-real-gt ((x Real) (y Real))
++  (> (abs x) (abs y))
++  (ite (>= x 0/1)
++    (ite (>= y 0/1)
++      (> x y)
++      (> x (- y)))
++    (ite (>= y 0/1)
++      (> (- x) y)
++      (> (- x) (- y)))))
+-- 
+2.47.1
+

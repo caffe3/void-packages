@@ -1,0 +1,272 @@
+From a31a3ddd6f1f5024cf6d8b97d3d9eb362e7d449f Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 1 Nov 2024 14:13:25 -0500
+Subject: [PATCH 148/312] More changes for safe-options (#11290)
+
+This is work towards having 100% proof coverage when safe-options is
+enabled.
+
+This PR makes the following changes:
+(1) several options related to proofs are now common options, as they
+should be considered part of our core infrastructure,
+(2) a few components (sets+cardinality, relations and fmf-fun) are
+demoted to expert,
+(3) a few miscellaneous debugging options (stats and printing) are
+changed to common. This is to support testing setups where these can be
+used for testing cvc5 when safe-options is enabled.
+---
+ src/options/base_options.toml           |  4 +--
+ src/options/printer_options.toml        |  2 +-
+ src/options/proof_options.toml          |  2 +-
+ src/options/quantifiers_options.toml    |  4 +--
+ src/options/sets_options.toml           | 16 +++++++++
+ src/options/smt_options.toml            |  4 +--
+ src/smt/set_defaults.cpp                |  2 ++
+ src/theory/sets/theory_sets_private.cpp | 44 +++++++++++++++++++++++--
+ src/theory/sets/theory_sets_private.h   | 14 ++++++++
+ 9 files changed, 82 insertions(+), 10 deletions(-)
+
+diff --git a/src/options/base_options.toml b/src/options/base_options.toml
+index 49768ecea..846347cdf 100644
+--- a/src/options/base_options.toml
++++ b/src/options/base_options.toml
+@@ -92,7 +92,7 @@ name   = "Base"
+ [[option]]
+   name       = "statisticsAll"
+   long       = "stats-all"
+-  category   = "expert"
++  category   = "common"
+   type       = "bool"
+   default    = "false"
+   predicates = ["setStatsDetail"]
+@@ -101,7 +101,7 @@ name   = "Base"
+ [[option]]
+   name       = "statisticsInternal"
+   long       = "stats-internal"
+-  category   = "expert"
++  category   = "common"
+   type       = "bool"
+   default    = "false"
+   predicates = ["setStatsDetail"]
+diff --git a/src/options/printer_options.toml b/src/options/printer_options.toml
+index 51451dbcb..8f6fdab5a 100644
+--- a/src/options/printer_options.toml
++++ b/src/options/printer_options.toml
+@@ -14,7 +14,7 @@ name   = "Printing"
+ 
+ [[option]]
+   name       = "nodeDepth"
+-  category   = "expert"
++  category   = "common"
+   long       = "expr-depth=N"
+   type       = "int64_t"
+   default    = "-1"
+diff --git a/src/options/proof_options.toml b/src/options/proof_options.toml
+index c7ff2cd00..83db814ca 100644
+--- a/src/options/proof_options.toml
++++ b/src/options/proof_options.toml
+@@ -89,7 +89,7 @@ name   = "Proof"
+ 
+ [[option]]
+   name       = "proofGranularityMode"
+-  category   = "regular"
++  category   = "common"
+   long       = "proof-granularity=MODE"
+   type       = "ProofGranularityMode"
+   default    = "MACRO"
+diff --git a/src/options/quantifiers_options.toml b/src/options/quantifiers_options.toml
+index ac5598763..24ebe062e 100644
+--- a/src/options/quantifiers_options.toml
++++ b/src/options/quantifiers_options.toml
+@@ -644,7 +644,7 @@ name   = "Quantifiers"
+ 
+ [[option]]
+   name       = "fmfFunWellDefined"
+-  category   = "regular"
++  category   = "expert"
+   long       = "fmf-fun"
+   type       = "bool"
+   default    = "false"
+@@ -652,7 +652,7 @@ name   = "Quantifiers"
+ 
+ [[option]]
+   name       = "fmfFunWellDefinedRelevant"
+-  category   = "regular"
++  category   = "expert"
+   long       = "fmf-fun-rlv"
+   type       = "bool"
+   default    = "false"
+diff --git a/src/options/sets_options.toml b/src/options/sets_options.toml
+index e125a458e..df2f8ec6a 100644
+--- a/src/options/sets_options.toml
++++ b/src/options/sets_options.toml
+@@ -16,3 +16,19 @@ name   = "Sets Theory"
+   type       = "bool"
+   default    = "false"
+   help       = "enable extended symbols such as complement and universe in theory of sets"
++
++[[option]]
++  name       = "relsExp"
++  category   = "expert"
++  long       = "rels-exp"
++  type       = "bool"
++  default    = "true"
++  help       = "enable the relations extension of the theory of sets"
++
++[[option]]
++  name       = "setsCardExp"
++  category   = "expert"
++  long       = "sets-card-exp"
++  type       = "bool"
++  default    = "true"
++  help       = "enable the cardinality extension of the theory of sets"
+diff --git a/src/options/smt_options.toml b/src/options/smt_options.toml
+index 72f114994..21b219089 100644
+--- a/src/options/smt_options.toml
++++ b/src/options/smt_options.toml
+@@ -110,7 +110,7 @@ name   = "SMT Layer"
+ 
+ [[option]]
+   name       = "produceProofs"
+-  category   = "regular"
++  category   = "common"
+   long       = "produce-proofs"
+   type       = "bool"
+   default    = "false"
+@@ -142,7 +142,7 @@ name   = "SMT Layer"
+ 
+ [[option]]
+   name       = "checkProofs"
+-  category   = "regular"
++  category   = "common"
+   long       = "check-proofs"
+   type       = "bool"
+   default    = "false"
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index 0d3b812ac..98ab0ffda 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -137,6 +137,8 @@ void SetDefaults::setDefaultsPre(Options& opts)
+     // enabled by default later
+     SET_AND_NOTIFY_IF_NOT_USER(fp, fpExp, false, "safe options");
+     SET_AND_NOTIFY_IF_NOT_USER(sets, setsExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(sets, relsExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(sets, setsCardExp, false, "safe options");
+   }
+   // implied options
+   if (opts.smt.debugCheckModels)
+diff --git a/src/theory/sets/theory_sets_private.cpp b/src/theory/sets/theory_sets_private.cpp
+index b8f27f80e..2000bfa8d 100644
+--- a/src/theory/sets/theory_sets_private.cpp
++++ b/src/theory/sets/theory_sets_private.cpp
+@@ -57,7 +57,9 @@ TheorySetsPrivate::TheorySetsPrivate(Env& env,
+       d_treg(d_env, state, im, skc),
+       d_rels(new TheorySetsRels(d_env, state, im, skc, d_treg)),
+       d_cardSolver(new CardinalityExtension(d_env, state, im, d_treg)),
++      d_hasEnabledRels(false),
+       d_rels_enabled(false),
++      d_hasEnabledCard(false),
+       d_card_enabled(false),
+       d_higher_order_kinds_enabled(false),
+       d_cpacb(cpacb)
+@@ -195,6 +197,44 @@ TheorySetsPrivate::EqcInfo* TheorySetsPrivate::getOrMakeEqcInfo(TNode n,
+     return eqc_i->second;
+   }
+ }
++void TheorySetsPrivate::ensureCardinalityEnabled()
++{
++  if (d_card_enabled)
++  {
++    return;
++  }
++  d_card_enabled = true;
++  if (!d_hasEnabledCard)
++  {
++    if (!options().sets.setsCardExp)
++    {
++      std::stringstream ss;
++      ss << "Set cardinality is not supported in this configuration, try "
++            "--sets-card-exp.";
++      throw LogicException(ss.str());
++    }
++    d_hasEnabledCard = true;
++  }
++}
++void TheorySetsPrivate::ensureRelationsEnabled()
++{
++  if (d_rels_enabled)
++  {
++    return;
++  }
++  d_rels_enabled = true;
++  if (!d_hasEnabledRels)
++  {
++    if (!options().sets.relsExp)
++    {
++      std::stringstream ss;
++      ss << "Relations are not supported in this configuration, try "
++            "--rels-exp.";
++      throw LogicException(ss.str());
++    }
++    d_hasEnabledRels = true;
++  }
++}
+ 
+ void TheorySetsPrivate::fullEffortReset()
+ {
+@@ -262,7 +302,7 @@ void TheorySetsPrivate::fullEffortCheck()
+         }
+         else if (nk == Kind::SET_CARD)
+         {
+-          d_card_enabled = true;
++          ensureCardinalityEnabled();
+           // register it with the cardinality solver
+           d_cardSolver->registerTerm(n);
+           if (d_im.hasSent())
+@@ -291,7 +331,7 @@ void TheorySetsPrivate::fullEffortCheck()
+         }
+         else if (d_rels->isRelationKind(nk))
+         {
+-          d_rels_enabled = true;
++          ensureRelationsEnabled();
+         }
+         else if(isHigherOrderKind(nk))
+         {
+diff --git a/src/theory/sets/theory_sets_private.h b/src/theory/sets/theory_sets_private.h
+index 6ed1fa5df..049d3d498 100644
+--- a/src/theory/sets/theory_sets_private.h
++++ b/src/theory/sets/theory_sets_private.h
+@@ -387,16 +387,30 @@ class TheorySetsPrivate : protected EnvObj
+   /** ensure that the set type is over first class type, throw logic exception
+    * if not */
+   void ensureFirstClassSetType(TypeNode tn) const;
++  /**
++   * Ensure cardinality is enabled, which may throw a logic exception if
++   * setCardExp is false.
++   */
++  void ensureCardinalityEnabled();
++  /**
++   * Ensure relations are enabled, which may throw a logic exception if
++   * relsExp is false.
++   */
++  void ensureRelationsEnabled();
+   /** subtheory solver for the theory of relations */
+   std::unique_ptr<TheorySetsRels> d_rels;
+   /** subtheory solver for the theory of sets with cardinality */
+   std::unique_ptr<CardinalityExtension> d_cardSolver;
++  /** Have we ever seen relations? */
++  bool d_hasEnabledRels;
+   /** are relations enabled?
+    *
+    * This flag is set to true during a full effort check if any constraint
+    * involving relational constraints is asserted to this theory.
+    */
+   bool d_rels_enabled;
++  /** Have we ever seen cardinality? */
++  bool d_hasEnabledCard;
+   /** is cardinality enabled?
+    *
+    * This flag is set to true during a full effort check if any constraint
+-- 
+2.47.1
+

@@ -1,0 +1,287 @@
+From 8e2a929270b384667973c3eaa54bb43bd14e662e Mon Sep 17 00:00:00 2001
+From: Kartik Sabharwal <12889896+kartik-sabharwal@users.noreply.github.com>
+Date: Sun, 12 Jan 2025 20:38:49 +0530
+Subject: [PATCH 295/312] Quick regression tests for structural induction on
+ datatypes (#11473)
+
+These ten benchmarks are solved by cvc5 in less than one second when
+structural induction on datatypes is switched on.
+I'm certain they can't be solved when induction is switched off.
+
+---------
+
+Co-authored-by: Kartik Sabharwal <kartik-sabharwal@uiowa.edu>
+---
+ test/regress/cli/CMakeLists.txt               | 10 +++++++
+ .../cli/regress0/ufdt/clam-goal60.smt2        | 13 +++++++++
+ .../cli/regress0/ufdt/clam-goal65.smt2        | 13 +++++++++
+ .../ufdt/hipspec-sg-nichomachus-goal5.smt2    | 16 +++++++++++
+ .../ufdt/hipspec-sg-rev-equiv-goal6.smt2      | 12 +++++++++
+ .../cli/regress0/ufdt/isaplanner-goal12.smt2  | 15 +++++++++++
+ .../cli/regress0/ufdt/isaplanner-goal19.smt2  | 18 +++++++++++++
+ .../cli/regress0/ufdt/isaplanner-goal38.smt2  | 12 +++++++++
+ .../ufdt/leon-amortize-queue-goal3.smt2       | 17 ++++++++++++
+ .../ufdt/leon-bsearch-tree-goal15.smt2        | 22 +++++++++++++++
+ .../cli/regress0/ufdt/leon-heap-goal2.smt2    | 27 +++++++++++++++++++
+ 11 files changed, 175 insertions(+)
+ create mode 100644 test/regress/cli/regress0/ufdt/clam-goal60.smt2
+ create mode 100644 test/regress/cli/regress0/ufdt/clam-goal65.smt2
+ create mode 100644 test/regress/cli/regress0/ufdt/hipspec-sg-nichomachus-goal5.smt2
+ create mode 100644 test/regress/cli/regress0/ufdt/hipspec-sg-rev-equiv-goal6.smt2
+ create mode 100644 test/regress/cli/regress0/ufdt/isaplanner-goal12.smt2
+ create mode 100644 test/regress/cli/regress0/ufdt/isaplanner-goal19.smt2
+ create mode 100644 test/regress/cli/regress0/ufdt/isaplanner-goal38.smt2
+ create mode 100644 test/regress/cli/regress0/ufdt/leon-amortize-queue-goal3.smt2
+ create mode 100644 test/regress/cli/regress0/ufdt/leon-bsearch-tree-goal15.smt2
+ create mode 100644 test/regress/cli/regress0/ufdt/leon-heap-goal2.smt2
+
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 007c59154..965cd09a4 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -2093,6 +2093,16 @@ set(regress_0_tests
+   regress0/uf/simple.02.cvc.smt2
+   regress0/uf/simple.03.cvc.smt2
+   regress0/uf/simple.04.cvc.smt2
++  regress0/ufdt/leon-amortize-queue-goal3.smt2
++  regress0/ufdt/leon-bsearch-tree-goal15.smt2
++  regress0/ufdt/leon-heap-goal2.smt2
++  regress0/ufdt/clam-goal60.smt2
++  regress0/ufdt/clam-goal65.smt2
++  regress0/ufdt/hipspec-sg-nichomachus-goal5.smt2
++  regress0/ufdt/hipspec-sg-rev-equiv-goal6.smt2
++  regress0/ufdt/isaplanner-goal12.smt2
++  regress0/ufdt/isaplanner-goal19.smt2
++  regress0/ufdt/isaplanner-goal38.smt2
+   regress0/uf20-03.cvc.smt2
+   regress0/uflia/check01.smt2
+   regress0/uflia/check02.smt2
+diff --git a/test/regress/cli/regress0/ufdt/clam-goal60.smt2 b/test/regress/cli/regress0/ufdt/clam-goal60.smt2
+new file mode 100644
+index 000000000..1bbc8c6e6
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/clam-goal60.smt2
+@@ -0,0 +1,13 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((zero) (succ (pred Nat))))
++(declare-datatype Lst ((nil) (cons (head Nat) (tail Lst))))
++(declare-fun append (Lst Lst) Lst)
++(assert (forall ((x Lst)) (= (append nil x) x) ))
++(assert (forall ((x Nat) (y Lst) (z Lst)) (= (append (cons x y) z) (cons x (append y z))) ))
++(declare-fun rev (Lst) Lst)
++(assert (= (rev nil) nil))
++(assert (forall ((x Nat) (y Lst)) (= (rev (cons x y)) (append (rev y) (cons x nil))) ))
++(assert (not (forall ((x Lst) (y Nat)) (= (rev (append (append x (cons y nil)) nil)) (cons y (rev (append x nil)))))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/ufdt/clam-goal65.smt2 b/test/regress/cli/regress0/ufdt/clam-goal65.smt2
+new file mode 100644
+index 000000000..5aa666e3d
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/clam-goal65.smt2
+@@ -0,0 +1,13 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((succ (pred Nat)) (zero)))
++(declare-datatype Lst ((cons (head Nat) (tail Lst)) (nil)))
++(declare-fun append (Lst Lst) Lst)
++(assert (forall ((x Lst)) (= (append nil x) x) ))
++(assert (forall ((x Nat) (y Lst) (z Lst)) (= (append (cons x y) z) (cons x (append y z))) ))
++(declare-fun len (Lst) Nat)
++(assert (= (len nil) zero))
++(assert (forall ((x Nat) (y Lst)) (= (len (cons x y)) (succ (len y))) ))
++(assert (not (forall ((w Lst) (x Nat) (y Nat) (z Lst)) (= (len (append w (cons x (cons y z)))) (succ (succ (len (append w z))))) )))
++(check-sat)
+diff --git a/test/regress/cli/regress0/ufdt/hipspec-sg-nichomachus-goal5.smt2 b/test/regress/cli/regress0/ufdt/hipspec-sg-nichomachus-goal5.smt2
+new file mode 100644
+index 000000000..65df71886
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/hipspec-sg-nichomachus-goal5.smt2
+@@ -0,0 +1,16 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((succ (pred Nat)) (zero)))
++(declare-fun plus (Nat Nat) Nat)
++(assert (forall ((n Nat)) (= (plus zero n) n) ))
++(assert (forall ((n Nat) (m Nat)) (= (plus (succ n) m) (succ (plus n m))) ))
++(declare-fun mult (Nat Nat) Nat)
++(assert (forall ((n Nat)) (= (mult zero n) zero) ))
++(assert (forall ((n Nat) (m Nat)) (= (mult (succ n) m) (plus (mult n m) m)) ))
++(assert (forall ((n Nat) (m Nat)) (= (plus n m) (plus m n))))
++(assert (forall ((x Nat) (y Nat) (z Nat)) (= (plus x (plus y z)) (plus (plus y x) z))))
++(assert (forall ((n Nat) (m Nat)) (= (mult n m) (mult m n))))
++(assert (forall ((x Nat) (y Nat) (z Nat)) (= (mult x (mult y z)) (mult (mult y x) z))))
++(assert (not (forall ((x Nat) (y Nat)) (= (mult x (plus y y)) (mult y (plus x x))) )))
++(check-sat)
+diff --git a/test/regress/cli/regress0/ufdt/hipspec-sg-rev-equiv-goal6.smt2 b/test/regress/cli/regress0/ufdt/hipspec-sg-rev-equiv-goal6.smt2
+new file mode 100644
+index 000000000..84b089c79
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/hipspec-sg-rev-equiv-goal6.smt2
+@@ -0,0 +1,12 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((zero) (succ (pred Nat))))
++(declare-datatype Lst ((nil) (cons (head Nat) (tail Lst))))
++(declare-fun append (Lst Lst) Lst)
++(assert (forall ((x Nat) (y Lst) (z Lst)) (= (append (cons x y) z) (cons x (append y z)))))
++(declare-fun qreva (Lst Lst) Lst)
++(assert (forall ((x Lst)) (= (qreva nil x) x)))
++(assert (forall ((x Lst) (y Lst) (z Nat)) (= (qreva (cons z x) y) (qreva x (cons z y)))))
++(assert (not (forall ((x Lst) (y Lst) (z Lst)) (= (append (qreva x y) z) (qreva x (append y z))) )))
++(check-sat)
+diff --git a/test/regress/cli/regress0/ufdt/isaplanner-goal12.smt2 b/test/regress/cli/regress0/ufdt/isaplanner-goal12.smt2
+new file mode 100644
+index 000000000..694570593
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/isaplanner-goal12.smt2
+@@ -0,0 +1,15 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((zero) (succ (pred Nat))))
++(declare-datatype Lst ((nil) (cons (head Nat) (tail Lst))))
++(declare-fun f (Nat) Nat)
++(declare-fun drop (Nat Lst) Lst)
++(assert (forall ((x Nat)) (= (drop x nil) nil)))
++(assert (forall ((x Lst)) (= (drop zero x) x)))
++(assert (forall ((x Nat) (y Nat) (z Lst)) (= (drop (succ x) (cons y z)) (drop x z))))
++(declare-fun lmap (Lst) Lst)
++(assert (= (lmap nil) nil))
++(assert (forall ((x Nat) (y Lst)) (= (lmap (cons x y)) (cons (f x) (lmap y)))))
++(assert (not (forall ((n Nat) (xs Lst)) (= (drop n (lmap xs)) (lmap (drop n xs))))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/ufdt/isaplanner-goal19.smt2 b/test/regress/cli/regress0/ufdt/isaplanner-goal19.smt2
+new file mode 100644
+index 000000000..b31b72d4e
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/isaplanner-goal19.smt2
+@@ -0,0 +1,18 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((zero) (succ (pred Nat))))
++(declare-datatype Lst ((nil) (cons (head Nat) (tail Lst))))
++(declare-fun minus (Nat Nat) Nat)
++(assert (forall ((n Nat)) (= (minus zero n) zero)))
++(assert (forall ((n Nat)) (= (minus n zero) n)))
++(assert (forall ((n Nat) (m Nat)) (= (minus (succ n) (succ m)) (minus n m))))
++(declare-fun len (Lst) Nat)
++(assert (= (len nil) zero))
++(assert (forall ((x Nat) (y Lst)) (= (len (cons x y)) (succ (len y))) ))
++(declare-fun drop (Nat Lst) Lst)
++(assert (forall ((x Nat)) (= (drop x nil) nil) ))
++(assert (forall ((x Lst)) (= (drop zero x) x) ))
++(assert (forall ((x Nat) (y Nat) (z Lst)) (= (drop (succ x) (cons y z)) (drop x z)) ))
++(assert (not (forall ((n Nat) (xs Lst)) (= (len (drop n xs)) (minus (len xs) n)) )))
++(check-sat)
+diff --git a/test/regress/cli/regress0/ufdt/isaplanner-goal38.smt2 b/test/regress/cli/regress0/ufdt/isaplanner-goal38.smt2
+new file mode 100644
+index 000000000..bc50903f4
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/isaplanner-goal38.smt2
+@@ -0,0 +1,12 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((zero) (succ (pred Nat))))
++(declare-datatype Lst ((nil) (cons (head Nat) (tail Lst))))
++(declare-fun append (Lst Lst) Lst)
++(assert (forall ((x Lst)) (= (append nil x) x)))
++(assert (forall ((x Nat) (y Lst) (z Lst)) (= (append (cons x y) z) (cons x (append y z)))))
++(declare-fun count (Nat Lst) Nat)
++(assert (forall ((x Nat) (y Nat) (z Lst)) (= (count x (cons y z)) (ite (= x y) (succ (count x z)) (count x z)))))
++(assert (not (forall ((n Nat) (x Lst)) (= (count n (append x (cons n nil))) (succ (count n x))))))
++(check-sat)
+\ No newline at end of file
+diff --git a/test/regress/cli/regress0/ufdt/leon-amortize-queue-goal3.smt2 b/test/regress/cli/regress0/ufdt/leon-amortize-queue-goal3.smt2
+new file mode 100644
+index 000000000..d7998d2ee
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/leon-amortize-queue-goal3.smt2
+@@ -0,0 +1,17 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((succ (pred Nat)) (zero)))
++(declare-datatype Lst ((cons (head Nat) (tail Lst)) (nil)))
++(define-fun-rec plus ((m Nat) (n Nat)) Nat
++  (match m
++    (((zero) n)
++     ((succ pm) (succ (plus pm n))))))
++(define-fun-rec len ((l Lst)) Nat
++  (match l
++    (((nil) zero)
++     ((cons h t) (succ (len t))))))
++(declare-fun qreva (Lst Lst) Lst)
++(assert (forall ((x Lst) (y Lst)) (= (len (qreva x y)) (plus (len x) (len y)))))
++(assert (not (forall ((x Lst)) (= (len (qreva x nil)) (len x)))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/ufdt/leon-bsearch-tree-goal15.smt2 b/test/regress/cli/regress0/ufdt/leon-bsearch-tree-goal15.smt2
+new file mode 100644
+index 000000000..a6d89e5a3
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/leon-bsearch-tree-goal15.smt2
+@@ -0,0 +1,22 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((succ (pred Nat)) (zero)))
++(declare-datatype Lst ((cons (head Nat) (tail Lst)) (nil)))
++(declare-datatype Tree ((node (data Nat) (left Tree) (right Tree)) (leaf)))
++(declare-fun less (Nat Nat) Bool)
++(declare-fun mem (Nat Lst) Bool)
++(assert (forall ((x Nat)) (not (mem x nil))))
++(assert (forall ((x Nat) (y Nat) (z Lst)) (= (mem x (cons y z)) (or (= x y) (mem x z)))))
++(declare-fun tinsert (Tree Nat) Tree)
++(assert (forall ((i Nat)) (= (tinsert leaf i) (node i leaf leaf))))
++(assert (forall ((r Tree) (l Tree) (d Nat) (i Nat)) (= (tinsert (node d l r) i) (ite (less d i) (node d l (tinsert r i)) (node d (tinsert l i) r)))))
++(declare-fun tinsert-all (Tree Lst) Tree)
++(assert (forall ((x Tree)) (= (tinsert-all x nil) x)))
++(assert (forall ((x Tree) (n Nat) (l Lst)) (= (tinsert-all x (cons n l)) (tinsert (tinsert-all x l) n))))
++(declare-fun tcontains (Tree Nat) Bool)
++(assert (forall ((i Nat)) (not (tcontains leaf i))))
++(assert (forall ((d Nat) (l Tree) (r Tree) (i Nat)) (= (tcontains (node d l r) i) (or (= d i) (tcontains l i) (tcontains r i)))))
++(assert (forall ((i Nat) (x Tree) (j Nat)) (= (or (= i j) (tcontains x j)) (tcontains (tinsert x i) j))))
++(assert (not (forall ((x Lst) (i Nat)) (= (mem i x) (tcontains (tinsert-all leaf x) i)))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/ufdt/leon-heap-goal2.smt2 b/test/regress/cli/regress0/ufdt/leon-heap-goal2.smt2
+new file mode 100644
+index 000000000..06c1f55ee
+--- /dev/null
++++ b/test/regress/cli/regress0/ufdt/leon-heap-goal2.smt2
+@@ -0,0 +1,27 @@
++; COMMAND-LINE: --dt-stc-ind
++; EXPECT: unsat
++(set-logic UFDT)
++(declare-datatype Nat ((succ (pred Nat)) (zero)))
++(declare-datatype Lst ((cons (head Nat) (tail Lst)) (nil)))
++(declare-datatype Heap ((hleaf) (heap (rk Nat) (value Nat) (hleft Heap) (hright Heap))))
++(declare-fun leq (Nat Nat) Bool)
++(declare-fun rightHeight (Heap) Nat)
++(assert (= (rightHeight hleaf) zero))
++(assert (forall ((k Nat) (v Nat) (l Heap) (r Heap)) (= (rightHeight (heap k v l r)) (succ (rightHeight r)))))
++(declare-fun hasLeftistProperty (Heap) Bool)
++(assert (hasLeftistProperty hleaf))
++(assert
++ (forall ((k Nat) (v Nat) (l Heap) (r Heap))
++   (= (hasLeftistProperty (heap k v l r))
++      (and (hasLeftistProperty l)
++           (hasLeftistProperty r)
++           (leq (rightHeight r) (rightHeight l))
++           (= k (succ (rightHeight r)))))))
++(declare-fun merge (Heap Heap) Heap)
++(declare-fun hinsert (Heap Nat) Heap)
++(declare-fun hinsert-all (Lst Heap) Heap)
++(assert (forall ((h Heap)) (= (hinsert-all nil h) h)))
++(assert (forall ((h Heap) (n Nat) (l Lst)) (= (hinsert-all (cons n l) h) (hinsert (hinsert-all l h) n))))
++(assert (forall ((x Heap) (n Nat)) (=> (hasLeftistProperty x) (hasLeftistProperty (hinsert x n)))))
++(assert (not (forall ((n Lst) (x Heap)) (=> (hasLeftistProperty x) (hasLeftistProperty (hinsert-all n x))))))
++(check-sat)
+-- 
+2.47.1
+

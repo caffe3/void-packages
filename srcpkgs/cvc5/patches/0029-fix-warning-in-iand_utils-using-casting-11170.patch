@@ -1,0 +1,42 @@
+From 887ecb98a2dd682c19888cde3789871b3dc158fe Mon Sep 17 00:00:00 2001
+From: yoni206 <yoni206@users.noreply.github.com>
+Date: Sun, 18 Aug 2024 00:36:55 +0300
+Subject: [PATCH 029/312] fix warning in iand_utils using casting (#11170)
+
+Co-authored-by: Yoni Zohar <yonizohar@Yonis-MacBook-Pro.local>
+---
+ src/theory/arith/nl/iand_utils.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/theory/arith/nl/iand_utils.cpp b/src/theory/arith/nl/iand_utils.cpp
+index 2c68cb963..80850c003 100644
+--- a/src/theory/arith/nl/iand_utils.cpp
++++ b/src/theory/arith/nl/iand_utils.cpp
+@@ -32,6 +32,8 @@ namespace nl {
+ 
+ static Rational intpow2(uint32_t b)
+ {
++  // b must be <= max-int to prevent a failure when using gmp.
++  Assert(b <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max()));
+   return Rational(Integer(2).pow(b), Integer(1));
+ }
+ 
+@@ -51,7 +53,6 @@ Node intExtract(Node x, uint32_t i, uint32_t size)
+   NodeManager* nm = NodeManager::currentNM();
+   // extract definition in integers is:
+   // (mod (div a (two_to_the j)) (two_to_the (+ (- i j) 1))))
+-  Assert(i * size <= std::numeric_limits<int32_t>::max());
+   Node extract =
+       nm->mkNode(Kind::INTS_MODULUS_TOTAL,
+                  nm->mkNode(Kind::INTS_DIVISION_TOTAL, x, pow2(i * size)),
+@@ -153,7 +154,6 @@ Node IAndUtils::createSumNode(Node x,
+     // compute the ite for this part
+     Node sumPart = createITEFromTable(xExtract, yExtract, granularity, table);
+     // append the current block to the sum
+-    Assert(i * granularity <= std::numeric_limits<int32_t>::max());
+     sumNode =
+         nm->mkNode(Kind::ADD,
+                    sumNode,
+-- 
+2.47.1
+

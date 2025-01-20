@@ -1,0 +1,412 @@
+From 267ff8ecddcd46f7d0ede1b06577bf547925d015 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 15 Nov 2024 15:10:59 -0600
+Subject: [PATCH 178/312] Make interface for ppStaticLearn able to track proofs
+ (#11311)
+
+Towards eliminating several major sources of holes in our regressions.
+
+Note that staticly learned formulas are no longer conjoined to the
+assertion where they are learned. Instead they are appended to the end.
+This eases proof/unsat core tracking and is more in line with the other
+preprocessing passes.
+
+This should be performance tested.
+---
+ src/preprocessing/passes/static_learning.cpp  | 15 ++++--------
+ .../arith/linear/arith_static_learner.cpp     | 24 ++++++++++++-------
+ .../arith/linear/arith_static_learner.h       | 11 +++++----
+ src/theory/arith/linear/linear_solver.cpp     |  2 +-
+ src/theory/arith/linear/linear_solver.h       |  2 +-
+ .../arith/linear/theory_arith_private.cpp     |  2 +-
+ .../arith/linear/theory_arith_private.h       |  2 +-
+ src/theory/arith/theory_arith.cpp             |  2 +-
+ src/theory/arith/theory_arith.h               |  2 +-
+ src/theory/bv/bv_solver.h                     |  2 +-
+ src/theory/bv/theory_bv.cpp                   |  5 ++--
+ src/theory/bv/theory_bv.h                     |  2 +-
+ src/theory/theory.h                           |  7 ++----
+ src/theory/theory_engine.cpp                  |  2 +-
+ src/theory/theory_engine.h                    |  8 ++++---
+ src/theory/uf/theory_uf.cpp                   |  6 +++--
+ src/theory/uf/theory_uf.h                     |  2 +-
+ 17 files changed, 52 insertions(+), 44 deletions(-)
+
+diff --git a/src/preprocessing/passes/static_learning.cpp b/src/preprocessing/passes/static_learning.cpp
+index e1f6051cf..f339e8072 100644
+--- a/src/preprocessing/passes/static_learning.cpp
++++ b/src/preprocessing/passes/static_learning.cpp
+@@ -48,24 +48,19 @@ PreprocessingPassResult StaticLearning::applyInternal(
+       continue;
+     }
+ 
+-    NodeBuilder learned(Kind::AND);
+-    learned << n;
+-
+     /* Process all assertions in nested AND terms. */
+     std::vector<TNode> assertions;
+     flattenAnd(n, assertions);
++    std::vector<TrustNode> tlems;
+     for (TNode a : assertions)
+     {
+-      d_preprocContext->getTheoryEngine()->ppStaticLearn(a, learned);
++      d_preprocContext->getTheoryEngine()->ppStaticLearn(a, tlems);
+     }
+ 
+-    if (learned.getNumChildren() == 1)
+-    {
+-      learned.clear();
+-    }
+-    else
++    // add the lemmas to the end
++    for (const TrustNode& trn : tlems)
+     {
+-      assertionsToPreprocess->replace(i, rewrite(learned.constructNode()));
++      assertionsToPreprocess->pushBackTrusted(trn);
+     }
+   }
+   return PreprocessingPassResult::NO_CONFLICT;
+diff --git a/src/theory/arith/linear/arith_static_learner.cpp b/src/theory/arith/linear/arith_static_learner.cpp
+index 14412c73f..30e6b7625 100644
+--- a/src/theory/arith/linear/arith_static_learner.cpp
++++ b/src/theory/arith/linear/arith_static_learner.cpp
+@@ -50,7 +50,7 @@ ArithStaticLearner::Statistics::Statistics(StatisticsRegistry& sr)
+ {
+ }
+ 
+-void ArithStaticLearner::staticLearning(TNode n, NodeBuilder& learned)
++void ArithStaticLearner::staticLearning(TNode n, std::vector<TrustNode>& learned)
+ {
+   vector<TNode> workList;
+   workList.push_back(n);
+@@ -96,7 +96,7 @@ void ArithStaticLearner::staticLearning(TNode n, NodeBuilder& learned)
+ }
+ 
+ void ArithStaticLearner::process(TNode n,
+-                                 NodeBuilder& learned,
++                                 std::vector<TrustNode>& learned,
+                                  const TNodeSet& defTrue)
+ {
+   Trace("arith::static") << "===================== looking at " << n << endl;
+@@ -136,7 +136,7 @@ void ArithStaticLearner::process(TNode n,
+   }
+ }
+ 
+-void ArithStaticLearner::iteMinMax(TNode n, NodeBuilder& learned)
++void ArithStaticLearner::iteMinMax(TNode n, std::vector<TrustNode>& learned)
+ {
+   Assert(n.getKind() == Kind::ITE);
+   Assert(n[0].getKind() != Kind::EQUAL);
+@@ -172,7 +172,8 @@ void ArithStaticLearner::iteMinMax(TNode n, NodeBuilder& learned)
+         Node nLeqX = NodeBuilder(Kind::LEQ) << n << t;
+         Node nLeqY = NodeBuilder(Kind::LEQ) << n << e;
+         Trace("arith::static") << n << "is a min =>" << nLeqX << nLeqY << endl;
+-        learned << nLeqX << nLeqY;
++        addLearnedLemma(nLeqX, learned);
++        addLearnedLemma(nLeqY, learned);
+         ++(d_statistics.d_iteMinMaxApplications);
+         break;
+       }
+@@ -182,7 +183,8 @@ void ArithStaticLearner::iteMinMax(TNode n, NodeBuilder& learned)
+         Node nGeqX = NodeBuilder(Kind::GEQ) << n << t;
+         Node nGeqY = NodeBuilder(Kind::GEQ) << n << e;
+         Trace("arith::static") << n << "is a max =>" << nGeqX << nGeqY << endl;
+-        learned << nGeqX << nGeqY;
++        addLearnedLemma(nGeqX, learned);
++        addLearnedLemma(nGeqY, learned);
+         ++(d_statistics.d_iteMinMaxApplications);
+         break;
+       }
+@@ -191,7 +193,7 @@ void ArithStaticLearner::iteMinMax(TNode n, NodeBuilder& learned)
+   }
+ }
+ 
+-void ArithStaticLearner::iteConstant(TNode n, NodeBuilder& learned)
++void ArithStaticLearner::iteConstant(TNode n, std::vector<TrustNode>& learned)
+ {
+   Assert(n.getKind() == Kind::ITE);
+ 
+@@ -209,7 +211,7 @@ void ArithStaticLearner::iteConstant(TNode n, NodeBuilder& learned)
+           min.getInfinitesimalPart() == 0 ? Kind::GEQ : Kind::GT,
+           n,
+           nm->mkConstRealOrInt(n.getType(), min.getNoninfinitesimalPart()));
+-      learned << nGeqMin;
++      addLearnedLemma(nGeqMin, learned);
+       Trace("arith::static") << n << " iteConstant"  << nGeqMin << endl;
+       ++(d_statistics.d_iteConstantApplications);
+     }
+@@ -227,7 +229,7 @@ void ArithStaticLearner::iteConstant(TNode n, NodeBuilder& learned)
+           max.getInfinitesimalPart() == 0 ? Kind::LEQ : Kind::LT,
+           n,
+           nm->mkConstRealOrInt(n.getType(), max.getNoninfinitesimalPart()));
+-      learned << nLeqMax;
++      addLearnedLemma(nLeqMax, learned);
+       Trace("arith::static") << n << " iteConstant"  << nLeqMax << endl;
+       ++(d_statistics.d_iteConstantApplications);
+     }
+@@ -274,6 +276,12 @@ void ArithStaticLearner::addBound(TNode n) {
+   }
+ }
+ 
++void ArithStaticLearner::addLearnedLemma(TNode n, std::vector<TrustNode>& learned)
++{
++  TrustNode trn = TrustNode::mkTrustLemma(n, nullptr);
++  learned.emplace_back(trn);
++}
++
+ }  // namespace arith
+ }  // namespace theory
+ }  // namespace cvc5::internal
+diff --git a/src/theory/arith/linear/arith_static_learner.h b/src/theory/arith/linear/arith_static_learner.h
+index be24ce8b3..326db9c86 100644
+--- a/src/theory/arith/linear/arith_static_learner.h
++++ b/src/theory/arith/linear/arith_static_learner.h
+@@ -25,6 +25,7 @@
+ #include "theory/arith/arith_utilities.h"
+ #include "theory/arith/delta_rational.h"
+ #include "util/statistics_stats.h"
++#include "proof/trust_node.h"
+ 
+ namespace cvc5::context {
+ class Context;
+@@ -47,15 +48,17 @@ private:
+ public:
+  ArithStaticLearner(StatisticsRegistry& sr, context::Context* userContext);
+  ~ArithStaticLearner();
+- void staticLearning(TNode n, NodeBuilder& learned);
++ void staticLearning(TNode n, std::vector<TrustNode>& learned);
+ 
+  void addBound(TNode n);
+ 
+ private:
+- void process(TNode n, NodeBuilder& learned, const TNodeSet& defTrue);
++ void process(TNode n, std::vector<TrustNode>& learned, const TNodeSet& defTrue);
+ 
+- void iteMinMax(TNode n, NodeBuilder& learned);
+- void iteConstant(TNode n, NodeBuilder& learned);
++ void iteMinMax(TNode n, std::vector<TrustNode>& learned);
++ void iteConstant(TNode n, std::vector<TrustNode>& learned);
++ /** Add learned lemma n to learned, no proofs currently */
++ void addLearnedLemma(TNode n, std::vector<TrustNode>& learned);
+ 
+  /**
+   * These fields are designed to be accessible to ArithStaticLearner methods.
+diff --git a/src/theory/arith/linear/linear_solver.cpp b/src/theory/arith/linear/linear_solver.cpp
+index 7a798cac5..0db286b47 100644
+--- a/src/theory/arith/linear/linear_solver.cpp
++++ b/src/theory/arith/linear/linear_solver.cpp
+@@ -55,7 +55,7 @@ Theory::PPAssertStatus LinearSolver::ppAssert(
+ {
+   return d_internal.ppAssert(tin, outSubstitutions);
+ }
+-void LinearSolver::ppStaticLearn(TNode in, NodeBuilder& learned)
++void LinearSolver::ppStaticLearn(TNode in, std::vector<TrustNode>& learned)
+ {
+   d_internal.ppStaticLearn(in, learned);
+ }
+diff --git a/src/theory/arith/linear/linear_solver.h b/src/theory/arith/linear/linear_solver.h
+index a4d87de10..b0dcde3d9 100644
+--- a/src/theory/arith/linear/linear_solver.h
++++ b/src/theory/arith/linear/linear_solver.h
+@@ -76,7 +76,7 @@ class LinearSolver : protected EnvObj
+   Theory::PPAssertStatus ppAssert(TrustNode tin,
+                                   TrustSubstitutionMap& outSubstitutions);
+   /** Preprocess static learn */
+-  void ppStaticLearn(TNode in, NodeBuilder& learned);
++  void ppStaticLearn(TNode in, std::vector<TrustNode>& learned);
+ 
+   EqualityStatus getEqualityStatus(TNode a, TNode b);
+ 
+diff --git a/src/theory/arith/linear/theory_arith_private.cpp b/src/theory/arith/linear/theory_arith_private.cpp
+index 618b2da03..98a5e1bf4 100644
+--- a/src/theory/arith/linear/theory_arith_private.cpp
++++ b/src/theory/arith/linear/theory_arith_private.cpp
+@@ -1035,7 +1035,7 @@ Theory::PPAssertStatus TheoryArithPrivate::ppAssert(
+   return Theory::PP_ASSERT_STATUS_UNSOLVED;
+ }
+ 
+-void TheoryArithPrivate::ppStaticLearn(TNode n, NodeBuilder& learned)
++void TheoryArithPrivate::ppStaticLearn(TNode n, std::vector<TrustNode>& learned)
+ {
+   TimerStat::CodeTimer codeTimer(d_statistics.d_staticLearningTimer);
+ 
+diff --git a/src/theory/arith/linear/theory_arith_private.h b/src/theory/arith/linear/theory_arith_private.h
+index 17636fbcd..0e3310f12 100644
+--- a/src/theory/arith/linear/theory_arith_private.h
++++ b/src/theory/arith/linear/theory_arith_private.h
+@@ -473,7 +473,7 @@ private:
+   void notifyRestart();
+   Theory::PPAssertStatus ppAssert(TrustNode tin,
+                                   TrustSubstitutionMap& outSubstitutions);
+-  void ppStaticLearn(TNode in, NodeBuilder& learned);
++  void ppStaticLearn(TNode in, std::vector<TrustNode>& learned);
+ 
+   std::string identify() const { return std::string("TheoryArith"); }
+ 
+diff --git a/src/theory/arith/theory_arith.cpp b/src/theory/arith/theory_arith.cpp
+index 92262e920..5091c1f44 100644
+--- a/src/theory/arith/theory_arith.cpp
++++ b/src/theory/arith/theory_arith.cpp
+@@ -218,7 +218,7 @@ Theory::PPAssertStatus TheoryArith::ppAssert(
+   return d_internal.ppAssert(tin, outSubstitutions);
+ }
+ 
+-void TheoryArith::ppStaticLearn(TNode n, NodeBuilder& learned)
++void TheoryArith::ppStaticLearn(TNode n, std::vector<TrustNode>& learned)
+ {
+   if (options().arith.arithStaticLearning)
+   {
+diff --git a/src/theory/arith/theory_arith.h b/src/theory/arith/theory_arith.h
+index ddc74e01e..afbdda9a5 100644
+--- a/src/theory/arith/theory_arith.h
++++ b/src/theory/arith/theory_arith.h
+@@ -106,7 +106,7 @@ class TheoryArith : public Theory {
+    */
+   TrustNode ppRewrite(TNode atom, std::vector<SkolemLemma>& lems) override;
+   TrustNode ppStaticRewrite(TNode atom) override;
+-  void ppStaticLearn(TNode in, NodeBuilder& learned) override;
++  void ppStaticLearn(TNode in, std::vector<TrustNode>& learned) override;
+ 
+   std::string identify() const override { return std::string("TheoryArith"); }
+ 
+diff --git a/src/theory/bv/bv_solver.h b/src/theory/bv/bv_solver.h
+index 519d7d47d..969b51633 100644
+--- a/src/theory/bv/bv_solver.h
++++ b/src/theory/bv/bv_solver.h
+@@ -92,7 +92,7 @@ class BVSolver : protected EnvObj
+ 
+   virtual TrustNode ppRewrite(TNode t) { return TrustNode::null(); }
+ 
+-  virtual void ppStaticLearn(TNode in, NodeBuilder& learned) {}
++  virtual void ppStaticLearn(TNode in, std::vector<TrustNode>& learned) {}
+ 
+   virtual void presolve() {}
+ 
+diff --git a/src/theory/bv/theory_bv.cpp b/src/theory/bv/theory_bv.cpp
+index 0cf08e6b0..e08c713a3 100644
+--- a/src/theory/bv/theory_bv.cpp
++++ b/src/theory/bv/theory_bv.cpp
+@@ -343,7 +343,7 @@ void TheoryBV::notifySharedTerm(TNode t)
+   d_internal->notifySharedTerm(t);
+ }
+ 
+-void TheoryBV::ppStaticLearn(TNode in, NodeBuilder& learned)
++void TheoryBV::ppStaticLearn(TNode in, std::vector<TrustNode>& learned)
+ {
+   if (in.getKind() == Kind::EQUAL)
+   {
+@@ -379,7 +379,8 @@ void TheoryBV::ppStaticLearn(TNode in, NodeBuilder& learned)
+ 
+           Node dis = nodeManager()->mkNode(Kind::OR, b_eq_0, c_eq_0, b_eq_c);
+           Node imp = in.impNode(dis);
+-          learned << imp;
++          TrustNode trn = TrustNode::mkTrustLemma(imp, nullptr);
++          learned.emplace_back(trn);
+         }
+       }
+     }
+diff --git a/src/theory/bv/theory_bv.h b/src/theory/bv/theory_bv.h
+index 3cc7beac5..6ce46e597 100644
+--- a/src/theory/bv/theory_bv.h
++++ b/src/theory/bv/theory_bv.h
+@@ -92,7 +92,7 @@ class TheoryBV : public Theory
+ 
+   TrustNode ppStaticRewrite(TNode atom) override;
+ 
+-  void ppStaticLearn(TNode in, NodeBuilder& learned) override;
++  void ppStaticLearn(TNode in, std::vector<TrustNode>& learned) override;
+ 
+   void presolve() override;
+ 
+diff --git a/src/theory/theory.h b/src/theory/theory.h
+index 5eb55c822..42017e00b 100644
+--- a/src/theory/theory.h
++++ b/src/theory/theory.h
+@@ -602,12 +602,9 @@ class Theory : protected EnvObj
+   //--------------------------------- preprocessing
+   /**
+    * Statically learn from assertion "in," which has been asserted
+-   * true at the top level.  The theory should only add (via
+-   * ::operator<< or ::append()) to the "learned" builder---it should
+-   * *never* clear it.  It is a conjunction to add to the formula at
+-   * the top-level and may contain other theories' contributions.
++   * true at the top level.
+    */
+-  virtual void ppStaticLearn(TNode in, NodeBuilder& learned) {}
++  virtual void ppStaticLearn(TNode in, std::vector<TrustNode>& learned) {}
+ 
+   enum PPAssertStatus
+   {
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index e2ebb0e2f..27e869e53 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -799,7 +799,7 @@ void TheoryEngine::notifyRestart() {
+   CVC5_FOR_EACH_THEORY;
+ }
+ 
+-void TheoryEngine::ppStaticLearn(TNode in, NodeBuilder& learned)
++void TheoryEngine::ppStaticLearn(TNode in, std::vector<TrustNode>& learned)
+ {
+   // Reset the interrupt flag
+   d_interrupted = false;
+diff --git a/src/theory/theory_engine.h b/src/theory/theory_engine.h
+index a7b5d1aa5..3d0c523cd 100644
+--- a/src/theory/theory_engine.h
++++ b/src/theory/theory_engine.h
+@@ -286,10 +286,12 @@ class TheoryEngine : protected EnvObj
+   void check(theory::Theory::Effort effort);
+ 
+   /**
+-   * Calls ppStaticLearn() on all theories, accumulating their
+-   * combined contributions in the "learned" builder.
++   * Calls ppStaticLearn() on all theories.
++   * Adds any new lemmas learned to the learned vector.
++   * @param in The formula that holds.
++   * @param learned The vector storing the new lemmas learned.
+    */
+-  void ppStaticLearn(TNode in, NodeBuilder& learned);
++  void ppStaticLearn(TNode in, std::vector<TrustNode>& learned);
+ 
+   /**
+    * Calls presolve() on all theories and returns true
+diff --git a/src/theory/uf/theory_uf.cpp b/src/theory/uf/theory_uf.cpp
+index a10a47728..09da10d76 100644
+--- a/src/theory/uf/theory_uf.cpp
++++ b/src/theory/uf/theory_uf.cpp
+@@ -430,7 +430,7 @@ void TheoryUF::presolve() {
+   Trace("uf") << "uf: end presolve()" << endl;
+ }
+ 
+-void TheoryUF::ppStaticLearn(TNode n, NodeBuilder& learned)
++void TheoryUF::ppStaticLearn(TNode n, std::vector<TrustNode>& learned)
+ {
+   //TimerStat::CodeTimer codeTimer(d_staticLearningTimer);
+ 
+@@ -541,7 +541,9 @@ void TheoryUF::ppStaticLearn(TNode n, NodeBuilder& learned)
+         Trace("diamonds") << "+ C holds" << endl;
+         Node newEquality = a.eqNode(d);
+         Trace("diamonds") << "  ==> " << newEquality << endl;
+-        learned << n.impNode(newEquality);
++        Node lem = n.impNode(newEquality);
++        TrustNode trn = TrustNode::mkTrustLemma(lem, nullptr);
++        learned.emplace_back(trn);
+       } else {
+         Trace("diamonds") << "+ C fails" << endl;
+       }
+diff --git a/src/theory/uf/theory_uf.h b/src/theory/uf/theory_uf.h
+index f7ff9ac2d..0bafcaa79 100644
+--- a/src/theory/uf/theory_uf.h
++++ b/src/theory/uf/theory_uf.h
+@@ -141,7 +141,7 @@ private:
+   void preRegisterTerm(TNode term) override;
+   TrustNode explain(TNode n) override;
+ 
+-  void ppStaticLearn(TNode in, NodeBuilder& learned) override;
++  void ppStaticLearn(TNode in, std::vector<TrustNode>& learned) override;
+   void presolve() override;
+ 
+   void computeCareGraph() override;
+-- 
+2.47.1
+

@@ -1,0 +1,61 @@
+From 21dea2a435f5e405076875425180278768db37e5 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 9 Jan 2025 10:55:48 -0600
+Subject: [PATCH 283/312] Make RE derive conflicts an expert option (#11504)
+
+The inference `STRINGS_RE_DERIVE` uses legacy code for deriving
+conflicts based on computing derivatives of regular expressions.
+
+These kinds of conflicts are used in 2 regressions and never in SMT-LIB
+unsat proofs, since there are other inferences that take priority.
+
+This disables this inference by default and makes it an expert option to
+enable it, for the sake of simplifying proofs.
+---
+ src/options/strings_options.toml                          | 8 ++++++++
+ src/theory/strings/regexp_solver.cpp                      | 2 +-
+ .../cli/regress0/strings/issue4662-consume-nterm.smt2     | 2 ++
+ 3 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/src/options/strings_options.toml b/src/options/strings_options.toml
+index 31228d4ed..dce3a4983 100644
+--- a/src/options/strings_options.toml
++++ b/src/options/strings_options.toml
+@@ -235,3 +235,11 @@ name   = "Strings Theory"
+   type       = "bool"
+   default    = "false"
+   help       = "eager reduction of positive membership into concatenation"
++
++[[option]]
++  name       = "stringRegexpDeriveConflicts"
++  category   = "expert"
++  long       = "strings-re-derive-conf"
++  type       = "bool"
++  default    = "false"
++  help       = "use regular expression derive for conflict finding"
+diff --git a/src/theory/strings/regexp_solver.cpp b/src/theory/strings/regexp_solver.cpp
+index 72b5ecac7..f2b950226 100644
+--- a/src/theory/strings/regexp_solver.cpp
++++ b/src/theory/strings/regexp_solver.cpp
+@@ -614,7 +614,7 @@ bool RegExpSolver::deriveRegExp(Node x,
+                          << ", r= " << r << std::endl;
+   cvc5::internal::String s = getHeadConst(x);
+   // only allow RE_DERIVE for concrete constant regular expressions
+-  if (!s.empty()
++  if (options().strings.stringRegexpDeriveConflicts && !s.empty()
+       && d_regexp_opr.getRegExpConstType(r) == RE_C_CONCRETE_CONSTANT)
+   {
+     Node conc = Node::null();
+diff --git a/test/regress/cli/regress0/strings/issue4662-consume-nterm.smt2 b/test/regress/cli/regress0/strings/issue4662-consume-nterm.smt2
+index a87279b4c..a199a9404 100644
+--- a/test/regress/cli/regress0/strings/issue4662-consume-nterm.smt2
++++ b/test/regress/cli/regress0/strings/issue4662-consume-nterm.smt2
+@@ -1,3 +1,5 @@
++; COMMAND-LINE: 
++; COMMAND-LINE: --strings-re-derive-conf
+ (set-logic QF_S)
+ (set-info :status unsat)
+ (declare-fun a () String)
+-- 
+2.47.1
+

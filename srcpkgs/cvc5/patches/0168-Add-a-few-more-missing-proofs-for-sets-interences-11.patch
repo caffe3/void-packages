@@ -1,0 +1,39 @@
+From 44b240533aeda2a297bc53f713e20b1784761de3 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Sat, 9 Nov 2024 09:14:09 -0600
+Subject: [PATCH 168/312] Add a few more missing proofs for sets interences
+ (#11349)
+
+Towards filling remaining holes in regressions.
+---
+ src/theory/sets/infer_proof_cons.cpp | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/src/theory/sets/infer_proof_cons.cpp b/src/theory/sets/infer_proof_cons.cpp
+index db199ead0..fea418365 100644
+--- a/src/theory/sets/infer_proof_cons.cpp
++++ b/src/theory/sets/infer_proof_cons.cpp
+@@ -381,9 +381,19 @@ bool InferProofCons::convert(CDProof& cdp,
+       Assert(success);
+     }
+     break;
+-    case InferenceId::SETS_EQ_CONFLICT:
+     case InferenceId::SETS_EQ_MEM_CONFLICT:
+     case InferenceId::SETS_EQ_MEM:
++    {
++      // Handles cases:
++      // (and (= S set.empty) (set.member x S)) => false
++      // (and (= S (set.singleton y)) (set.member x S)) => (= x y)
++      Assert(assumps.size()==2);
++      Assert(assumps[0].getKind() == Kind::EQUAL);
++      Assert(assumps[1].getKind() == Kind::SET_MEMBER);
++      success = psb.applyPredTransform(assumps[1], conc, {assumps[0]});
++    }
++      break;
++    case InferenceId::SETS_EQ_CONFLICT:
+     default: Trace("sets-ipc") << "Unhandled " << id; break;
+   }
+   if (success)
+-- 
+2.47.1
+

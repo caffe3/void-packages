@@ -1,0 +1,165 @@
+From 7ec5106988095b0dbbb0486bf2009a00d4329c6b Mon Sep 17 00:00:00 2001
+From: Haniel Barbosa <hanielbbarbosa@gmail.com>
+Date: Mon, 14 Oct 2024 18:22:02 -0300
+Subject: [PATCH 122/312] [proofs] [alethe] Improve error flagging to catch
+ unsupported types (#11235)
+
+This allows cvc5 to realize it is in an unsupported fragment of Alethe
+also when the problem contains only variables of unsupported theories,
+which requires us to look at their type. As a consequence, we can
+re-enable a few regressions.
+
+This fixes the nightlies, where a build with Cocoa (which is not tested
+together with Alethe in CI) was generating proofs without FF operators
+but with FF variables.
+---
+ src/proof/alethe/alethe_node_converter.cpp    | 73 ++++++++++++++++++-
+ test/regress/cli/regress0/bv/issue9518.smt2   |  2 -
+ .../regress0/datatypes/stream-singleton.smt2  |  2 -
+ .../quantifiers/issue6642-em-types.smt2       |  2 -
+ .../regress1/sets/insert_invariant_37_2.smt2  |  2 -
+ 5 files changed, 71 insertions(+), 10 deletions(-)
+
+diff --git a/src/proof/alethe/alethe_node_converter.cpp b/src/proof/alethe/alethe_node_converter.cpp
+index 2b474c344..edc99e48b 100644
+--- a/src/proof/alethe/alethe_node_converter.cpp
++++ b/src/proof/alethe/alethe_node_converter.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include "proof/alethe/alethe_node_converter.h"
+ 
++#include "expr/dtype.h"
+ #include "expr/node_algorithm.h"
+ #include "expr/skolem_manager.h"
+ #include "proof/proof_rule_checker.h"
+@@ -229,8 +230,6 @@ Node AletheNodeConverter::postConvert(Node n)
+     case Kind::BUILTIN:
+     case Kind::EQUAL:
+     case Kind::DISTINCT:
+-    case Kind::VARIABLE:
+-    case Kind::BOUND_VARIABLE:
+     case Kind::SEXPR:
+     case Kind::TYPE_CONSTANT:
+     case Kind::RAW_SYMBOL:
+@@ -404,6 +403,76 @@ Node AletheNodeConverter::postConvert(Node n)
+     {
+       return n;
+     }
++    case Kind::BOUND_VARIABLE:
++    case Kind::VARIABLE:
++    {
++      // see if variable has a supported type. We need this check because in
++      // some problems involving unsupported theories there are no operators,
++      // just variables of unsupported type
++      TypeNode tn = n.getType();
++      Kind tnk = tn.getKind();
++      switch (tnk)
++      {
++        case Kind::SORT_TYPE:
++        case Kind::INSTANTIATED_SORT_TYPE:
++        case Kind::FUNCTION_TYPE:
++        case Kind::BITVECTOR_TYPE:
++        case Kind::ARRAY_TYPE:
++        case Kind::CONSTRUCTOR_TYPE:
++        case Kind::SELECTOR_TYPE:
++        case Kind::TESTER_TYPE:
++        case Kind::ASCRIPTION_TYPE:
++        {
++          return n;
++        }
++        default:
++        {
++          // The supported constant types
++          if (tnk == Kind::TYPE_CONSTANT)
++          {
++            switch (tn.getConst<TypeConstant>())
++            {
++              case TypeConstant::SEXPR_TYPE:
++              case TypeConstant::BOOLEAN_TYPE:
++              case TypeConstant::REAL_TYPE:
++              case TypeConstant::INTEGER_TYPE:
++              case TypeConstant::STRING_TYPE:
++              case TypeConstant::REGEXP_TYPE:
++              {
++                return n;
++              }
++              default:  // fallthrough to the error handling below
++                break;
++            }
++          }
++          // Only regular datatypes (parametric or not) are supported
++          else if (tn.isDatatype() && !tn.getDType().isCodatatype()
++                   && (tnk == Kind::DATATYPE_TYPE
++                       || tnk == Kind::PARAMETRIC_DATATYPE))
++          {
++            return n;
++          }
++          Trace("alethe-conv") << "AletheNodeConverter: ...unsupported type\n";
++          std::stringstream ss;
++          ss << "\"Proof unsupported by Alethe: contains ";
++          if (tnk == Kind::TYPE_CONSTANT)
++          {
++            ss << tn.getConst<TypeConstant>();
++          }
++          else if (tn.isDatatype())
++          {
++            ss << "non-standard datatype";
++          }
++          else
++          {
++            ss << tnk;
++          }
++          ss << "\"";
++          d_error = ss.str();
++          return Node::null();
++        }
++      }
++    }
+     default:
+     {
+       Trace("alethe-conv") << "AletheNodeConverter: ...unsupported kind\n";
+diff --git a/test/regress/cli/regress0/bv/issue9518.smt2 b/test/regress/cli/regress0/bv/issue9518.smt2
+index 9166fe37a..ae3e68362 100644
+--- a/test/regress/cli/regress0/bv/issue9518.smt2
++++ b/test/regress/cli/regress0/bv/issue9518.smt2
+@@ -1,5 +1,3 @@
+-;; FP is not supported in Alethe
+-; DISABLE-TESTER: alethe
+ (set-logic ALL)
+ (set-info :status unsat)
+ (set-option :bv-solver bitblast-internal)
+diff --git a/test/regress/cli/regress0/datatypes/stream-singleton.smt2 b/test/regress/cli/regress0/datatypes/stream-singleton.smt2
+index fb4643abb..5ef101662 100644
+--- a/test/regress/cli/regress0/datatypes/stream-singleton.smt2
++++ b/test/regress/cli/regress0/datatypes/stream-singleton.smt2
+@@ -1,5 +1,3 @@
+-;; Codatatypes are not supported in Alethe
+-; DISABLE-TESTER: alethe
+ (set-logic QF_ALL)
+ (set-info :status unsat)
+ 
+diff --git a/test/regress/cli/regress1/quantifiers/issue6642-em-types.smt2 b/test/regress/cli/regress1/quantifiers/issue6642-em-types.smt2
+index 72c0c0792..19dc11227 100644
+--- a/test/regress/cli/regress1/quantifiers/issue6642-em-types.smt2
++++ b/test/regress/cli/regress1/quantifiers/issue6642-em-types.smt2
+@@ -1,7 +1,5 @@
+ ; COMMAND-LINE: --full-saturate-quant
+ ; EXPECT: unsat
+-;; Logic not supported in Alethe
+-; DISABLE-TESTER: alethe
+ (set-logic ALL)
+ (declare-fun b () String)
+ (assert (forall ((c (Seq Int))) (exists ((a String)) (and (= 1 (seq.len c)) (not (= b a))))))
+diff --git a/test/regress/cli/regress1/sets/insert_invariant_37_2.smt2 b/test/regress/cli/regress1/sets/insert_invariant_37_2.smt2
+index fea4a0117..a8f117062 100644
+--- a/test/regress/cli/regress1/sets/insert_invariant_37_2.smt2
++++ b/test/regress/cli/regress1/sets/insert_invariant_37_2.smt2
+@@ -1,5 +1,3 @@
+-;; Logic not supported in Alethe
+-; DISABLE-TESTER: alethe
+ (set-option :print-success false)
+ (set-logic AUFLIAFS)
+ (set-info :status unsat)
+-- 
+2.47.1
+

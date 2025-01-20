@@ -1,0 +1,96 @@
+From df72e72ae57d4ebfa81ab6c54e65ae338a14f3fa Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 15 Jan 2025 11:43:16 -0600
+Subject: [PATCH 306/312] Add new skolem ids for proof rules involving witness
+ terms (#11479)
+
+First step towards https://github.com/cvc5/cvc5/pull/11461.
+
+---------
+
+Co-authored-by: Haniel Barbosa <hanielbbarbosa@gmail.com>
+---
+ include/cvc5/cvc5_skolem_id.h  | 23 +++++++++++++++++++++++
+ src/expr/skolem_manager.cpp    | 18 ++++++++++++++++++
+ src/printer/enum_to_string.cpp |  2 ++
+ 3 files changed, 43 insertions(+)
+
+diff --git a/include/cvc5/cvc5_skolem_id.h b/include/cvc5/cvc5_skolem_id.h
+index e7af96c9d..566983890 100644
+--- a/include/cvc5/cvc5_skolem_id.h
++++ b/include/cvc5/cvc5_skolem_id.h
+@@ -243,6 +243,29 @@ enum ENUM(SkolemId)
+    * - Sort: The type of the variable referenced by the second index.
+    */
+   EVALUE(QUANTIFIERS_SKOLEMIZE),
++  /**
++   * A witness for a string or sequence of a given length. Skolems in this family can
++   * be assumed to be distinct if their identifiers (given by their third index) are
++   * distinct modulo :math:`A` to the power of their length (given by their second index),
++   * where :math:`A` is the cardinality of the characters of their sort.
++   *
++   * - Number of skolem indices: ``3``
++   *   - ``1:`` A term that represents the sort of the term.
++   *   - ``2:`` The assumed length of this term, expected to be a non-negative integer.
++   *   - ``3:`` A numeral identifier.
++   * - Sort: The sort given by the first index.
++   */
++  EVALUE(WITNESS_STRING_LENGTH),
++  /**
++   * A witness for an invertibility condition.
++   *
++   * - Number of skolem indices: ``1``
++   *   - ``1:`` A formula of the form ``(exists x. (x <op> s) <rel> t)``
++   *            or ``(exists x. x <rel> t)``, where s and t are ground
++   *            (bitvector) terms.
++   * - Sort: The sort of x is given by the formula in the first index.
++   */
++  EVALUE(WITNESS_INV_CONDITION),
+   /**
+    * An integer corresponding to the number of times a string occurs in another
+    * string. This is used to reason about str.replace_all.
+diff --git a/src/expr/skolem_manager.cpp b/src/expr/skolem_manager.cpp
+index 9e379ca4a..8bde58142 100644
+--- a/src/expr/skolem_manager.cpp
++++ b/src/expr/skolem_manager.cpp
+@@ -457,6 +457,24 @@ TypeNode SkolemManager::getTypeFor(SkolemId id,
+       return cacheVals[0][0][i].getType();
+     }
+     break;
++    case SkolemId::WITNESS_STRING_LENGTH:
++    {
++      Assert(cacheVals.size() == 3);
++      Assert(cacheVals[0].getKind() == Kind::SORT_TO_TERM);
++      Assert(cacheVals[1].getKind() == Kind::CONST_INTEGER);
++      Assert(cacheVals[2].getKind() == Kind::CONST_INTEGER);
++      TypeNode t = cacheVals[0].getConst<SortToTerm>().getType();
++      return t;
++    }
++    break;
++    case SkolemId::WITNESS_INV_CONDITION:
++    {
++      Assert(cacheVals.size() == 1);
++      Assert(cacheVals[0].getKind() == Kind::EXISTS);
++      Assert(cacheVals[0][0].getNumChildren() == 1);
++      return cacheVals[0][0][0].getType();
++    }
++    break;
+     // skolems that return the set element type
+     case SkolemId::BAGS_DEQ_DIFF:
+     case SkolemId::SETS_DEQ_DIFF:
+diff --git a/src/printer/enum_to_string.cpp b/src/printer/enum_to_string.cpp
+index 07faf0b44..59423ac3d 100644
+--- a/src/printer/enum_to_string.cpp
++++ b/src/printer/enum_to_string.cpp
+@@ -49,6 +49,8 @@ const char* toString(cvc5::SkolemId id)
+     case cvc5::SkolemId::HO_DEQ_DIFF: return "ho_deq_diff";
+     case cvc5::SkolemId::QUANTIFIERS_SKOLEMIZE:
+       return "quantifiers_skolemize";
++    case cvc5::SkolemId::WITNESS_STRING_LENGTH: return "witness_string_length";
++    case cvc5::SkolemId::WITNESS_INV_CONDITION: return "witness_inv_condition";
+     case cvc5::SkolemId::STRINGS_NUM_OCCUR: return "strings_num_occur";
+     case cvc5::SkolemId::STRINGS_NUM_OCCUR_RE: return "strings_num_occur_re";
+     case cvc5::SkolemId::STRINGS_OCCUR_INDEX: return "strings_occur_index";
+-- 
+2.47.1
+

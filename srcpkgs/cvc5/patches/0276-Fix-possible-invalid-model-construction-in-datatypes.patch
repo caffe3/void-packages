@@ -1,0 +1,143 @@
+From 9931a9bc4d7861d21819c9d8328b9eff9f6d40dd Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 7 Jan 2025 14:39:05 -0600
+Subject: [PATCH 276/312] Fix possible invalid model construction in datatypes
+ (#11426)
+
+This makes a fix to model construction in datatypes involving irrelevant
+terms.
+
+This error can only happen for `--theoryof-mode=term`, used in
+quantified logics, e.g. when building candidate models.
+
+This happens on one (unsolved) benchmark in SMT-LIB UFDT, a minimized
+version of this benchmark is added as a regression (which we answer
+unknown on).
+---
+ src/theory/datatypes/theory_datatypes.cpp     | 49 ++++++++++---------
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../quantifiers/ufdt-solve-model-built.smt2   | 20 ++++++++
+ 3 files changed, 48 insertions(+), 22 deletions(-)
+ create mode 100644 test/regress/cli/regress1/quantifiers/ufdt-solve-model-built.smt2
+
+diff --git a/src/theory/datatypes/theory_datatypes.cpp b/src/theory/datatypes/theory_datatypes.cpp
+index 055e6b792..ba4bf6b27 100644
+--- a/src/theory/datatypes/theory_datatypes.cpp
++++ b/src/theory/datatypes/theory_datatypes.cpp
+@@ -1007,15 +1007,17 @@ bool TheoryDatatypes::collectModelValues(TheoryModel* m,
+         Node c = ei->d_constructor.get();
+         eqc_cons[ eqc ] = c;
+       }else{
+-        //if eqc contains a symbol known to datatypes (a selector), then we must assign
+-        //should assign constructors to EQC if they have a selector or a tester
++        // If eqc contains a symbol known to datatypes (a selector), then we
++        // must assign should assign constructors to EQC if they have a
++        // selector or a tester.
+         bool shouldConsider = ( ei && ei->d_selectors ) || hasTester( eqc );
+-        if( shouldConsider ){
++        // We only consider this term additionally if it is relevant.
++        if (shouldConsider && termSet.find(eqc) != termSet.end())
++        {
+           nodes.push_back( eqc );
+         }
+       }
+     }
+-    //}
+     ++eqccs_i;
+   }
+ 
+@@ -1029,32 +1031,35 @@ bool TheoryDatatypes::collectModelValues(TheoryModel* m,
+     Node neqc;
+     TypeNode tt = eqc.getType();
+     const DType& dt = tt.getDType();
+-    if (!d_equalityEngine->hasTerm(eqc))
++    Assert(d_equalityEngine->hasTerm(eqc));
++    Trace("dt-cmi")
++        << "NOTICE : Datatypes: no constructor in equivalence class " << eqc
++        << std::endl;
++    Trace("dt-cmi") << "   Type : " << eqc.getType() << std::endl;
++    EqcInfo* ei = getOrMakeEqcInfo(eqc);
++    std::vector<bool> pcons;
++    getPossibleCons(ei, eqc, pcons);
++    if (TraceIsOn("dt-cmi"))
+     {
+-      Assert(false);
+-    }else{
+-      Trace("dt-cmi") << "NOTICE : Datatypes: no constructor in equivalence class " << eqc << std::endl;
+-      Trace("dt-cmi") << "   Type : " << eqc.getType() << std::endl;
+-      EqcInfo* ei = getOrMakeEqcInfo( eqc );
+-      std::vector< bool > pcons;
+-      getPossibleCons( ei, eqc, pcons );
+       Trace("dt-cmi") << "Possible constructors : ";
+       for( unsigned i=0; i<pcons.size(); i++ ){
+         Trace("dt-cmi") << pcons[i] << " ";
+       }
+       Trace("dt-cmi") << std::endl;
+-      for (size_t r = 0; r < 2; r++)
++    }
++    for (size_t r = 0; r < 2; r++)
++    {
++      if (neqc.isNull())
+       {
+-        if( neqc.isNull() ){
+-          for (size_t i = 0, psize = pcons.size(); i < psize; i++)
++        for (size_t i = 0, psize = pcons.size(); i < psize; i++)
++        {
++          // must try the infinite ones first
++          bool cfinite =
++              d_env.isFiniteType(dt[i].getInstantiatedConstructorType(tt));
++          if (pcons[i] && (r == 1) == cfinite)
+           {
+-            // must try the infinite ones first
+-            bool cfinite =
+-                d_env.isFiniteType(dt[i].getInstantiatedConstructorType(tt));
+-            if( pcons[i] && (r==1)==cfinite ){
+-              neqc = utils::getInstCons(eqc, dt, i, shareSel);
+-              break;
+-            }
++            neqc = utils::getInstCons(eqc, dt, i, shareSel);
++            break;
+           }
+         }
+       }
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 751d9bf92..9f5cd27b4 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -2954,6 +2954,7 @@ set(regress_1_tests
+   regress1/quantifiers/sygus-inst-lambda.smt2
+   regress1/quantifiers/symmetric_unsat_7.smt2
+   regress1/quantifiers/tpp-unit-fail-qbv.smt2
++  regress1/quantifiers/ufdt-solve-model-built.smt2
+   regress1/quantifiers/var-eq-trigger.smt2
+   regress1/quantifiers/var-eq-trigger-simple.smt2
+   regress1/quantifiers/z3.620661-no-fv-trigger.smt2
+diff --git a/test/regress/cli/regress1/quantifiers/ufdt-solve-model-built.smt2 b/test/regress/cli/regress1/quantifiers/ufdt-solve-model-built.smt2
+new file mode 100644
+index 000000000..522ef480f
+--- /dev/null
++++ b/test/regress/cli/regress1/quantifiers/ufdt-solve-model-built.smt2
+@@ -0,0 +1,20 @@
++; EXPECT: unknown
++(set-logic UFDT)
++(declare-sort B 0)
++(declare-sort b 0)
++(declare-sort o 0)
++(declare-sort _b 0)
++(declare-datatypes ((B_ 0) (C 0) (A 0) (A_ 0) (A_b 0) (a 0) (b_ 0) (_a 0) (_b_ 0) (b_a 0) (b_b 0) (A_b_ 0) (_b_b 0) (a_ 0) (B_a 0) (a_b 0) (r 0) (A_b_b 0) (l 0) (_l 0)) (((oc) (s (h B))) ((r) (b)) ((e)) ((p)) ((i)) ((p)) ((m)) ((e)) ((p)) ((i)) ((m)) ((a)) ((n)) ((m)) ((n)) ((s)) ((n)) ((n)) ((n)) ((n))))
++(declare-fun v () B)
++(declare-fun u () b)
++(declare-fun f (b B) Bool)
++(declare-fun f (o B_) Bool)
++(declare-fun f (_b b) o)
++(declare-fun c (Bool) _b)
++(assert (forall ((v2 B)) (= v2 v)))
++(assert (forall ((? C)) (or (= ? r) (= ? b))))
++(assert (forall ((? o)) (or (f ? oc) (f ? (s v)))))
++(assert (forall ((? o)) (= (f ? oc) (forall ((?v B_)) (f ? ?v)))))
++(assert (forall ((?v b) (v2 B_)) (= (f (f (c false) ?v) v2) (ite (= v2 oc) false (f ?v (h v2))))))
++(assert (forall ((?v B_)) (f u (h oc))))
++(check-sat)
+-- 
+2.47.1
+

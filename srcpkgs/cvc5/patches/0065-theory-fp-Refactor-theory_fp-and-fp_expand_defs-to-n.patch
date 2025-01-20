@@ -1,0 +1,342 @@
+From 5c589e8d25b5f57c2c2d32c2634cd2b4a95a2c52 Mon Sep 17 00:00:00 2001
+From: Aina Niemetz <aina.niemetz@gmail.com>
+Date: Mon, 23 Sep 2024 12:17:31 -0700
+Subject: [PATCH 065/312] theory fp: Refactor theory_fp and fp_expand_defs to
+ not use NodeManager::currentNM(). (#11214)
+
+Co-authored-by: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+---
+ src/theory/fp/fp_expand_defs.cpp     | 57 +++++++++++++---------------
+ src/theory/fp/fp_expand_defs.h       |  6 ++-
+ src/theory/fp/theory_fp.cpp          | 54 +++++---------------------
+ src/theory/fp/theory_fp_rewriter.cpp |  2 +-
+ 4 files changed, 41 insertions(+), 78 deletions(-)
+
+diff --git a/src/theory/fp/fp_expand_defs.cpp b/src/theory/fp/fp_expand_defs.cpp
+index c69750652..6d612df9c 100644
+--- a/src/theory/fp/fp_expand_defs.cpp
++++ b/src/theory/fp/fp_expand_defs.cpp
+@@ -31,16 +31,15 @@ Node FpExpandDefs::minMaxUF(TNode node)
+   TypeNode type = node.getType();
+   Assert(type.getKind() == Kind::FLOATINGPOINT_TYPE);
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+-  return nm->mkNode(Kind::APPLY_UF,
+-                    nm->getSkolemManager()->mkSkolemFunction(
+-                        kind == Kind::FLOATINGPOINT_MIN
+-                                || kind == Kind::FLOATINGPOINT_MIN_TOTAL
+-                            ? SkolemId::FP_MIN_ZERO
+-                            : SkolemId::FP_MAX_ZERO,
+-                        {nm->mkConst(SortToTerm(type))}),
+-                    node[0],
+-                    node[1]);
++  return d_nm->mkNode(Kind::APPLY_UF,
++                      d_nm->getSkolemManager()->mkSkolemFunction(
++                          kind == Kind::FLOATINGPOINT_MIN
++                                  || kind == Kind::FLOATINGPOINT_MIN_TOTAL
++                              ? SkolemId::FP_MIN_ZERO
++                              : SkolemId::FP_MAX_ZERO,
++                          {d_nm->mkConst(SortToTerm(type))}),
++                      node[0],
++                      node[1]);
+ }
+ 
+ Node FpExpandDefs::toUbvSbvUF(TNode node)
+@@ -52,14 +51,13 @@ Node FpExpandDefs::toUbvSbvUF(TNode node)
+   TypeNode type = node.getType();
+   Assert(type.getKind() == Kind::BITVECTOR_TYPE);
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+-  return nm->mkNode(
++  return d_nm->mkNode(
+       Kind::APPLY_UF,
+-      nm->getSkolemManager()->mkSkolemFunction(
++      d_nm->getSkolemManager()->mkSkolemFunction(
+           kind == Kind::FLOATINGPOINT_TO_SBV ? SkolemId::FP_TO_SBV
+                                              : SkolemId::FP_TO_UBV,
+-          {nm->mkConst(SortToTerm(node[1].getType())),
+-           nm->mkConst(SortToTerm(type))}),
++          {d_nm->mkConst(SortToTerm(node[1].getType())),
++           d_nm->mkConst(SortToTerm(type))}),
+       node[0],
+       node[1]);
+ }
+@@ -70,12 +68,11 @@ Node FpExpandDefs::toRealUF(TNode node)
+   TypeNode type = node[0].getType();
+   Assert(type.getKind() == Kind::FLOATINGPOINT_TYPE);
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+-
+-  return nm->mkNode(Kind::APPLY_UF,
+-                    nm->getSkolemManager()->mkSkolemFunction(
+-                        SkolemId::FP_TO_REAL, {nm->mkConst(SortToTerm(type))}),
+-                    node[0]);
++  return d_nm->mkNode(
++      Kind::APPLY_UF,
++      d_nm->getSkolemManager()->mkSkolemFunction(
++          SkolemId::FP_TO_REAL, {d_nm->mkConst(SortToTerm(type))}),
++      node[0]);
+ }
+ 
+ TrustNode FpExpandDefs::expandDefinition(Node node)
+@@ -85,22 +82,20 @@ TrustNode FpExpandDefs::expandDefinition(Node node)
+ 
+   Node res = node;
+   Kind kind = node.getKind();
+-  NodeManager* nm = NodeManager::currentNM();
+-
+   if (kind == Kind::FLOATINGPOINT_MIN)
+   {
+-    res = nm->mkNode(
++    res = d_nm->mkNode(
+         Kind::FLOATINGPOINT_MIN_TOTAL, node[0], node[1], minMaxUF(node));
+   }
+   else if (kind == Kind::FLOATINGPOINT_MAX)
+   {
+-    res = nm->mkNode(
++    res = d_nm->mkNode(
+         Kind::FLOATINGPOINT_MAX_TOTAL, node[0], node[1], minMaxUF(node));
+   }
+   else if (kind == Kind::FLOATINGPOINT_TO_UBV)
+   {
+-    res = nm->mkNode(  // Kind::FLOATINGPOINT_TO_UBV_TOTAL,
+-        nm->mkConst(FloatingPointToUBVTotal(
++    res = d_nm->mkNode(  // Kind::FLOATINGPOINT_TO_UBV_TOTAL,
++        d_nm->mkConst(FloatingPointToUBVTotal(
+             node.getOperator().getConst<FloatingPointToUBV>())),
+         node[0],
+         node[1],
+@@ -108,8 +103,8 @@ TrustNode FpExpandDefs::expandDefinition(Node node)
+   }
+   else if (kind == Kind::FLOATINGPOINT_TO_SBV)
+   {
+-    res = nm->mkNode(  // Kind::FLOATINGPOINT_TO_SBV_TOTAL,
+-        nm->mkConst(FloatingPointToSBVTotal(
++    res = d_nm->mkNode(  // Kind::FLOATINGPOINT_TO_SBV_TOTAL,
++        d_nm->mkConst(FloatingPointToSBVTotal(
+             node.getOperator().getConst<FloatingPointToSBV>())),
+         node[0],
+         node[1],
+@@ -117,8 +112,8 @@ TrustNode FpExpandDefs::expandDefinition(Node node)
+   }
+   else if (kind == Kind::FLOATINGPOINT_TO_REAL)
+   {
+-    res =
+-        nm->mkNode(Kind::FLOATINGPOINT_TO_REAL_TOTAL, node[0], toRealUF(node));
++    res = d_nm->mkNode(
++        Kind::FLOATINGPOINT_TO_REAL_TOTAL, node[0], toRealUF(node));
+   }
+ 
+   if (res != node)
+diff --git a/src/theory/fp/fp_expand_defs.h b/src/theory/fp/fp_expand_defs.h
+index 3f36bac1f..3c457ab3b 100644
+--- a/src/theory/fp/fp_expand_defs.h
++++ b/src/theory/fp/fp_expand_defs.h
+@@ -42,7 +42,7 @@ class FpExpandDefs
+       CDHashMap<std::pair<TypeNode, TypeNode>, Node, PairTypeNodeHashFunction>;
+ 
+  public:
+-  FpExpandDefs() {}
++  FpExpandDefs(NodeManager* nm) : d_nm(nm) {}
+   /** expand definitions in node */
+   TrustNode expandDefinition(Node node);
+ 
+@@ -72,10 +72,12 @@ class FpExpandDefs
+    * @return The function application.
+    */
+   Node toRealUF(TNode node);
++  /** The associated node manager. */
++  NodeManager* d_nm;
+ }; /* class TheoryFp */
+ 
+ }  // namespace fp
+ }  // namespace theory
+ }  // namespace cvc5::internal
+ 
+-#endif /* CVC5__THEORY__FP__THEORY_FP_H */
++#endif /* CVC5__THEORY__FP__FP_EXPAND_DEFS_H */
+diff --git a/src/theory/fp/theory_fp.cpp b/src/theory/fp/theory_fp.cpp
+index e39b8929a..f72d134d1 100644
+--- a/src/theory/fp/theory_fp.cpp
++++ b/src/theory/fp/theory_fp.cpp
+@@ -38,28 +38,6 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace fp {
+ 
+-namespace helper {
+-Node buildConjunct(const std::vector<TNode> &assumptions) {
+-  if (assumptions.size() == 0) {
+-    return NodeManager::currentNM()->mkConst<bool>(true);
+-
+-  } else if (assumptions.size() == 1) {
+-    return assumptions[0];
+-
+-  } else {
+-    // \todo see bv::utils::flattenAnd
+-
+-    NodeBuilder conjunction(Kind::AND);
+-    for (std::vector<TNode>::const_iterator it = assumptions.begin();
+-         it != assumptions.end(); ++it) {
+-      conjunction << *it;
+-    }
+-
+-    return conjunction;
+-  }
+-}
+-}  // namespace helper
+-
+ /** Constructs a new instance of TheoryFp w.r.t. the provided contexts. */
+ TheoryFp::TheoryFp(Env& env, OutputChannel& out, Valuation valuation)
+     : Theory(THEORY_FP, env, out, valuation),
+@@ -72,7 +50,7 @@ TheoryFp::TheoryFp(Env& env, OutputChannel& out, Valuation valuation)
+       d_notify(d_im),
+       d_wbFactsCache(userContext()),
+       d_invalidateModelCache(context(), true),
+-      d_true(NodeManager::currentNM()->mkConst(true))
++      d_true(nodeManager()->mkConst(true))
+ {
+   // indicate we are using the default theory state and inference manager
+   d_theoryState = &d_state;
+@@ -167,6 +145,7 @@ bool TheoryFp::refineAbstraction(TheoryModel *m, TNode abstract, TNode concrete)
+ {
+   Trace("fp-refineAbstraction") << "TheoryFp::refineAbstraction(): " << abstract
+                                 << " vs. " << concrete << std::endl;
++  NodeManager* nm = nodeManager();
+   Kind k = concrete.getKind();
+   if (k == Kind::FLOATINGPOINT_TO_REAL_TOTAL)
+   {
+@@ -187,8 +166,6 @@ bool TheoryFp::refineAbstraction(TheoryModel *m, TNode abstract, TNode concrete)
+     Assert(undefValue.isConst());
+ 
+     // Work out the actual value for those args
+-    NodeManager *nm = NodeManager::currentNM();
+-
+     Node evaluate =
+         nm->mkNode(Kind::FLOATINGPOINT_TO_REAL_TOTAL, floatValue, undefValue);
+     Node concreteValue = rewrite(evaluate);
+@@ -303,8 +280,6 @@ bool TheoryFp::refineAbstraction(TheoryModel *m, TNode abstract, TNode concrete)
+     Assert(realValue.isConst());
+ 
+     // Work out the actual value for those args
+-    NodeManager *nm = NodeManager::currentNM();
+-
+     Node evaluate =
+         nm->mkNode(Kind::FLOATINGPOINT_TO_FP_FROM_REAL,
+                    nm->mkConst(FloatingPointToFPReal(
+@@ -415,21 +390,17 @@ void TheoryFp::wordBlastAndEquateTerm(TNode node)
+ 
+   Assert(oldSize <= newSize);
+ 
++  NodeManager* nm = nodeManager();
+   while (oldSize < newSize)
+   {
+     Node addA = d_wordBlaster->d_additionalAssertions[oldSize];
+-
+     Trace("fp-wordBlastTerm")
+         << "TheoryFp::wordBlastTerm(): additional assertion  " << addA
+         << std::endl;
+-
+-    NodeManager* nm = NodeManager::currentNM();
+-
+     handleLemma(
+         nm->mkNode(
+             Kind::EQUAL, addA, nm->mkConst(cvc5::internal::BitVector(1U, 1U))),
+         InferenceId::FP_EQUATE_TERM);
+-
+     ++oldSize;
+   }
+ 
+@@ -441,9 +412,6 @@ void TheoryFp::wordBlastAndEquateTerm(TNode node)
+     if (wordBlasted != node)
+     {
+       Assert(wordBlasted.getType().isBitVector());
+-
+-      NodeManager* nm = NodeManager::currentNM();
+-
+       handleLemma(
+           nm->mkNode(
+               Kind::EQUAL,
+@@ -463,10 +431,8 @@ void TheoryFp::wordBlastAndEquateTerm(TNode node)
+     if (wordBlasted != node)
+     {
+       Assert(wordBlasted.getType().isBitVector());
+-
+-      handleLemma(
+-          NodeManager::currentNM()->mkNode(Kind::EQUAL, node, wordBlasted),
+-          InferenceId::FP_EQUATE_TERM);
++      handleLemma(nm->mkNode(Kind::EQUAL, node, wordBlasted),
++                  InferenceId::FP_EQUATE_TERM);
+     }
+   }
+ 
+@@ -503,10 +469,10 @@ void TheoryFp::registerTerm(TNode node)
+ 
+   // Give the expansion of classifications in terms of equalities
+   // This should make equality reasoning slightly more powerful.
++  NodeManager* nm = nodeManager();
+   if ((k == Kind::FLOATINGPOINT_IS_NAN) || (k == Kind::FLOATINGPOINT_IS_ZERO)
+       || (k == Kind::FLOATINGPOINT_IS_INF))
+   {
+-    NodeManager* nm = NodeManager::currentNM();
+     FloatingPointSize s = node[0].getType().getConst<FloatingPointSize>();
+     Node equalityAlias = Node::null();
+ 
+@@ -548,7 +514,6 @@ void TheoryFp::registerTerm(TNode node)
+   else if (k == Kind::FLOATINGPOINT_TO_REAL_TOTAL)
+   {
+     // Purify (fp.to_real x)
+-    NodeManager* nm = NodeManager::currentNM();
+     SkolemManager* sm = nm->getSkolemManager();
+     Node sk = sm->mkPurifySkolem(node);
+     handleLemma(node.eqNode(sk), InferenceId::FP_REGISTER_TERM);
+@@ -574,7 +539,6 @@ void TheoryFp::registerTerm(TNode node)
+   else if (k == Kind::FLOATINGPOINT_TO_FP_FROM_REAL)
+   {
+     // Purify ((_ to_fp eb sb) rm x)
+-    NodeManager* nm = NodeManager::currentNM();
+     SkolemManager* sm = nm->getSkolemManager();
+     Node sk = sm->mkPurifySkolem(node);
+     handleLemma(node.eqNode(sk), InferenceId::FP_REGISTER_TERM);
+@@ -861,7 +825,9 @@ TrustNode TheoryFp::explain(TNode n)
+     d_equalityEngine->explainPredicate(atom, polarity, assumptions);
+   }
+ 
+-  Node exp = helper::buildConjunct(assumptions);
++  // build conjunct
++  NodeManager* nm = nodeManager();
++  Node exp = nm->mkAnd(assumptions);
+   return TrustNode::mkTrustPropExp(n, exp, nullptr);
+ }
+ 
+@@ -912,6 +878,7 @@ bool TheoryFp::collectModelValues(TheoryModel* m,
+           << std::endl;
+     }
+   }
++  NodeManager* nm = nodeManager();
+   for (const Node& node : termSet)
+   {
+     TypeNode t = node.getType();
+@@ -940,7 +907,6 @@ bool TheoryFp::collectModelValues(TheoryModel* m,
+       // components of `node` except `(sign node)` (the sign component is
+       // assignable, meaning that the model builder can pick an arbitrary value
+       // for it if it hasn't been assigned in the equality engine).
+-      NodeManager* nm = NodeManager::currentNM();
+       Node compNaN = nm->mkNode(Kind::FLOATINGPOINT_COMPONENT_NAN, node);
+       Node compInf = nm->mkNode(Kind::FLOATINGPOINT_COMPONENT_INF, node);
+       Node compZero = nm->mkNode(Kind::FLOATINGPOINT_COMPONENT_ZERO, node);
+diff --git a/src/theory/fp/theory_fp_rewriter.cpp b/src/theory/fp/theory_fp_rewriter.cpp
+index 7e5111822..c45868c19 100644
+--- a/src/theory/fp/theory_fp_rewriter.cpp
++++ b/src/theory/fp/theory_fp_rewriter.cpp
+@@ -1143,7 +1143,7 @@ RewriteResponse roundingModeBitBlast(NodeManager* nm,
+  * Initialize the rewriter.
+  */
+ TheoryFpRewriter::TheoryFpRewriter(NodeManager* nm, context::UserContext* u)
+-    : TheoryRewriter(nm), d_fpExpDef()
++    : TheoryRewriter(nm), d_fpExpDef(nm)
+ {
+   /* Set up the pre-rewrite dispatch table */
+   for (uint32_t i = 0; i < static_cast<uint32_t>(Kind::LAST_KIND); ++i)
+-- 
+2.47.1
+

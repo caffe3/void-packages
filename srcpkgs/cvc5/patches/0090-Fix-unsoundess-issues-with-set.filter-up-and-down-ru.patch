@@ -1,0 +1,180 @@
+From 2e6559891e2b8f0f4e529125de482c34ce003ae2 Mon Sep 17 00:00:00 2001
+From: mudathirmahgoub <mudathirmahgoub@gmail.com>
+Date: Tue, 1 Oct 2024 11:43:32 -0500
+Subject: [PATCH 090/312] Fix unsoundess issues with set.filter up and down
+ rules (#11244)
+
+---
+ src/theory/sets/infer_proof_cons.cpp          |  5 ++-
+ src/theory/sets/theory_sets_private.cpp       |  8 ++--
+ src/theory/sets/theory_sets_rewriter.cpp      |  4 +-
+ test/regress/cli/CMakeLists.txt               |  2 +
+ test/regress/cli/regress1/sets/all_sat.smt2   | 39 +++++++++++++++++++
+ test/regress/cli/regress1/sets/all_unsat.smt2 | 18 +++++++++
+ 6 files changed, 69 insertions(+), 7 deletions(-)
+ create mode 100644 test/regress/cli/regress1/sets/all_sat.smt2
+ create mode 100644 test/regress/cli/regress1/sets/all_unsat.smt2
+
+diff --git a/src/theory/sets/infer_proof_cons.cpp b/src/theory/sets/infer_proof_cons.cpp
+index 59b1f6bd0..d047bd242 100644
+--- a/src/theory/sets/infer_proof_cons.cpp
++++ b/src/theory/sets/infer_proof_cons.cpp
+@@ -155,7 +155,10 @@ bool InferProofCons::convert(CDProof& cdp,
+       Node aelim = psb.applyPredElim(assumps[0], exp);
+       success = CDProof::isSame(aelim, conc);
+       // should never fail
+-      Assert(success);
++      // TODO(#155): Enable this assertion after fixing regression
++      // regress1/sets/all_unsat.smt2
++      // https://github.com/cvc5/cvc5-wishues/issues/155
++      // Assert(success);
+     }
+     break;
+     case InferenceId::SETS_UP_CLOSURE:
+diff --git a/src/theory/sets/theory_sets_private.cpp b/src/theory/sets/theory_sets_private.cpp
+index 1f58388f0..9be02b17d 100644
+--- a/src/theory/sets/theory_sets_private.cpp
++++ b/src/theory/sets/theory_sets_private.cpp
+@@ -722,7 +722,7 @@ void TheorySetsPrivate::checkFilterUp()
+         d_state.getMembers(d_state.getRepresentative(A));
+     for (const std::pair<const Node, Node>& pair : positiveMembers)
+     {
+-      Node x = pair.first;
++      Node x = pair.second[0];
+       std::vector<Node> exp;
+       exp.push_back(pair.second);
+       Node B = pair.second[1];
+@@ -759,7 +759,7 @@ void TheorySetsPrivate::checkFilterDown()
+       Node B = pair.second[1];
+       exp.push_back(pair.second);
+       d_state.addEqualityToExp(B, term, exp);
+-      Node x = pair.first;
++      Node x = pair.second[0];
+       Node memberA = nm->mkNode(Kind::SET_MEMBER, x, A);
+       Node p_x = nm->mkNode(Kind::APPLY_UF, p, x);
+       Node fact = memberA.andNode(p_x);
+@@ -787,7 +787,7 @@ void TheorySetsPrivate::checkMapUp()
+         d_state.getMapSkolemElements(term);
+     for (const std::pair<const Node, Node>& pair : positiveMembers)
+     {
+-      Node x = pair.first;
++      Node x = pair.second[0];
+       if (skolemElements->contains(x))
+       {
+         // Break this cycle between inferences SETS_MAP_DOWN_POSITIVE
+@@ -840,7 +840,7 @@ void TheorySetsPrivate::checkMapDown()
+       Node B = pair.second[1];
+       exp.push_back(pair.second);
+       d_state.addEqualityToExp(B, term, exp);
+-      Node y = pair.first;
++      Node y = pair.second[0];
+ 
+       // general case
+       // (=>
+diff --git a/src/theory/sets/theory_sets_rewriter.cpp b/src/theory/sets/theory_sets_rewriter.cpp
+index 6f705e3ac..9a0dcf374 100644
+--- a/src/theory/sets/theory_sets_rewriter.cpp
++++ b/src/theory/sets/theory_sets_rewriter.cpp
+@@ -863,7 +863,7 @@ RewriteResponse TheorySetsRewriter::postRewriteAll(TNode n)
+       // (set.all p A) is rewritten as (set.filter p A) = A
+       Node filter = nm->mkNode(Kind::SET_FILTER, n[0], n[1]);
+       Node all = filter.eqNode(n[1]);
+-      return RewriteResponse(REWRITE_DONE, all);
++      return RewriteResponse(REWRITE_AGAIN_FULL, all);
+     }
+   }
+ }
+@@ -901,7 +901,7 @@ RewriteResponse TheorySetsRewriter::postRewriteSome(TNode n)
+       Node filter = nm->mkNode(Kind::SET_FILTER, n[0], n[1]);
+       Node empty = nm->mkConst(EmptySet(n[1].getType()));
+       Node some = filter.eqNode(empty).notNode();
+-      return RewriteResponse(REWRITE_DONE, some);
++      return RewriteResponse(REWRITE_AGAIN_FULL, some);
+     }
+   }
+ }
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index ceb55e3dd..d8c61bc99 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -2993,6 +2993,8 @@ set(regress_1_tests
+   regress1/seq/issue8148-const-mv.smt2
+   regress1/seq/issue8936-nth-eager-red.smt2
+   regress1/seq/proj-issue733-mbqi-w.smt2
++  regress1/sets/all_sat.smt2
++  regress1/sets/all_unsat.smt2
+   regress1/sets/all1.smt2
+   regress1/sets/all2.smt2
+   regress1/sets/all3.smt2
+diff --git a/test/regress/cli/regress1/sets/all_sat.smt2 b/test/regress/cli/regress1/sets/all_sat.smt2
+new file mode 100644
+index 000000000..76023c3b3
+--- /dev/null
++++ b/test/regress/cli/regress1/sets/all_sat.smt2
+@@ -0,0 +1,39 @@
++(set-logic HO_ALL)
++(set-info :status sat)
++(set-option :finite-model-find true)
++(set-option :uf-lazy-ll true)
++(set-option :fmf-bound true)
++(declare-const time (Set (Tuple Int)))
++(declare-const A (Set (Tuple Int)))
++(declare-const not_A (Set (Tuple Int Int)))
++(declare-const B (Set (Tuple Int)))
++(declare-const not_B (Set (Tuple Int Int)))
++(declare-const C (Set (Tuple Int)))
++(declare-const not_C (Set (Tuple Int Int)))
++(declare-const Measure (Set (Tuple Int Int)))
++(assert (exists ((x Int) (y Int) (z Int)) (and (= x y) (and (set.member (tuple y z) Measure) (set.member (tuple x) A)))))
++(assert 
++ (set.all
++  (lambda ((t1 (Tuple Int)))
++    (let ((x ((_ tuple.select 0) t1)))
++     (set.some 
++      (lambda ((t2 (Tuple Int Int)))
++       (let ((y ((_ tuple.select 0) t2)) (z ((_ tuple.select 1) t2)))
++        (and 
++         (set.some 
++          (lambda ((t3 (Tuple Int))) 
++            (let ((w ((_ tuple.select 0) t3)))
++             (and (>= w (+ x 0)) (<= w (+ x 7))))
++          )
++          B)
++         (= x y))
++        )
++      ) 
++      Measure))) 
++  A))
++(assert (forall ((B_time_Int_15 Int)) (=> (set.member (tuple B_time_Int_15) B) (exists ((Measure_time_Int_16 Int) (Measure_m1_Int_17 Int)) (and (and (exists ((C_time_Int_18 Int)) (and (and (>= C_time_Int_18 (+ B_time_Int_15 0)) (<= C_time_Int_18 (+ B_time_Int_15 7))) (set.member (tuple C_time_Int_18) C))) (= B_time_Int_15 Measure_time_Int_16)) (set.member (tuple Measure_time_Int_16 Measure_m1_Int_17) Measure))))))
++(assert (forall ((A_time_Int_29 Int)) (=> (set.member (tuple A_time_Int_29) A) (exists ((Measure_time_Int_30 Int) (z1 Int)) (and (and (or (exists ((C_time_Int_32 Int)) (and (and (>= C_time_Int_32 (+ A_time_Int_29 0)) (<= C_time_Int_32 (+ A_time_Int_29 15))) (set.member (tuple C_time_Int_32) C))) (not (< z1 20))) (= A_time_Int_29 Measure_time_Int_30)) (set.member (tuple Measure_time_Int_30 z1) Measure))))))
++(assert (forall ((A_time_Int_49 Int)) (=> (set.member (tuple A_time_Int_49) A) (exists ((Measure_time_Int_50 Int) (Measure_m1_Int_51 Int)) (and (and (exists ((not_C_start_time_Int_53 Int) (not_C_end_time_Int_54 Int)) (and (and (= not_C_end_time_Int_54 (+ A_time_Int_49 11)) (= not_C_start_time_Int_53 (+ A_time_Int_49 0))) (set.member (tuple not_C_start_time_Int_53 not_C_end_time_Int_54) not_C))) (= A_time_Int_49 Measure_time_Int_50)) (set.member (tuple Measure_time_Int_50 Measure_m1_Int_51) Measure))))))
++(assert (and (and (= (as set.empty (Set (Tuple Int Int Int))) (set.filter (lambda ((tuple_3 (Tuple Int Int Int))) (not (not (and (<= ((_ tuple.select 0) tuple_3) ((_ tuple.select 2) tuple_3)) (<= ((_ tuple.select 1) tuple_3) ((_ tuple.select 0) tuple_3)))))) (rel.product C not_C))) (and (= (as set.empty (Set (Tuple Int Int Int))) (set.filter (lambda ((tuple_2 (Tuple Int Int Int))) (not (not (and (<= ((_ tuple.select 0) tuple_2) ((_ tuple.select 2) tuple_2)) (<= ((_ tuple.select 1) tuple_2) ((_ tuple.select 0) tuple_2)))))) (rel.product B not_B))) (= (as set.empty (Set (Tuple Int Int Int))) (set.filter (lambda ((tuple_1 (Tuple Int Int Int))) (not (not (and (<= ((_ tuple.select 0) tuple_1) ((_ tuple.select 2) tuple_1)) (<= ((_ tuple.select 1) tuple_1) ((_ tuple.select 0) tuple_1)))))) (rel.product A not_A))))) (forall ((Measure_time_Int_79 Int) (Measure_m1_Int_80 Int) (Measure_time_Int_81 Int) (Measure_m1_Int_82 Int)) (=> (and (set.member (tuple Measure_time_Int_81 Measure_m1_Int_82) Measure) (set.member (tuple Measure_time_Int_79 Measure_m1_Int_80) Measure)) (=> (= Measure_time_Int_79 Measure_time_Int_81) (and (= Measure_m1_Int_80 Measure_m1_Int_82) (= Measure_time_Int_79 Measure_time_Int_81)))))))
++(assert (forall ((B_time_Int_71 Int)) (=> (set.member (tuple B_time_Int_71) B) (or (exists ((B_time_Int_73 Int)) (and (and (forall ((B_time_Int_74 Int)) (=> (set.member (tuple B_time_Int_74) B) (<= B_time_Int_74 B_time_Int_71))) (> B_time_Int_73 B_time_Int_71)) (set.member (tuple B_time_Int_73) B))) (forall ((B_time_Int_72 Int)) (=> (set.member (tuple B_time_Int_72) B) (<= B_time_Int_72 B_time_Int_71)))))))
++(check-sat)
+diff --git a/test/regress/cli/regress1/sets/all_unsat.smt2 b/test/regress/cli/regress1/sets/all_unsat.smt2
+new file mode 100644
+index 000000000..6c0fbb827
+--- /dev/null
++++ b/test/regress/cli/regress1/sets/all_unsat.smt2
+@@ -0,0 +1,18 @@
++(set-logic HO_ALL)
++(set-info :status unsat)
++(set-option :finite-model-find true)
++(set-option :fmf-bound true)
++(set-option :uf-lazy-ll false)
++(declare-fun B () (Set (Tuple Int)))
++(declare-fun A () (Set (Tuple Int)))
++(assert (set.all (lambda ((t1 (Tuple Int))) (set.some (lambda ((t3 (Tuple Int))) (= t3 t1)) B)) A))
++(assert (forall ((x Int)) 
++         (=> 
++           (set.member (tuple x) B) 
++           (forall ((y Int)) 
++            (=> 
++              (set.member (tuple y) B)
++              (<= y x) )))))
++(assert (= A (set.insert (tuple 1) (set.singleton (tuple 0)))))
++(assert (set.member (tuple 0) B))
++(check-sat)
+-- 
+2.47.1
+

@@ -1,0 +1,180 @@
+From f4f7bc6c17b77d81a5497fe532970b6c449a7e26 Mon Sep 17 00:00:00 2001
+From: yoni206 <yoni206@users.noreply.github.com>
+Date: Wed, 18 Sep 2024 00:38:31 +0200
+Subject: [PATCH 056/312] Updating bvusubo and bvssubo tests and adding bvnego
+ tests. (#11115)
+
+This PR adds tests for the `bvnego` operator.
+
+In addition, it updates tests for `bvusubo` and `bvssubo`, in order to
+make sure that they are not trivially solved.
+A bvusubo test and a bvssubo test both rewrite to `false` regardless of
+the overflow operator, and so it seems that the way cvc5 handles them is
+not tested by them. This is witnessed by checking the assertions before
+and after `apply-substs` preprocessing pass.
+
+For example, consider the test for `bvssubo`.
+
+Before this PR:
+```
+$ ./build/bin/cvc5 test/regress/cli/regress0/bv/overflow/ssubo1.smt2 -tassertions::pre-apply-substs
+;;; assertions::pre-apply-substs start
+(set-logic QF_BV)
+(declare-fun v () (_ BitVec 6))
+(assert (= (bvsub v v) #b110101))
+(assert (not (bvssubo v v)))
+(assert true)
+(check-sat)
+;;; assertions::pre-apply-substs end
+unsat
+$ ./build/bin/cvc5 test/regress/cli/regress0/bv/overflow/ssubo1.smt2 -tassertions::post-apply-substs
+;;; assertions::post-apply-substs start
+(set-logic QF_BV)
+(assert false)
+(check-sat)
+;;; assertions::post-apply-substs end
+unsat
+```
+
+After this PR:
+```
+$ ./build/bin/cvc5 test/regress/cli/regress0/bv/overflow/ssubo1.smt2 -tassertions::pre-apply-substs
+;;; assertions::pre-apply-substs start
+(set-logic QF_BV)
+(declare-fun v () (_ BitVec 6))
+(declare-fun u () (_ BitVec 6))
+(assert (bvsgt v u))
+(assert (not (bvssubo u v)))
+(assert true)
+(check-sat)
+;;; assertions::pre-apply-substs end
+sat
+$ ./build/bin/cvc5 test/regress/cli/regress0/bv/overflow/ssubo1.smt2 -tassertions::post-apply-substs
+;;; assertions::post-apply-substs start
+(set-logic QF_BV)
+(declare-fun u () (_ BitVec 6))
+(declare-fun v () (_ BitVec 6))
+(assert (bvslt u v))
+(assert (not (bvssubo u v)))
+(assert true)
+(check-sat)
+;;; assertions::post-apply-substs end
+sat
+```
+
+---------
+
+Co-authored-by: Yoni Zohar <yonizohar@Yonis-MacBook-Pro.local>
+---
+ proofs/eo/cpc/theories/BitVectors.eo              | 6 ++++++
+ test/regress/cli/CMakeLists.txt                   | 3 +++
+ test/regress/cli/regress0/bv/overflow/nego1.smt2  | 5 +++++
+ test/regress/cli/regress0/bv/overflow/nego2.smt2  | 5 +++++
+ test/regress/cli/regress0/bv/overflow/ssubo1.smt2 | 2 +-
+ test/regress/cli/regress0/bv/overflow/ssubo3.smt2 | 8 ++++++++
+ test/regress/cli/run_regression.py                | 1 -
+ 7 files changed, 28 insertions(+), 2 deletions(-)
+ create mode 100644 test/regress/cli/regress0/bv/overflow/nego1.smt2
+ create mode 100644 test/regress/cli/regress0/bv/overflow/nego2.smt2
+ create mode 100644 test/regress/cli/regress0/bv/overflow/ssubo3.smt2
+
+diff --git a/proofs/eo/cpc/theories/BitVectors.eo b/proofs/eo/cpc/theories/BitVectors.eo
+index fae59c875..b20ad6f7d 100644
+--- a/proofs/eo/cpc/theories/BitVectors.eo
++++ b/proofs/eo/cpc/theories/BitVectors.eo
+@@ -280,6 +280,12 @@
+       (BitVec m) (BitVec m) Bool)
+ )
+ 
++; disclaimer: This function is not a function in SMT-LIB.
++(declare-const bvnego
++  (-> (! Int :var m :implicit)
++      (BitVec m) Bool)
++)
++
+ ; disclaimer: This function is not a function in SMT-LIB.
+ (declare-const bvsaddo
+   (-> (! Int :var m :implicit)
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 8b3513d1b..54208a547 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -602,6 +602,8 @@ set(regress_0_tests
+   regress0/bv/mul-neg-unsat.smt2
+   regress0/bv/mul-negpow2.smt2
+   regress0/bv/mult-pow2-negative.smt2
++  regress0/bv/overflow/nego1.smt2
++  regress0/bv/overflow/nego2.smt2
+   regress0/bv/overflow/uaddo1.smt2
+   regress0/bv/overflow/uaddo2.smt2
+   regress0/bv/overflow/uaddo3.smt2
+@@ -616,6 +618,7 @@ set(regress_0_tests
+   regress0/bv/overflow/usubo2.smt2
+   regress0/bv/overflow/ssubo1.smt2
+   regress0/bv/overflow/ssubo2.smt2
++  regress0/bv/overflow/ssubo3.smt2
+   regress0/bv/overflow/sdivo1.smt2
+   regress0/bv/overflow/sdivo2.smt2
+   regress0/bv/pr4993-bvugt-bvurem-a.smt2
+diff --git a/test/regress/cli/regress0/bv/overflow/nego1.smt2 b/test/regress/cli/regress0/bv/overflow/nego1.smt2
+new file mode 100644
+index 000000000..9da95c5a2
+--- /dev/null
++++ b/test/regress/cli/regress0/bv/overflow/nego1.smt2
+@@ -0,0 +1,5 @@
++; EXPECT: unsat
++(set-logic QF_BV)
++(declare-const v (_ BitVec 6))
++(assert (and (bvugt v #b100000) (bvnego v)))
++(check-sat)
+diff --git a/test/regress/cli/regress0/bv/overflow/nego2.smt2 b/test/regress/cli/regress0/bv/overflow/nego2.smt2
+new file mode 100644
+index 000000000..6d034782f
+--- /dev/null
++++ b/test/regress/cli/regress0/bv/overflow/nego2.smt2
+@@ -0,0 +1,5 @@
++; EXPECT: sat
++(set-logic QF_BV)
++(declare-const v (_ BitVec 6))
++(assert (and (bvult v #b110000) (bvnego v)))
++(check-sat)
+diff --git a/test/regress/cli/regress0/bv/overflow/ssubo1.smt2 b/test/regress/cli/regress0/bv/overflow/ssubo1.smt2
+index 8014d147a..176e5c0d2 100644
+--- a/test/regress/cli/regress0/bv/overflow/ssubo1.smt2
++++ b/test/regress/cli/regress0/bv/overflow/ssubo1.smt2
+@@ -4,5 +4,5 @@
+ (set-logic QF_BV)
+ (declare-const u (_ BitVec 6))
+ (declare-const v (_ BitVec 6))
+-(assert (and (bvugt v (_ bv22 6)) (bvugt (_ bv0 6) u) (not (bvssubo v u))))
++(assert (and (bvsgt v u) (bvslt u #b101011)  (bvsgt v #b010101) (not (bvssubo u v))))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/bv/overflow/ssubo3.smt2 b/test/regress/cli/regress0/bv/overflow/ssubo3.smt2
+new file mode 100644
+index 000000000..8014d147a
+--- /dev/null
++++ b/test/regress/cli/regress0/bv/overflow/ssubo3.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
++(set-logic QF_BV)
++(declare-const u (_ BitVec 6))
++(declare-const v (_ BitVec 6))
++(assert (and (bvugt v (_ bv22 6)) (bvugt (_ bv0 6) u) (not (bvssubo v u))))
++(check-sat)
+diff --git a/test/regress/cli/run_regression.py b/test/regress/cli/run_regression.py
+index 1041f3e0d..59120e78d 100755
+--- a/test/regress/cli/run_regression.py
++++ b/test/regress/cli/run_regression.py
+@@ -755,7 +755,6 @@ def run_regression(
+     """Determines the expected output for a benchmark, runs cvc5 on it using
+     all the specified `testers` and then checks whether the output corresponds
+     to the expected output. Optionally uses a wrapper `wrapper`."""
+-
+     if not os.access(cvc5_binary, os.X_OK):
+         sys.exit('"{}" does not exist or is not executable'.format(cvc5_binary))
+     if not os.path.isfile(benchmark_path):
+-- 
+2.47.1
+

@@ -1,0 +1,170 @@
+From f996d33938f76c0ed872c20ef499a6478624439a Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 3 Oct 2024 15:18:25 -0500
+Subject: [PATCH 101/312] Do not check for shadowed variables with
+ --wf-checking (#11260)
+
+Shadowed variables are now always allowed in our API.
+
+This relaxes an API check for shadowed variables with `--wf-checking`
+which is inconsistent with other behaviors of cvc5.
+
+A similar relaxation was done to our assertions utility on
+https://github.com/cvc5/cvc5/pull/10556. The same change should have
+been applied for the code changed in this PR.
+
+This also makes our implementation of `expr::hasFreeVar` robust to
+variable shadowing.
+---
+ src/api/cpp/cvc5.cpp        | 19 ++++++-------------
+ src/expr/node_algorithm.cpp | 14 +++++++-------
+ src/smt/solver_engine.cpp   | 21 ++++++++++++---------
+ src/smt/solver_engine.h     |  8 ++++++++
+ 4 files changed, 33 insertions(+), 29 deletions(-)
+
+diff --git a/src/api/cpp/cvc5.cpp b/src/api/cpp/cvc5.cpp
+index 4d2c01c91..c4cbcbe02 100644
+--- a/src/api/cpp/cvc5.cpp
++++ b/src/api/cpp/cvc5.cpp
+@@ -6873,21 +6873,14 @@ void Solver::ensureWellFormedTerm(const Term& t) const
+   // only check if option is set
+   if (d_slv->getOptions().expr.wellFormedChecking)
+   {
+-    bool wasShadow = false;
+-    if (internal::expr::hasFreeOrShadowedVar(*t.d_node, wasShadow))
++    // Call isWellFormedTerm of the underlying solver, which checks if the
++    // given node has free variables. We do not check for variable shadowing,
++    // since this can be handled by our rewriter.
++    if (!d_slv->isWellFormedTerm(*t.d_node))
+     {
+       std::stringstream se;
+-      se << "cannot process term " << *t.d_node << " with ";
+-      if (wasShadow)
+-      {
+-        se << "shadowed variables " << std::endl;
+-      }
+-      else
+-      {
+-        std::unordered_set<internal::Node> fvs;
+-        internal::expr::getFreeVariables(*t.d_node, fvs);
+-        se << "free variables: " << fvs << std::endl;
+-      }
++      se << "cannot process term " << *t.d_node << " with free variables"
++         << std::endl;
+       throw CVC5ApiException(se.str().c_str());
+     }
+   }
+diff --git a/src/expr/node_algorithm.cpp b/src/expr/node_algorithm.cpp
+index c087f6e48..e97d03826 100644
+--- a/src/expr/node_algorithm.cpp
++++ b/src/expr/node_algorithm.cpp
+@@ -348,11 +348,12 @@ bool checkVariablesInternal(TNode n,
+       else if (cur.isClosure())
+       {
+         // add to scope
++        std::vector<TNode> boundvars;
+         for (const TNode& cn : cur[0])
+         {
+-          if (checkShadow)
++          if (scope.find(cn) != scope.end())
+           {
+-            if (scope.find(cn) != scope.end())
++            if (checkShadow)
+             {
+               wasShadow = true;
+               return true;
+@@ -360,11 +361,10 @@ bool checkVariablesInternal(TNode n,
+           }
+           else
+           {
+-            // should not shadow
+-            Assert(scope.find(cn) == scope.end())
+-                << "Shadowed variable " << cn << " in " << cur << "\n";
++            // add to scope if it is not shadowing
++            boundvars.push_back(cn);
++            scope.insert(cn);
+           }
+-          scope.insert(cn);
+         }
+         // must make recursive call to use separate cache
+         if (checkVariablesInternal(
+@@ -374,7 +374,7 @@ bool checkVariablesInternal(TNode n,
+           return true;
+         }
+         // cleanup
+-        for (const TNode& cn : cur[0])
++        for (const TNode& cn : boundvars)
+         {
+           scope.erase(cn);
+         }
+diff --git a/src/smt/solver_engine.cpp b/src/smt/solver_engine.cpp
+index ff28c4b19..a226b4c7c 100644
+--- a/src/smt/solver_engine.cpp
++++ b/src/smt/solver_engine.cpp
+@@ -1340,10 +1340,7 @@ void SolverEngine::blockModel(modes::BlockModelsMode mode)
+ void SolverEngine::blockModelValues(const std::vector<Node>& exprs)
+ {
+   Trace("smt") << "SMT blockModelValues()" << endl;
+-  for (const Node& e : exprs)
+-  {
+-    ensureWellFormedTerm(e, "block model values");
+-  }
++  ensureWellFormedTerms(exprs, "block model values");
+ 
+   TheoryModel* m = getAvailableModel("block model values");
+ 
+@@ -1397,21 +1394,27 @@ std::vector<Node> SolverEngine::getAssertionsInternal() const
+ 
+ const Options& SolverEngine::options() const { return d_env->getOptions(); }
+ 
++bool SolverEngine::isWellFormedTerm(const Node& n) const
++{
++  // Well formed if it does not have free variables. Note that n may have
++  // variable shadowing.
++  return !expr::hasFreeVar(n);
++}
++
+ void SolverEngine::ensureWellFormedTerm(const Node& n,
+                                         const std::string& src) const
+ {
+   if (Configuration::isAssertionBuild())
+   {
+-    // Must rewrite before checking for free variables
+-    Node nr = d_env->getRewriter()->rewrite(n);
+     // Don't check for shadowing here, since shadowing may occur from API
+-    // users, including the smt2 parser.
++    // users, including the smt2 parser. We don't need to rewrite since
++    // getFreeVariables is robust to variable shadowing.
+     std::unordered_set<internal::Node> fvs;
+-    expr::getFreeVariables(nr, fvs);
++    expr::getFreeVariables(n, fvs);
+     if (!fvs.empty())
+     {
+       std::stringstream se;
+-      se << "Cannot process term " << nr << " with ";
++      se << "Cannot process term " << n << " with ";
+       se << "free variables: " << fvs << std::endl;
+       throw ModalException(se.str().c_str());
+     }
+diff --git a/src/smt/solver_engine.h b/src/smt/solver_engine.h
+index 1358bd936..47a564e83 100644
+--- a/src/smt/solver_engine.h
++++ b/src/smt/solver_engine.h
+@@ -1032,6 +1032,14 @@ class CVC5_EXPORT SolverEngine
+    */
+   const Options& options() const;
+ 
++  /**
++   * Return true if the given term is a valid closed term, which can be used as
++   * an argument to, e.g., assert, get-value, block-model-values, etc.
++   *
++   * @param n The node to check
++   * @return true if n is a well formed term.
++   */
++  bool isWellFormedTerm(const Node& n) const;
+   /**
+    * Check that the given term is a valid closed term, which can be used as an
+    * argument to, e.g., assert, get-value, block-model-values, etc.
+-- 
+2.47.1
+

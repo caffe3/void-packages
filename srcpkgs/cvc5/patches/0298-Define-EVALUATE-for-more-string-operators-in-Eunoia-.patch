@@ -1,0 +1,118 @@
+From b0bc5211490fe3170bd98423e0d121b4c43dbe53 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 13 Jan 2025 14:47:52 -0600
+Subject: [PATCH 298/312] Define EVALUATE for more string operators in Eunoia 
+ (#11518)
+
+---
+ proofs/eo/cpc/Cpc.eo              |  8 +++++
+ proofs/eo/cpc/programs/Strings.eo | 54 +++++++++++++++++++++++++++++++
+ src/proof/alf/alf_printer.cpp     |  4 +++
+ 3 files changed, 66 insertions(+)
+
+diff --git a/proofs/eo/cpc/Cpc.eo b/proofs/eo/cpc/Cpc.eo
+index a096505b0..b18e26207 100644
+--- a/proofs/eo/cpc/Cpc.eo
++++ b/proofs/eo/cpc/Cpc.eo
+@@ -149,6 +149,8 @@
+       (($run_evaluate (str.len x))         (eo::len ($run_evaluate x)))
+       (($run_evaluate (str.substr x n m))  (eo::define ((r ($run_evaluate n)))
+                                              (eo::extract ($run_evaluate x) r (eo::add r ($run_evaluate m) -1))))
++      (($run_evaluate (str.at x n))         (eo::define ((r ($run_evaluate n)))
++                                             (eo::extract ($run_evaluate x) r r)))
+       (($run_evaluate (str.contains x y))  (eo::not (eo::is_neg (eo::find ($run_evaluate x) ($run_evaluate y)))))
+       (($run_evaluate (str.replace x y z)) (eo::define ((ex ($run_evaluate x)))
+                                            (eo::define ((ey ($run_evaluate y)))
+@@ -187,6 +189,12 @@
+                                              ($str_to_int_eval ex)))
+       (($run_evaluate (str.from_int n))    (eo::define ((en ($run_evaluate n)))
+                                              ($str_from_int_eval en)))
++      (($run_evaluate (str.to_lower x))    (eo::define ((ex ($run_evaluate x)))
++                                             ($str_to_lower_eval ex)))
++      (($run_evaluate (str.to_upper x))    (eo::define ((ex ($run_evaluate x)))
++                                             ($str_to_upper_eval ex)))
++      (($run_evaluate (str.rev x))         (eo::define ((ex ($run_evaluate x)))
++                                             ($str_rev_eval ex)))
+ 
+       ; bitvectors
+       (($run_evaluate (bvnot xb))          (eo::not ($run_evaluate xb)))
+diff --git a/proofs/eo/cpc/programs/Strings.eo b/proofs/eo/cpc/programs/Strings.eo
+index bc60304a4..30d54d92f 100644
+--- a/proofs/eo/cpc/programs/Strings.eo
++++ b/proofs/eo/cpc/programs/Strings.eo
+@@ -1619,3 +1619,57 @@
+       ; consider characters in reverse order
+       ($str_to_int_eval_rec ($str_to_flat_form s true) 1 0))
+     (str.to_int s)))
++
++; program: $str_case_conv_rec
++; args:
++; - s String: The string to process, expected to be in flat form.
++; - isLower Bool: Whether we computing `str.to_lower` (resp. `str.to_upper`).
++; returns: >
++;   The result of evaluating `(str.to_lower s)` (resp. `(str.to_upper s)`).
++(program $str_case_conv_rec ((s1 String) (s2 String :list) (isLower Bool))
++  (String Bool) String
++  (
++  (($str_case_conv_rec (str.++ s1 s2) true)  (eo::define ((c (eo::to_z s1)))
++                                              (eo::concat
++                                                (eo::to_str (eo::add c (eo::ite (eo::and (eo::gt 91 c) (eo::gt c 64)) 32 0)))
++                                                ($str_case_conv_rec s2 true))))
++  (($str_case_conv_rec (str.++ s1 s2) false)   (eo::define ((c (eo::to_z s1)))
++                                              (eo::concat
++                                                (eo::to_str (eo::add c (eo::ite (eo::and (eo::gt 123 c) (eo::gt c 96)) -32 0)))
++                                                ($str_case_conv_rec s2 false))))
++  (($str_case_conv_rec "" isLower)              "")
++  )
++)
++
++; define: $str_to_lower_eval
++; args:
++; - s String: The string to process.
++; returns: >
++;   The result of evaluating `(str.to_lower s)` if `s` is a string literal,
++;   or the term `(str.to_lower s)` otherwise.
++(define $str_to_lower_eval ((s String))
++  (eo::ite (eo::is_str s)
++    ($str_case_conv_rec ($str_to_flat_form s false) true)
++    (str.to_lower s)))
++
++; define: $str_to_upper_eval
++; args:
++; - s String: The string to process.
++; returns: >
++;   The result of evaluating `(str.to_upper s)` if `s` is a string literal,
++;   or the term `(str.to_upper s)` otherwise.
++(define $str_to_upper_eval ((s String))
++  (eo::ite (eo::is_str s)
++    ($str_case_conv_rec ($str_to_flat_form s false) false)
++    (str.to_upper s)))
++
++; define: $str_rev_eval
++; args:
++; - s String: The string to process.
++; returns: >
++;   The result of evaluating `(str.rev s)` if `s` is a string literal,
++;   or the term `(str.rev s)` otherwise.
++(define $str_rev_eval ((s String))
++  (eo::ite (eo::is_str s)
++    ($str_from_flat_form ($str_to_flat_form s true) false) ; make reverse flat form and then convert back
++    (str.rev s)))
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 20dbe59cf..e2e86bf60 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -380,6 +380,10 @@ bool AlfPrinter::canEvaluate(Node n)
+         case Kind::STRING_PREFIX:
+         case Kind::STRING_ITOS:
+         case Kind::STRING_STOI:
++        case Kind::STRING_TO_LOWER:
++        case Kind::STRING_TO_UPPER:
++        case Kind::STRING_REV:
++        case Kind::STRING_CHARAT:
+         case Kind::BITVECTOR_EXTRACT:
+         case Kind::BITVECTOR_CONCAT:
+         case Kind::BITVECTOR_ADD:
+-- 
+2.47.1
+

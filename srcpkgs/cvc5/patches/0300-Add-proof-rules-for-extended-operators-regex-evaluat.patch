@@ -1,0 +1,261 @@
+From a1cb851a5a931bfca317e23873b983b6b37db0c0 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 14 Jan 2025 08:09:44 -0600
+Subject: [PATCH 300/312] Add proof rules for extended operators regex
+ evaluation (#11483)
+
+Adds three new ad-hoc rules for evaluation of extended operators
+involving RE.
+---
+ include/cvc5/cvc5_proof_rule.h                |  40 +++++++
+ src/api/cpp/cvc5_proof_rule_template.cpp      |   4 +
+ src/theory/strings/sequences_rewriter.cpp     | 106 ++++++++++++++++++
+ src/theory/strings/sequences_rewriter.h       |   6 +
+ test/regress/cli/CMakeLists.txt               |   1 +
+ .../strings/ext-op-re-eval-simple-test.smt2   |   8 ++
+ 6 files changed, 165 insertions(+)
+ create mode 100644 test/regress/cli/regress0/strings/ext-op-re-eval-simple-test.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 38cd650c8..f5cb9df0f 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2970,6 +2970,46 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(BV_REPEAT_ELIM),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Strings -- string indexof regex evaluation**
++   *
++   * .. math::
++   *   str.indexof\_re(s,r,n) = m
++   *
++   * where :math:`s` is a string values, :math:`n` is an integer value, :math:`r` is a
++   * ground regular expression and :math:`m` is the result of evaluating the left hand
++   * side.
++   *
++   * \endverbatim
++   */
++  EVALUE(STR_INDEXOF_RE_EVAL),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Strings -- string replace regex evaluation**
++   *
++   * .. math::
++   *   str.replace\_re(s,r,t) = u
++   *
++   * where :math:`s,t` are string values, :math:`r` is a ground regular expression
++   * and :math:`u` is the result of evaluating the left hand side.
++   *
++   * \endverbatim
++   */
++  EVALUE(STR_REPLACE_RE_EVAL),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Strings -- string replace regex all evaluation**
++   *
++   * .. math::
++   *   str.replace\_re\_all(s,r,t) = u
++   *
++   * where :math:`s,t` are string values, :math:`r` is a ground regular expression
++   * and :math:`u` is the result of evaluating the left hand side.
++   *
++   * \endverbatim
++   */
++  EVALUE(STR_REPLACE_RE_ALL_EVAL),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Strings -- regular expression loop elimination**
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index fc611a725..fda00a21d 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -284,6 +284,10 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::BV_MULT_SIMPLIFY: return "bv-mult-simplify";
+     case ProofRewriteRule::BV_BITWISE_SLICING: return "bv-bitwise-slicing";
+     case ProofRewriteRule::BV_REPEAT_ELIM: return "bv-repeat-elim";
++    case ProofRewriteRule::STR_INDEXOF_RE_EVAL: return "str-indexof-re-eval";
++    case ProofRewriteRule::STR_REPLACE_RE_EVAL: return "str-replace-re-eval";
++    case ProofRewriteRule::STR_REPLACE_RE_ALL_EVAL:
++      return "str-replace-re-all-eval";
+     case ProofRewriteRule::RE_LOOP_ELIM: return "re-loop-elim";
+     case ProofRewriteRule::RE_INTER_UNION_INCLUSION:
+       return "re-inter-union-inclusion";
+diff --git a/src/theory/strings/sequences_rewriter.cpp b/src/theory/strings/sequences_rewriter.cpp
+index 7e55124c5..740e7cc63 100644
+--- a/src/theory/strings/sequences_rewriter.cpp
++++ b/src/theory/strings/sequences_rewriter.cpp
+@@ -65,6 +65,12 @@ SequencesRewriter::SequencesRewriter(NodeManager* nm,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::MACRO_SUBSTR_STRIP_SYM_LENGTH,
+                            TheoryRewriteCtx::POST_DSL);
++  registerProofRewriteRule(ProofRewriteRule::STR_INDEXOF_RE_EVAL,
++                           TheoryRewriteCtx::POST_DSL);
++  registerProofRewriteRule(ProofRewriteRule::STR_REPLACE_RE_EVAL,
++                           TheoryRewriteCtx::POST_DSL);
++  registerProofRewriteRule(ProofRewriteRule::STR_REPLACE_RE_ALL_EVAL,
++                           TheoryRewriteCtx::POST_DSL);
+ }
+ 
+ Node SequencesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+@@ -91,6 +97,21 @@ Node SequencesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       StringsEntail sent(nullptr, ae, nullptr);
+       return rewriteViaMacroSubstrStripSymLength(n, rule, sent);
+     }
++    case ProofRewriteRule::STR_INDEXOF_RE_EVAL:
++    {
++      return rewriteViaStrIndexofReEval(n);
++    }
++    break;
++    case ProofRewriteRule::STR_REPLACE_RE_EVAL:
++    {
++      return rewriteViaStrReplaceReEval(n);
++    }
++    break;
++    case ProofRewriteRule::STR_REPLACE_RE_ALL_EVAL:
++    {
++      return rewriteViaStrReplaceReAllEval(n);
++    }
++    break;
+     default: break;
+   }
+   return Node::null();
+@@ -1470,6 +1491,91 @@ Node SequencesRewriter::rewriteViaMacroSubstrStripSymLength(const Node& node,
+   return sent.rewriteViaMacroSubstrStripSymLength(node, rule, ch1, ch2);
+ }
+ 
++
++Node SequencesRewriter::rewriteViaStrIndexofReEval(const Node& n)
++{
++  if (n.getKind() == Kind::STRING_INDEXOF_RE && n[0].isConst() && n[2].isConst()
++      && RegExpEntail::isConstRegExp(n[1]))
++  {
++    NodeManager* nm = nodeManager();
++    Rational nrat = n[2].getConst<Rational>();
++    String s = n[0].getConst<String>();
++    Rational rsize(s.size());
++    if (nrat > rsize || nrat.sgn() < 0)
++    {
++      Node negone = nm->mkConstInt(Rational(-1));
++      return negone;
++    }
++    uint32_t start = nrat.getNumerator().toUnsignedInt();
++    Node rem = nm->mkConst(s.substr(start));
++    std::pair<size_t, size_t> match = firstMatch(rem, n[1]);
++    Node ret = nm->mkConstInt(
++        Rational(match.first == string::npos
++                     ? -1
++                     : static_cast<int64_t>(start + match.first)));
++    return ret;
++  }
++  return Node::null();
++}
++
++Node SequencesRewriter::rewriteViaStrReplaceReEval(const Node& n)
++{
++  if (n.getKind() == Kind::STRING_REPLACE_RE && n[0].isConst()
++      && RegExpEntail::isConstRegExp(n[1]))
++  {
++    NodeManager* nm = nodeManager();
++    // str.replace_re("ZABCZ", re.++("A", _*, "C"), y) ---> "Z" ++ y ++ "Z"
++    std::pair<size_t, size_t> match = firstMatch(n[0], n[1]);
++    if (match.first != string::npos)
++    {
++      String s = n[0].getConst<String>();
++      Node ret = nm->mkNode(Kind::STRING_CONCAT,
++                            nm->mkConst(s.substr(0, match.first)),
++                            n[2],
++                            nm->mkConst(s.substr(match.second)));
++      return ret;
++    }
++    return n[0];
++  }
++  return Node::null();
++}
++
++Node SequencesRewriter::rewriteViaStrReplaceReAllEval(const Node& n)
++{
++  if (n.getKind() == Kind::STRING_REPLACE_RE_ALL && n[0].isConst()
++      && RegExpEntail::isConstRegExp(n[1]))
++  {
++    NodeManager* nm = nodeManager();
++    // str.replace_re_all("ZABCZAB", re.++("A", _*, "C"), y) --->
++    //   "Z" ++ y ++ "Z" ++ y
++    TypeNode t = n[0].getType();
++    Assert(t.isString());
++    Node emp = Word::mkEmptyWord(t);
++    Node yp = nm->mkNode(Kind::REGEXP_INTER,
++                         n[1],
++                         nm->mkNode(Kind::REGEXP_COMPLEMENT,
++                                    nm->mkNode(Kind::STRING_TO_REGEXP, emp)));
++    std::vector<Node> res;
++    String rem = n[0].getConst<String>();
++    std::pair<size_t, size_t> match(0, 0);
++    while (rem.size() != 0)
++    {
++      match = firstMatch(nm->mkConst(rem), yp);
++      if (match.first == string::npos)
++      {
++        break;
++      }
++      res.push_back(nm->mkConst(rem.substr(0, match.first)));
++      res.push_back(n[2]);
++      rem = rem.substr(match.second);
++    }
++    res.push_back(nm->mkConst(rem));
++    Node ret = utils::mkConcat(res, t);
++    return ret;
++  }
++  return Node::null();
++}
++
+ Node SequencesRewriter::rewriteRepeatRegExp(TNode node)
+ {
+   Assert(node.getKind() == Kind::REGEXP_REPEAT);
+diff --git a/src/theory/strings/sequences_rewriter.h b/src/theory/strings/sequences_rewriter.h
+index 32556a03d..ba26e251d 100644
+--- a/src/theory/strings/sequences_rewriter.h
++++ b/src/theory/strings/sequences_rewriter.h
+@@ -158,6 +158,12 @@ class SequencesRewriter : public TheoryRewriter
+   Node rewriteViaMacroSubstrStripSymLength(const Node& n,
+                                            Rewrite& rule,
+                                            StringsEntail& sent);
++  /** Rewrite based on STR_INDEXOF_RE_EVAL */
++  Node rewriteViaStrIndexofReEval(const Node& n);
++  /** Rewrite based on STR_REPLACE_RE_EVAL */
++  Node rewriteViaStrReplaceReEval(const Node& n);
++  /** Rewrite based on STR_REPLACE_RE_ALL_EVAL */
++  Node rewriteViaStrReplaceReAllEval(const Node& n);
+ 
+  public:
+   RewriteResponse postRewrite(TNode node) override;
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 1a204a79d..b0e0df062 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1848,6 +1848,7 @@ set(regress_0_tests
+   regress0/strings/escchar_25.smt2
+   regress0/strings/escchar.smt2
+   regress0/strings/eval-leading-zeroes.smt2
++  regress0/strings/ext-op-re-eval-simple-test.smt2
+   regress0/strings/foreign-theory-rew-simple.smt2
+   regress0/strings/from_code.smt2
+   regress0/strings/from-int-eval.smt2
+diff --git a/test/regress/cli/regress0/strings/ext-op-re-eval-simple-test.smt2 b/test/regress/cli/regress0/strings/ext-op-re-eval-simple-test.smt2
+new file mode 100644
+index 000000000..b2c374efa
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/ext-op-re-eval-simple-test.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic ALL)
++(assert (or
++(not (= (str.replace_re "BBBAAAAABAABA" (re.+ (str.to_re "A")) "C") "BBBCAAAABAABA"))
++(not (= (str.indexof_re "BBBAAAAABAABA" (re.+ (str.to_re "A")) 0) 3))
++(not (= (str.replace_re_all "BBBAAAAABAABA" (re.+ (str.to_re "A")) "C") "BBBCCCCCBCCBC"))
++))
++(check-sat)
+-- 
+2.47.1
+

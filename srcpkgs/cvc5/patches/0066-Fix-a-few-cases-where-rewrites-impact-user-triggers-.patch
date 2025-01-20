@@ -1,0 +1,43 @@
+From b5ddd935fa1010a362aa65275cc3079604a2f1c8 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 23 Sep 2024 14:34:23 -0500
+Subject: [PATCH 066/312] Fix a few cases where rewrites impact user triggers
+ (#11217)
+
+---
+ src/theory/quantifiers/quant_split.cpp          | 5 +++++
+ src/theory/quantifiers/quantifiers_rewriter.cpp | 2 +-
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/theory/quantifiers/quant_split.cpp b/src/theory/quantifiers/quant_split.cpp
+index 5f3e42fc7..053421ea5 100644
+--- a/src/theory/quantifiers/quant_split.cpp
++++ b/src/theory/quantifiers/quant_split.cpp
+@@ -49,6 +49,11 @@ void QuantDSplit::checkOwnership(Node q)
+   {
+     return;
+   }
++  // do not split if there is a trigger
++  if (qa.d_hasPattern)
++  {
++    return;
++  }
+   bool takeOwnership = false;
+   bool doSplit = false;
+   QuantifiersBoundInference& qbi = d_qreg.getQuantifiersBoundInference();
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index 72ca8eb30..6f17f418c 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -2035,7 +2035,7 @@ bool QuantifiersRewriter::doOperation(Node q,
+   {
+     return (d_opts.quantifiers.varElimQuant
+             || d_opts.quantifiers.dtVarExpandQuant)
+-           && is_std;
++           && is_std && !is_strict_trigger;
+   }
+   else
+   {
+-- 
+2.47.1
+

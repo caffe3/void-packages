@@ -1,0 +1,39 @@
+From e213780b314bf28ee56d13c27ac56c7fd0c7b6b0 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 13 Aug 2024 14:11:40 -0500
+Subject: [PATCH 023/312] Exclude more kinds in getSharableFormula (#11117)
+
+---
+ src/smt/env.cpp | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/smt/env.cpp b/src/smt/env.cpp
+index fb4f6b60b..99cc691ed 100644
+--- a/src/smt/env.cpp
++++ b/src/smt/env.cpp
+@@ -320,6 +320,13 @@ Node Env::getSharableFormula(const Node& n) const
+   SkolemManager * skm = d_nm->getSkolemManager();
+   std::vector<Node> toProcess;
+   toProcess.push_back(on);
++  // The set of kinds that we never want to share. Any kind that can appear
++  // in lemmas but we don't have API support for should go in this list.
++  const std::unordered_set<Kind> excludeKinds = {
++      Kind::INST_CONSTANT,
++      Kind::DUMMY_SKOLEM,
++      Kind::CARDINALITY_CONSTRAINT,
++      Kind::COMBINED_CARDINALITY_CONSTRAINT};
+   size_t index = 0;
+   do
+   {
+@@ -331,7 +338,7 @@ Node Env::getSharableFormula(const Node& n) const
+     for (const Node& s : syms)
+     {
+       Kind sk = s.getKind();
+-      if (sk == Kind::INST_CONSTANT || sk == Kind::DUMMY_SKOLEM)
++      if (excludeKinds.find(sk) != excludeKinds.end())
+       {
+         // these kinds are never sharable
+         return Node::null();
+-- 
+2.47.1
+

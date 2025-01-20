@@ -1,0 +1,233 @@
+From 6a9a1202c7f9c5081c34059f213364b2d9847766 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 18 Sep 2024 11:40:02 -0500
+Subject: [PATCH 060/312] Add timestamps to diagnostic output of -o
+ unsat-core-lemmas (#11184)
+
+Adds a further refinement to https://github.com/cvc5/cvc5/pull/11113
+which adds information about *when* an unsat core lemma was added
+(currently defined as the number of calls to full check).
+---
+ src/prop/prop_engine.cpp        | 10 +++++++++-
+ src/prop/prop_proof_manager.cpp | 14 +++++++++++++-
+ src/prop/prop_proof_manager.h   |  8 +++++++-
+ src/theory/theory_engine.cpp    |  1 +
+ src/util/resource_manager.cpp   |  6 ++++++
+ src/util/resource_manager.h     |  5 +++++
+ src/util/statistics_stats.h     |  2 ++
+ src/util/statistics_value.h     | 13 ++++++++++++-
+ 8 files changed, 55 insertions(+), 4 deletions(-)
+
+diff --git a/src/prop/prop_engine.cpp b/src/prop/prop_engine.cpp
+index 79cd33da9..89bbfc132 100644
+--- a/src/prop/prop_engine.cpp
++++ b/src/prop/prop_engine.cpp
+@@ -778,20 +778,28 @@ std::vector<Node> PropEngine::getUnsatCoreLemmas()
+   {
+     output(OutputTag::UNSAT_CORE_LEMMAS)
+         << ";; unsat core lemmas start" << std::endl;
++    std::stringstream ss;
+     for (const Node& lem : lems)
+     {
+       output(OutputTag::UNSAT_CORE_LEMMAS) << "(unsat-core-lemma ";
+       output(OutputTag::UNSAT_CORE_LEMMAS)
+           << SkolemManager::getOriginalForm(lem);
+-      theory::InferenceId id = d_ppm->getInferenceIdFor(lem);
++      uint64_t timestamp = 0;
++      theory::InferenceId id = d_ppm->getInferenceIdFor(lem, timestamp);
+       if (id != theory::InferenceId::NONE)
+       {
+         output(OutputTag::UNSAT_CORE_LEMMAS) << " :source " << id;
+       }
++      output(OutputTag::UNSAT_CORE_LEMMAS) << " :timestamp " << timestamp;
+       output(OutputTag::UNSAT_CORE_LEMMAS) << ")" << std::endl;
++      // for trace below
++      ss << id << ", " << timestamp << std::endl;
+     }
+     output(OutputTag::UNSAT_CORE_LEMMAS)
+         << ";; unsat core lemmas end" << std::endl;
++    // print in csv form for debugging
++    Trace("ocl-timestamp") << "TIMESTAMPS" << std::endl;
++    Trace("ocl-timestamp") << ss.str() << std::endl;
+   }
+   return lems;
+ }
+diff --git a/src/prop/prop_proof_manager.cpp b/src/prop/prop_proof_manager.cpp
+index 0dfe66cb1..0a9eb9801 100644
+--- a/src/prop/prop_proof_manager.cpp
++++ b/src/prop/prop_proof_manager.cpp
+@@ -28,6 +28,7 @@
+ #include "prop/sat_solver.h"
+ #include "prop/sat_solver_factory.h"
+ #include "smt/env.h"
++#include "util/resource_manager.h"
+ #include "util/string.h"
+ 
+ namespace cvc5::internal {
+@@ -66,6 +67,7 @@ PropPfManager::PropPfManager(Env& env,
+       d_lemmaClauses(userContext()),
+       d_trackLemmaClauseIds(false),
+       d_lemmaClauseIds(userContext()),
++      d_lemmaClauseTimestamp(userContext()),
+       d_currLemmaId(theory::InferenceId::NONE),
+       d_satPm(nullptr)
+ {
+@@ -146,12 +148,19 @@ std::vector<Node> PropPfManager::getUnsatCoreLemmas()
+   return usedLemmas;
+ }
+ 
+-theory::InferenceId PropPfManager::getInferenceIdFor(const Node& lem) const
++theory::InferenceId PropPfManager::getInferenceIdFor(const Node& lem,
++                                                     uint64_t& timestamp) const
+ {
+   context::CDHashMap<Node, theory::InferenceId>::const_iterator it =
+       d_lemmaClauseIds.find(lem);
+   if (it != d_lemmaClauseIds.end())
+   {
++    context::CDHashMap<Node, uint64_t>::const_iterator itt =
++        d_lemmaClauseTimestamp.find(lem);
++    if (itt != d_lemmaClauseTimestamp.end())
++    {
++      timestamp = itt->second;
++    }
+     return it->second;
+   }
+   return theory::InferenceId::NONE;
+@@ -465,6 +474,9 @@ Node PropPfManager::normalizeAndRegister(TNode clauseNode,
+     if (d_trackLemmaClauseIds)
+     {
+       d_lemmaClauseIds[normClauseNode] = d_currLemmaId;
++      uint64_t currTimestamp = d_env.getResourceManager()->getResource(
++          Resource::TheoryFullCheckStep);
++      d_lemmaClauseTimestamp[normClauseNode] = currTimestamp;
+     }
+   }
+   if (d_satPm)
+diff --git a/src/prop/prop_proof_manager.h b/src/prop/prop_proof_manager.h
+index 04703735f..275fc1d27 100644
+--- a/src/prop/prop_proof_manager.h
++++ b/src/prop/prop_proof_manager.h
+@@ -124,7 +124,8 @@ class PropPfManager : protected EnvObj
+    * if lem is not an unsat core lemma, or if it corresponded e.g. to a lemma
+    * learned via theory propagation.
+    */
+-  theory::InferenceId getInferenceIdFor(const Node& lem) const;
++  theory::InferenceId getInferenceIdFor(const Node& lem,
++                                        uint64_t& timestamp) const;
+ 
+   /**
+    * Checks that the prop engine proof is closed w.r.t. the given assertions and
+@@ -282,6 +283,11 @@ class PropPfManager : protected EnvObj
+   bool d_trackLemmaClauseIds;
+   /** Mapping lemma clauses to inference identifiers */
+   context::CDHashMap<Node, theory::InferenceId> d_lemmaClauseIds;
++  /**
++   * Mapping lemma clauses to a timestamp. Currently, the timestamp corresponds
++   * to the number of calls to full check we have seen thus far.
++   */
++  context::CDHashMap<Node, uint64_t> d_lemmaClauseTimestamp;
+   /** The current identifier */
+   theory::InferenceId d_currLemmaId;
+   /** The current propagation being processed via this class. */
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index 32fc9dde0..e2ebb0e2f 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -434,6 +434,7 @@ void TheoryEngine::check(Theory::Effort effort) {
+ 
+     // If in full effort, we have a fake new assertion just to jumpstart the checking
+     if (Theory::fullEffort(effort)) {
++      spendResource(Resource::TheoryFullCheckStep);
+       d_factsAsserted = true;
+       d_tc->resetRound();
+     }
+diff --git a/src/util/resource_manager.cpp b/src/util/resource_manager.cpp
+index 4ec182ba0..df62b2376 100644
+--- a/src/util/resource_manager.cpp
++++ b/src/util/resource_manager.cpp
+@@ -89,6 +89,7 @@ const char* toString(Resource r)
+     case Resource::SatConflictStep: return "SatConflictStep";
+     case Resource::SygusCheckStep: return "SygusCheckStep";
+     case Resource::TheoryCheckStep: return "TheoryCheckStep";
++    case Resource::TheoryFullCheckStep: return "TheoryFullCheckStep";
+     case Resource::FindSynthStep: return "FindSynthStep";
+     default: return "?Resource?";
+   }
+@@ -233,6 +234,11 @@ void ResourceManager::spendResource(Resource r)
+   spendResource(d_resourceWeights[i]);
+ }
+ 
++uint64_t ResourceManager::getResource(Resource r) const
++{
++  return d_statistics->d_resourceSteps.getValue(r);
++}
++
+ void ResourceManager::spendResource(theory::InferenceId iid)
+ {
+   std::size_t i = static_cast<std::size_t>(iid);
+diff --git a/src/util/resource_manager.h b/src/util/resource_manager.h
+index 226188d2f..19759faeb 100644
+--- a/src/util/resource_manager.h
++++ b/src/util/resource_manager.h
+@@ -89,6 +89,7 @@ enum class Resource
+   SatConflictStep,
+   SygusCheckStep,
+   TheoryCheckStep,
++  TheoryFullCheckStep,
+   FindSynthStep,
+   Unknown
+ };
+@@ -152,6 +153,10 @@ class ResourceManager
+    * there are no remaining resources.
+    */
+   void spendResource(Resource r);
++  /**
++   * Gets the number of resources spent for r so far.
++   */
++  uint64_t getResource(Resource r) const;
+   /**
+    * Spends a given resource. Calls the listener to interrupt the solver if
+    * there are no remaining resources.
+diff --git a/src/util/statistics_stats.h b/src/util/statistics_stats.h
+index 4fcc7de3b..15b651dca 100644
+--- a/src/util/statistics_stats.h
++++ b/src/util/statistics_stats.h
+@@ -92,6 +92,8 @@ class HistogramStat
+     }
+     return *this;
+   }
++  /** Get the current value for key `val` */
++  uint64_t getValue(Integral val) { return d_data->getValue(val); }
+ 
+  private:
+   /** Construct from a pointer to the internal data */
+diff --git a/src/util/statistics_value.h b/src/util/statistics_value.h
+index b1d1f6f50..6b8b32152 100644
+--- a/src/util/statistics_value.h
++++ b/src/util/statistics_value.h
+@@ -184,10 +184,21 @@ struct StatisticHistogramValue : StatisticBaseValue
+     }
+     d_hist[v - d_offset]++;
+   }
++  /** Get the value stored for key val */
++  uint64_t getValue(Integral val)
++  {
++    int64_t index = static_cast<int64_t>(val);
++    if (index < d_offset)
++    {
++      return 0;
++    }
++    index = index - d_offset;
++    return static_cast<size_t>(index) < d_hist.size() ? d_hist[index] : 0;
++  }
+ 
+   /** Actual data */
+   std::vector<uint64_t> d_hist;
+-  /** Offset of the entries. d_hist[i] corresponds to Interval(d_offset + i) */
++  /** Offset of the entries. d_hist[i] corresponds to Integral(d_offset + i) */
+   int64_t d_offset;
+ };
+ 
+-- 
+2.47.1
+

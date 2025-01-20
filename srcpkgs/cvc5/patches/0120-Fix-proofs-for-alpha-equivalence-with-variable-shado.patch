@@ -1,0 +1,160 @@
+From 0570e78fb972e53e0b39cb29718f2a329bff613a Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Sun, 13 Oct 2024 21:27:48 -0500
+Subject: [PATCH 120/312] Fix proofs for alpha equivalence with variable
+ shadowing (#11237)
+
+---
+ src/theory/quantifiers/alpha_equivalence.cpp  | 59 +++++++++++++++----
+ src/theory/quantifiers/alpha_equivalence.h    |  8 +++
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../regress1/proofs/alpha-eq-var-shadow.smt2  | 18 ++++++
+ 4 files changed, 76 insertions(+), 10 deletions(-)
+ create mode 100644 test/regress/cli/regress1/proofs/alpha-eq-var-shadow.smt2
+
+diff --git a/src/theory/quantifiers/alpha_equivalence.cpp b/src/theory/quantifiers/alpha_equivalence.cpp
+index d9cdd508b..35c18b21d 100644
+--- a/src/theory/quantifiers/alpha_equivalence.cpp
++++ b/src/theory/quantifiers/alpha_equivalence.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include "theory/quantifiers/alpha_equivalence.h"
+ 
++#include "expr/node_algorithm.h"
+ #include "proof/method_id.h"
+ #include "proof/proof.h"
+ #include "proof/proof_node.h"
+@@ -207,20 +208,40 @@ TrustNode AlphaEquivalence::reduceQuantifier(Node q)
+   // if successfully computed the substitution above
+   if (isProofEnabled() && !vars.empty())
+   {
+-    std::vector<Node> pfArgs;
+-    pfArgs.push_back(ret);
+-    NodeManager* nm = nodeManager();
+-    pfArgs.push_back(nm->mkNode(Kind::SEXPR, vars));
+-    pfArgs.push_back(nm->mkNode(Kind::SEXPR, subs));
++    if (Configuration::isAssertionBuild())
++    {
++      // all variables should be unique since we are processing rewritten
++      // quantified formulas
++      std::unordered_set<Node> vset(vars.begin(), vars.end());
++      Assert(vset.size() == vars.size());
++      std::unordered_set<Node> sset(subs.begin(), subs.end());
++      Assert(sset.size() == subs.size());
++    }
+     CDProof cdp(d_env);
+-    Node sret =
+-        ret.substitute(vars.begin(), vars.end(), subs.begin(), subs.end());
+     std::vector<Node> transEq;
+-    Node eq = ret.eqNode(sret);
+-    transEq.push_back(eq);
++    // if there is variable shadowing, we do an intermediate step with fresh
++    // variables
++    if (expr::hasSubterm(ret, subs))
++    {
++      std::vector<Node> isubs;
++      NodeManager* nm = nodeManager();
++      for (const Node& v : subs)
++      {
++        isubs.emplace_back(nm->mkBoundVar(v.getType()));
++      }
++      // ---------- ALPHA_EQUIV
++      // ret = iret
++      Node ieq = addAlphaEquivStep(cdp, ret, vars, isubs);
++      transEq.emplace_back(ieq);
++      ret = ieq[1];
++      vars = isubs;
++    }
+     // ---------- ALPHA_EQUIV
+     // ret = sret
+-    cdp.addStep(eq, ProofRule::ALPHA_EQUIV, {}, pfArgs);
++    Node eq = addAlphaEquivStep(cdp, ret, vars, subs);
++    Assert(eq.getKind() == Kind::EQUAL);
++    Node sret = eq[1];
++    transEq.emplace_back(eq);
+     // if not syntactically equal, maybe it can be transformed
+     bool success = false;
+     if (sret == q)
+@@ -263,6 +284,24 @@ TrustNode AlphaEquivalence::reduceQuantifier(Node q)
+   return TrustNode::mkTrustLemma(lem, pg);
+ }
+ 
++Node AlphaEquivalence::addAlphaEquivStep(CDProof& cdp,
++                                         const Node& f,
++                                         const std::vector<Node>& vars,
++                                         const std::vector<Node>& subs)
++{
++  std::vector<Node> pfArgs;
++  pfArgs.push_back(f);
++  NodeManager* nm = nodeManager();
++  pfArgs.push_back(nm->mkNode(Kind::SEXPR, vars));
++  pfArgs.push_back(nm->mkNode(Kind::SEXPR, subs));
++  Node sf = f.substitute(vars.begin(), vars.end(), subs.begin(), subs.end());
++  std::vector<Node> transEq;
++  Node eq = f.eqNode(sf);
++  cdp.addStep(eq, ProofRule::ALPHA_EQUIV, {}, pfArgs);
++  // if not syntactically equal, maybe it can be transform
++  return eq;
++}
++
+ bool AlphaEquivalence::isProofEnabled() const { return d_pfAlpha != nullptr; }
+ 
+ }  // namespace quantifiers
+diff --git a/src/theory/quantifiers/alpha_equivalence.h b/src/theory/quantifiers/alpha_equivalence.h
+index 1376e55a6..110885b8a 100644
+--- a/src/theory/quantifiers/alpha_equivalence.h
++++ b/src/theory/quantifiers/alpha_equivalence.h
+@@ -127,6 +127,14 @@ class AlphaEquivalence : protected EnvObj
+   TrustNode reduceQuantifier(Node q);
+ 
+  private:
++  /**
++   * Add the alpha equivalence step f = f { vars -> subs } to cdp, where we
++   * ensure that f does not contain vars. Return the conclusion of this step.
++   */
++  Node addAlphaEquivStep(CDProof& cdp,
++                         const Node& f,
++                         const std::vector<Node>& vars,
++                         const std::vector<Node>& subs);
+   /** a term canonizer */
+   expr::TermCanonize d_termCanon;
+   /** the database of quantified formulas registered to this class */
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index d1d82b240..d2bde0b2f 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -2641,6 +2641,7 @@ set(regress_1_tests
+   regress1/proj-issue719-zll-repeat.smt2
+   regress1/proof00.smt2
+   regress1/proofs/add_two_base.smt2
++  regress1/proofs/alpha-eq-var-shadow.smt2
+   regress1/proofs/base-lfsc-treesize.smt2
+   regress1/proofs/eq-engine-corner-case-constants-disequal.smt2
+   regress1/proofs/issue6625-unsat-core-proofs.smt2
+diff --git a/test/regress/cli/regress1/proofs/alpha-eq-var-shadow.smt2 b/test/regress/cli/regress1/proofs/alpha-eq-var-shadow.smt2
+new file mode 100644
+index 000000000..f225c10b0
+--- /dev/null
++++ b/test/regress/cli/regress1/proofs/alpha-eq-var-shadow.smt2
+@@ -0,0 +1,18 @@
++; EXPECT: unsat
++(set-logic AUFLIA)
++(declare-sort A$ 0)
++(declare-sort B$ 0)
++(declare-sort Real$ 0)
++(declare-sort B_list$ 0)
++(declare-sort Real_a_fun$ 0)
++(declare-fun uu$ () Real_a_fun$)
++(declare-fun nil$ () B_list$)
++(declare-fun cons$ (B$ B_list$) B_list$)
++(declare-fun zero$ () A$)
++(declare-fun fun_app$ (Real_a_fun$ Real$) A$)
++(declare-fun rec_join$ (B_list$) Real_a_fun$)
++(declare-fun joinpaths$ (Real_a_fun$ Real_a_fun$) Real_a_fun$)
++(declare-fun coeff_cube_to_path$ (B$) Real_a_fun$)
++(assert (! (forall ((?v0 Real$)) (! (= (fun_app$ uu$ ?v0) zero$) :pattern ((fun_app$ uu$ ?v0)))) :named a0))
++(assert (! (not (=> (forall ((?v0 Real_a_fun$) (?v1 B_list$)) (= (=> (and (= (rec_join$ ?v1) ?v0) (and (=> (and (= ?v1 nil$) (= uu$ ?v0)) false) (and (forall ((?v2 B$)) (=> (and (= ?v1 (cons$ ?v2 nil$)) (= ?v0 (coeff_cube_to_path$ ?v2))) false)) (forall ((?v2 B$) (?v3 B$) (?v4 B_list$)) (=> (and (= ?v1 (cons$ ?v2 (cons$ ?v3 ?v4))) (= ?v0 (joinpaths$ (coeff_cube_to_path$ ?v2) (rec_join$ (cons$ ?v3 ?v4))))) false))))) false) (=> (and (= (rec_join$ ?v1) (rec_join$ ?v1)) (and (=> (and (= ?v1 nil$) (= uu$ (rec_join$ ?v1))) false) (and (forall ((?v2 B$)) (=> (and (= ?v1 (cons$ ?v2 nil$)) (= (rec_join$ ?v1) (coeff_cube_to_path$ ?v2))) false)) (forall ((?v2 B$) (?v3 B$) (?v4 B_list$)) (=> (and (= ?v1 (cons$ ?v2 (cons$ ?v3 ?v4))) (= (rec_join$ ?v1) (joinpaths$ (coeff_cube_to_path$ ?v2) (rec_join$ (cons$ ?v3 ?v4))))) false))))) false))) (= (forall ((?v0 B_list$) (?v1 Real_a_fun$)) (=> (and (= (rec_join$ ?v0) ?v1) (and (=> (and (= ?v0 nil$) (= uu$ ?v1)) false) (and (forall ((?v2 B$)) (=> (and (= ?v0 (cons$ ?v2 nil$)) (= ?v1 (coeff_cube_to_path$ ?v2))) false)) (forall ((?v2 B$) (?v3 B$) (?v4 B_list$)) (=> (and (= ?v0 (cons$ ?v2 (cons$ ?v3 ?v4))) (= ?v1 (joinpaths$ (coeff_cube_to_path$ ?v2) (rec_join$ (cons$ ?v3 ?v4))))) false))))) false)) (forall ((?v0 B_list$)) (=> (and (= (rec_join$ ?v0) (rec_join$ ?v0)) (and (=> (and (= ?v0 nil$) (= uu$ (rec_join$ ?v0))) false) (and (forall ((?v1 B$)) (=> (and (= ?v0 (cons$ ?v1 nil$)) (= (rec_join$ ?v0) (coeff_cube_to_path$ ?v1))) false)) (forall ((?v1 B$) (?v2 B$) (?v3 B_list$)) (=> (and (= ?v0 (cons$ ?v1 (cons$ ?v2 ?v3))) (= (rec_join$ ?v0) (joinpaths$ (coeff_cube_to_path$ ?v1) (rec_join$ (cons$ ?v2 ?v3))))) false))))) false))))) :named a1))
++(check-sat)
+-- 
+2.47.1
+

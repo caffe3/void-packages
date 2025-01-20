@@ -1,0 +1,215 @@
+From fc5678de2835fea39052f096e313250594b2f714 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 4 Oct 2024 12:33:04 -0500
+Subject: [PATCH 111/312] Minor fixes for print benchmark utility (#11266)
+
+Includes two fixes:
+First, declarations for skolems are not printing if
+`--print-skolem-definitions` is enabled.
+Second, definitions are considered in the proper order of dependencies
+(and can't be sorted).
+
+---------
+
+Co-authored-by: Aina Niemetz <aina.niemetz@gmail.com>
+---
+ src/proof/alf/alf_printer.cpp              |  2 +-
+ src/smt/print_benchmark.cpp                | 35 +++++++++++++++-------
+ src/smt/print_benchmark.h                  |  8 +++--
+ src/smt/process_assertions.cpp             |  2 +-
+ src/smt/timeout_core_manager.cpp           |  2 +-
+ src/smt/unsat_core_manager.cpp             |  4 +--
+ src/theory/quantifiers/query_generator.cpp |  2 +-
+ 7 files changed, 37 insertions(+), 18 deletions(-)
+
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 4321052c7..bd1417bc0 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -644,7 +644,7 @@ void AlfPrinter::print(AlfPrintChannelOut& aout,
+         // [1] print the declarations
+         printer::smt2::Smt2Printer alfp(printer::smt2::Variant::alf_variant);
+         // we do not print declarations in a sorted manner to reduce overhead
+-        smt::PrintBenchmark pb(&alfp, false, &d_tproc);
++        smt::PrintBenchmark pb(nodeManager(), &alfp, false, &d_tproc);
+         std::stringstream outDecl;
+         std::stringstream outDef;
+         pb.printDeclarationsFrom(outDecl, outDef, definitions, assertions);
+diff --git a/src/smt/print_benchmark.cpp b/src/smt/print_benchmark.cpp
+index 463c2b26b..2b45de895 100644
+--- a/src/smt/print_benchmark.cpp
++++ b/src/smt/print_benchmark.cpp
+@@ -20,6 +20,7 @@
+ #include "expr/node_algorithm.h"
+ #include "expr/node_converter.h"
+ #include "printer/printer.h"
++#include "expr/skolem_manager.h"
+ 
+ using namespace cvc5::internal::kind;
+ 
+@@ -153,9 +154,11 @@ void PrintBenchmark::printDeclarationsFrom(std::ostream& outDecl,
+     printDeclaredFuns(outDecl, syms, alreadyPrintedDecl);
+     if (d_sorted)
+     {
+-      // Sort ordinary and recursive definitions for deterministic order.
++      // Sort recursive definitions for deterministic order.
+       std::sort(recDefs.begin(), recDefs.end());
+-      std::sort(ordinaryDefs.begin(), ordinaryDefs.end());
++      // In general, we cannot sort the ordinary definitions since they were
++      // added to the vector in an order which ensures the functions they
++      // depend on are defined first.
+     }
+     // print the ordinary definitions
+     for (const Node& f : ordinaryDefs)
+@@ -241,6 +244,8 @@ void PrintBenchmark::printDeclaredFuns(std::ostream& out,
+                                        const std::vector<Node>& funs,
+                                        std::unordered_set<Node>& alreadyPrinted)
+ {
++  bool printSkolemDefs = options::ioutils::getPrintSkolemDefinitions(out);
++  SkolemManager* sm = d_nm->getSkolemManager();
+   BenchmarkNoPrintAttribute bnpa;
+   for (const Node& f : funs)
+   {
+@@ -255,6 +260,15 @@ void PrintBenchmark::printDeclaredFuns(std::ostream& out,
+     {
+       continue;
+     }
++    // if print skolem definitions is true, we shouldn't print declarations for
++    // (exported) skolems, as they are printed as parsable terms.
++    if (printSkolemDefs && f.getKind() == Kind::SKOLEM)
++    {
++      if (sm->getId(f)!= SkolemId::INTERNAL)
++      {
++        continue;
++      }
++    }
+     if (alreadyPrinted.find(f) == alreadyPrinted.end())
+     {
+       d_printer->toStreamCmdDeclareFunction(out, f);
+@@ -328,6 +342,15 @@ void PrintBenchmark::getConnectedDefinitions(
+     return;
+   }
+   processedDefs.insert(n);
++  // get the symbols in the body
++  std::unordered_set<Node> symsBody;
++  expr::getSymbols(it->second.second, symsBody, visited);
++  for (const Node& s : symsBody)
++  {
++    getConnectedDefinitions(
++        s, recDefs, ordinaryDefs, syms, defMap, processedDefs, visited);
++  }
++  // add the symbol after we add the definitions
+   if (!it->second.first)
+   {
+     // an ordinary define-fun symbol
+@@ -338,14 +361,6 @@ void PrintBenchmark::getConnectedDefinitions(
+     // a recursively defined symbol
+     recDefs.push_back(n);
+   }
+-  // get the symbols in the body
+-  std::unordered_set<Node> symsBody;
+-  expr::getSymbols(it->second.second, symsBody, visited);
+-  for (const Node& s : symsBody)
+-  {
+-    getConnectedDefinitions(
+-        s, recDefs, ordinaryDefs, syms, defMap, processedDefs, visited);
+-  }
+ }
+ 
+ bool PrintBenchmark::decomposeDefinition(Node a,
+diff --git a/src/smt/print_benchmark.h b/src/smt/print_benchmark.h
+index 095507143..324186da9 100644
+--- a/src/smt/print_benchmark.h
++++ b/src/smt/print_benchmark.h
+@@ -41,14 +41,16 @@ class PrintBenchmark
+  public:
+   /**
+    * Constructor.
++   * @param nm     The associated node manager.
+    * @param p      The associated printer.
+    * @param sorted True if declarations should be sorted wrt node id.
+    * @param c      The associated node converter.
+    */
+-  PrintBenchmark(const Printer* p,
++  PrintBenchmark(NodeManager * nm,
++                 const Printer* p,
+                  bool sorted = true,
+                  NodeConverter* c = nullptr)
+-      : d_printer(p), d_sorted(sorted), d_converter(c)
++      : d_nm(nm), d_printer(p), d_sorted(sorted), d_converter(c)
+   {
+   }
+   /**
+@@ -153,6 +155,8 @@ class PrintBenchmark
+    * @return true if the definition was successfully inferred
+    */
+   bool decomposeDefinition(Node a, bool& isRecDef, Node& sym, Node& body);
++  /** Pointer to the node manager */
++  NodeManager * d_nm;
+   /**
+    * Pointer to the printer we are using, which is responsible for printing
+    * individual commands.
+diff --git a/src/smt/process_assertions.cpp b/src/smt/process_assertions.cpp
+index 890b4dddd..c97538b7d 100644
+--- a/src/smt/process_assertions.cpp
++++ b/src/smt/process_assertions.cpp
+@@ -471,7 +471,7 @@ void ProcessAssertions::dumpAssertions(const std::string& key,
+ void ProcessAssertions::dumpAssertionsToStream(std::ostream& os,
+                                                const AssertionPipeline& ap)
+ {
+-  PrintBenchmark pb(Printer::getPrinter(os));
++  PrintBenchmark pb(nodeManager(), Printer::getPrinter(os));
+   std::vector<Node> assertions;
+   // Notice that users may define ordinary and recursive functions. The latter
+   // get added to the list of assertions as quantified formulas. Since we are
+diff --git a/src/smt/timeout_core_manager.cpp b/src/smt/timeout_core_manager.cpp
+index 175b3505a..223ae9b3d 100644
+--- a/src/smt/timeout_core_manager.cpp
++++ b/src/smt/timeout_core_manager.cpp
+@@ -267,7 +267,7 @@ Result TimeoutCoreManager::checkSatNext(const std::vector<Node>& nextAssertions,
+     {
+       std::vector<Node> bench(nextAssertions.begin(), nextAssertions.end());
+       std::stringstream ss;
+-      smt::PrintBenchmark pb(Printer::getPrinter(ss));
++      smt::PrintBenchmark pb(nodeManager(), Printer::getPrinter(ss));
+       pb.printBenchmark(ss, d_env.getLogicInfo().getLogicString(), {}, bench);
+       output(OutputTag::TIMEOUT_CORE_BENCHMARK)
+           << ";; timeout core" << std::endl;
+diff --git a/src/smt/unsat_core_manager.cpp b/src/smt/unsat_core_manager.cpp
+index 5e810b133..5f3318d64 100644
+--- a/src/smt/unsat_core_manager.cpp
++++ b/src/smt/unsat_core_manager.cpp
+@@ -68,7 +68,7 @@ std::vector<Node> UnsatCoreManager::getUnsatCoreLemmas(bool isInternal)
+       coreAsserts.insert(
+           coreAsserts.end(), coreLemmas.begin(), coreLemmas.end());
+       std::stringstream ss;
+-      smt::PrintBenchmark pb(Printer::getPrinter(ss));
++      smt::PrintBenchmark pb(nodeManager(), Printer::getPrinter(ss));
+       pb.printBenchmark(
+           ss, logicInfo().getLogicString(), coreDefs, coreAsserts);
+       output(OutputTag::UNSAT_CORE_LEMMAS_BENCHMARK) << ";; unsat core + lemmas" << std::endl;
+@@ -128,7 +128,7 @@ void UnsatCoreManager::getUnsatCoreInternal(std::shared_ptr<ProofNode> pfn,
+     std::vector<Node> coreDefs;
+     partitionUnsatCore(core, coreDefs, coreAsserts);
+     std::stringstream ss;
+-    smt::PrintBenchmark pb(Printer::getPrinter(ss));
++    smt::PrintBenchmark pb(nodeManager(), Printer::getPrinter(ss));
+     pb.printBenchmark(ss, logicInfo().getLogicString(), coreDefs, coreAsserts);
+     output(OutputTag::UNSAT_CORE_BENCHMARK) << ";; unsat core" << std::endl;
+     output(OutputTag::UNSAT_CORE_BENCHMARK) << ss.str();
+diff --git a/src/theory/quantifiers/query_generator.cpp b/src/theory/quantifiers/query_generator.cpp
+index 4f103ff24..c9b6a37e8 100644
+--- a/src/theory/quantifiers/query_generator.cpp
++++ b/src/theory/quantifiers/query_generator.cpp
+@@ -71,7 +71,7 @@ void QueryGenerator::dumpQuery(Node qy,
+   std::stringstream fname;
+   fname << "query" << d_queryCount << ".smt2";
+   std::ofstream fs(fname.str(), std::ofstream::out);
+-  smt::PrintBenchmark pb(Printer::getPrinter(fs));
++  smt::PrintBenchmark pb(nodeManager(), Printer::getPrinter(fs));
+   pb.printBenchmark(fs, d_env.getLogicInfo().getLogicString(), {}, {kqy});
+   fs.close();
+ }
+-- 
+2.47.1
+

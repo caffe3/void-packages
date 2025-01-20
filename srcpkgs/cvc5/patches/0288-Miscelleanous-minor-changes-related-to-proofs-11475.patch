@@ -1,0 +1,108 @@
+From 6b59bd4d04677de05e2afc75e0f60aa9b4663b91 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 10 Jan 2025 09:19:05 -0600
+Subject: [PATCH 288/312] Miscelleanous minor changes related to proofs
+ (#11475)
+
+Taken from my dev branch.
+---
+ src/theory/arith/pp_rewrite_eq.cpp |  2 +-
+ src/theory/theory_engine.cpp       |  2 +-
+ src/theory/theory_preprocessor.cpp | 29 ++++++++++-------------------
+ src/theory/theory_preprocessor.h   |  2 --
+ 4 files changed, 12 insertions(+), 23 deletions(-)
+
+diff --git a/src/theory/arith/pp_rewrite_eq.cpp b/src/theory/arith/pp_rewrite_eq.cpp
+index e8625c67a..8baf6b30a 100644
+--- a/src/theory/arith/pp_rewrite_eq.cpp
++++ b/src/theory/arith/pp_rewrite_eq.cpp
+@@ -39,7 +39,7 @@ TrustNode PreprocessRewriteEq::ppRewriteEq(TNode atom)
+   Assert(atom[0].getType().isRealOrInt());
+   Node leq = NodeBuilder(nodeManager(), Kind::LEQ) << atom[0] << atom[1];
+   Node geq = NodeBuilder(nodeManager(), Kind::GEQ) << atom[0] << atom[1];
+-  Node rewritten = rewrite(leq.andNode(geq));
++  Node rewritten = leq.andNode(geq);
+   Trace("arith::preprocess")
+       << "arith::preprocess() : returning " << rewritten << std::endl;
+   // don't need to rewrite terms since rewritten is not a non-standard op
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index ec793210f..5a8a00a88 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -1669,7 +1669,7 @@ void TheoryEngine::conflict(TrustNode tconflict,
+       tconf.debugCheckClosed(
+           options(), "te-proof-debug", "TheoryEngine::conflict:sharing");
+     }
+-    lemma(tconf, id, LemmaProperty::NONE);
++    lemma(tconf, id, LemmaProperty::NONE, theoryId);
+   }
+   else
+   {
+diff --git a/src/theory/theory_preprocessor.cpp b/src/theory/theory_preprocessor.cpp
+index 5ebca4fe7..24c9b18c1 100644
+--- a/src/theory/theory_preprocessor.cpp
++++ b/src/theory/theory_preprocessor.cpp
+@@ -67,7 +67,6 @@ TheoryPreprocessor::TheoryPreprocessor(Env& env, TheoryEngine& engine)
+     ts.push_back(d_tpg.get());
+     d_tspg.reset(new TConvSeqProofGenerator(
+         pnm, ts, userContext(), "TheoryPreprocessor::sequence"));
+-    d_tpid = mkTrustId(nodeManager(), TrustId::THEORY_PREPROCESS);
+   }
+ }
+ 
+@@ -479,29 +478,21 @@ void TheoryPreprocessor::registerTrustedRewrite(TrustNode trn,
+   Node eq = trn.getProven();
+   Node term = eq[0];
+   Node termr = eq[1];
++  Trace("tpp-debug") << "TheoryPreprocessor: addRewriteStep (generator) "
++                     << term << " -> " << termr << std::endl;
+   if (trn.getGenerator() != nullptr)
+   {
+-    Trace("tpp-debug") << "TheoryPreprocessor: addRewriteStep (generator) "
+-                       << term << " -> " << termr << std::endl;
+     trn.debugCheckClosed(
+         options(), "tpp-debug", "TheoryPreprocessor::preprocessWithProof");
+-    // always use term context hash 0 (default)
+-    pg->addRewriteStep(
+-        term, termr, trn.getGenerator(), isPre, TrustId::NONE, true, tctx);
+-  }
+-  else
+-  {
+-    Trace("tpp-debug") << "TheoryPreprocessor: addRewriteStep (trusted) "
+-                       << term << " -> " << termr << std::endl;
+-    // small step trust
+-    pg->addRewriteStep(term,
+-                       termr,
+-                       ProofRule::TRUST,
+-                       {},
+-                       {d_tpid, term.eqNode(termr)},
+-                       isPre,
+-                       tctx);
+   }
++  // always use term context hash 0 (default)
++  pg->addRewriteStep(term,
++                     termr,
++                     trn.getGenerator(),
++                     isPre,
++                     TrustId::THEORY_PREPROCESS,
++                     true,
++                     tctx);
+ }
+ 
+ }  // namespace theory
+diff --git a/src/theory/theory_preprocessor.h b/src/theory/theory_preprocessor.h
+index 3cffa64c0..e46e5502c 100644
+--- a/src/theory/theory_preprocessor.h
++++ b/src/theory/theory_preprocessor.h
+@@ -165,8 +165,6 @@ class TheoryPreprocessor : protected EnvObj
+    * contexts.
+    */
+   RtfTermContext d_rtfc;
+-  /** Trust id */
+-  Node d_tpid;
+   /**
+    * Rewrite with proof, which stores a REWRITE step in pg if necessary
+    * and returns the rewritten form of term.
+-- 
+2.47.1
+

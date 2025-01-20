@@ -1,0 +1,381 @@
+From 20ca3a54fd0e58287563b425a2e63aaf539911b6 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 10 Dec 2024 09:04:57 -0600
+Subject: [PATCH 231/312] Add macro and elaboration for quantifiers prenex
+ (#11421)
+
+This adds support for reconstruction of proofs of prenexing. This relies
+on miniscoping (in reverse), thus no new proof rule is necessary.
+
+The reconstruction does not always work, which may lead to further proof
+holes, which will be addressed in future PRs.
+
+A simple example is added which now has a complete proof.
+
+---------
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ include/cvc5/cvc5_proof_rule.h                |  10 ++
+ src/api/cpp/cvc5_proof_rule_template.cpp      |   1 +
+ src/rewriter/basic_rewrite_rcons.cpp          | 104 ++++++++++++++++++
+ src/rewriter/basic_rewrite_rcons.h            |  10 ++
+ .../quantifiers/quantifiers_preprocess.cpp    |   7 +-
+ .../quantifiers/quantifiers_rewriter.cpp      |  51 +++++++--
+ src/theory/quantifiers/quantifiers_rewriter.h |   4 +-
+ test/regress/cli/CMakeLists.txt               |   1 +
+ .../proofs/macro-quant-prenex-simple.smt2     |   9 ++
+ 9 files changed, 184 insertions(+), 13 deletions(-)
+ create mode 100644 test/regress/cli/regress0/proofs/macro-quant-prenex-simple.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 7f531a177..47bd82198 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2569,6 +2569,16 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(QUANT_MERGE_PRENEX),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Quantifiers -- Macro prenex**
++   *
++   * .. math::
++   *   (\forall X.\> F_1 \vee \cdots \vee (\forall Y.\> F_i) \vee \cdots \vee F_n) = (\forall X Z.\> F_1 \vee \cdots \vee F_i\{ Y \mapsto Z \} \vee \cdots \vee F_n)
++   *
++   * \endverbatim
++   */
++  EVALUE(MACRO_QUANT_PRENEX),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Quantifiers -- Macro miniscoping**
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index b34cf2c43..8f304f29d 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -246,6 +246,7 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::MACRO_QUANT_MERGE_PRENEX:
+       return "macro-quant-merge-prenex";
+     case ProofRewriteRule::QUANT_MERGE_PRENEX: return "quant-merge-prenex";
++    case ProofRewriteRule::MACRO_QUANT_PRENEX: return "macro-quant-prenex";
+     case ProofRewriteRule::MACRO_QUANT_MINISCOPE:
+       return "macro-quant-miniscope";
+     case ProofRewriteRule::QUANT_MINISCOPE: return "quant-miniscope";
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index 98b4c49ee..8a3f66437 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -199,6 +199,12 @@ void BasicRewriteRCons::ensureProofForTheoryRewrite(
+         handledMacro = true;
+       }
+       break;
++    case ProofRewriteRule::MACRO_QUANT_PRENEX:
++      if (ensureProofMacroQuantPrenex(cdp, eq))
++      {
++        handledMacro = true;
++      }
++      break;
+     case ProofRewriteRule::MACRO_QUANT_PARTITION_CONNECTED_FV:
+       if (ensureProofMacroQuantPartitionConnectedFv(cdp, eq))
+       {
+@@ -608,6 +614,104 @@ bool BasicRewriteRCons::ensureProofMacroQuantMergePrenex(CDProof* cdp,
+   return true;
+ }
+ 
++bool BasicRewriteRCons::ensureProofMacroQuantPrenex(CDProof* cdp,
++                                                    const Node& eq)
++{
++  NodeManager* nm = nodeManager();
++  Trace("brc-macro") << "Expand macro quant prenex for " << eq << std::endl;
++  Assert(eq[0].getKind() == Kind::FORALL);
++  Assert(eq[1].getKind() == Kind::FORALL);
++  Node body1 = eq[0][1];
++  Node body2 = eq[1][1];
++  // take the prenexed variables
++  size_t nvars1 = eq[0][0].getNumChildren();
++  std::vector<Node> newVars(eq[1][0].begin() + nvars1, eq[1][0].end());
++  Assert(!newVars.empty());
++  Node bvl = nm->mkNode(Kind::BOUND_VAR_LIST, newVars);
++  body2 = nm->mkNode(Kind::FORALL, bvl, body2);
++  Node umergeq = nm->mkNode(Kind::FORALL, eq[0][0], body2);
++  Node beq = body1.eqNode(body2);
++  // We set up the elaboration as follows:
++  //
++  // F = forall Y. G
++  // ------------------------------- CONG ------------------------ MERGE_PRENEX
++  // forall X. F = forall X. forall Y. G   forall X. forall Y. G = forall XY. G
++  // --------------------------------------------------------------- TRANS
++  // forall X. F = forall XY. G
++  //
++  // where the free assumption can be proven by miniscoping.
++  std::vector<Node> cargs;
++  ProofRule cr = expr::getCongRule(eq[0], cargs);
++  Node eqq = eq[0].eqNode(umergeq);
++  cdp->addStep(eqq, cr, {beq}, cargs);
++  theory::Rewriter* rr = d_env.getRewriter();
++  Node mergeq =
++      rr->rewriteViaRule(ProofRewriteRule::QUANT_MERGE_PRENEX, umergeq);
++  if (mergeq != eq[1])
++  {
++    Trace("brc-macro") << "Failed merge step";
++    return false;
++  }
++  Node eqq2 = umergeq.eqNode(mergeq);
++  cdp->addTheoryRewriteStep(eqq2, ProofRewriteRule::QUANT_MERGE_PRENEX);
++  cdp->addStep(eq, ProofRule::TRANS, {eqq, eqq2}, {});
++  Trace("brc-macro") << "Remains to prove: " << body1 << " == " << body2
++                     << std::endl;
++  Node body2ms =
++      rr->rewriteViaRule(ProofRewriteRule::QUANT_MINISCOPE_FV, body2);
++  if (body2ms.isNull())
++  {
++    // currently fails if we are doing
++    //   forall x. ite(C, forall Y. t, s) =
++    //   forall xy. ite(C, t, s)
++    // since we don't miniscope over ITE.
++    Trace("brc-macro") << "Failed miniscope";
++    return false;
++  }
++  Node eqqm = body2.eqNode(body2ms);
++  cdp->addTheoryRewriteStep(eqqm, ProofRewriteRule::QUANT_MINISCOPE_FV);
++  Node eqqrs = body2.eqNode(body1);
++  if (body2ms != body1)
++  {
++    if (body2ms.getKind() != body1.getKind()
++        || body2ms.getNumChildren() != body1.getNumChildren())
++    {
++      Trace("brc-macro") << "Failed after miniscope";
++      return false;
++    }
++    // We may have used alpha equivalence to rename variables, thus we
++    // introduce a CONG step where children that are disequal are given as
++    // subgoals.
++    std::vector<Node> cpremises;
++    for (size_t i = 0, nchildren = body2ms.getNumChildren(); i < nchildren; i++)
++    {
++      Node eqc = body2ms[i].eqNode(body1[i]);
++      if (body2ms[i] == body1[i])
++      {
++        cdp->addStep(eqc, ProofRule::REFL, {}, {body2ms[i]});
++      }
++      else
++      {
++        Trace("brc-macro") << "...subgoal " << eqc << std::endl;
++        // otherwise just add subgoal, likely alpha equivalence
++        // Some of these goals cannot be currently proven since they involve
++        // multiple nested steps of miniscoping, combined with alpha
++        // equivalence.
++        cdp->addTrustedStep(
++            eqc, TrustId::MACRO_THEORY_REWRITE_RCONS_SIMPLE, {}, {});
++      }
++      cpremises.push_back(eqc);
++    }
++    cargs.clear();
++    cr = expr::getCongRule(body2ms, cargs);
++    Node eqqb = body2ms.eqNode(body1);
++    cdp->addStep(eqqb, cr, cpremises, cargs);
++    cdp->addStep(eqqrs, ProofRule::TRANS, {eqqm, eqqb}, {});
++  }
++  cdp->addStep(beq, ProofRule::SYMM, {eqqrs}, {});
++  return true;
++}
++
+ bool BasicRewriteRCons::ensureProofMacroQuantPartitionConnectedFv(
+     CDProof* cdp, const Node& eq)
+ {
+diff --git a/src/rewriter/basic_rewrite_rcons.h b/src/rewriter/basic_rewrite_rcons.h
+index 949e4cd3c..7ff561a0b 100644
+--- a/src/rewriter/basic_rewrite_rcons.h
++++ b/src/rewriter/basic_rewrite_rcons.h
+@@ -180,6 +180,16 @@ class BasicRewriteRCons : protected EnvObj
+    * @return true if added a closed proof of eq to cdp.
+    */
+   bool ensureProofMacroQuantMergePrenex(CDProof* cdp, const Node& eq);
++  /**
++   * Elaborate a rewrite eq that was proven by
++   * ProofRewriteRule::MACRO_QUANT_PRENEX.
++   *
++   * @param cdp The proof to add to.
++   * @param eq The rewrite proven by
++   * ProofRewriteRule::MACRO_QUANT_PRENEX.
++   * @return true if added a closed proof of eq to cdp.
++   */
++  bool ensureProofMacroQuantPrenex(CDProof* cdp, const Node& eq);
+   /**
+    * Elaborate a rewrite eq that was proven by
+    * ProofRewriteRule::MACRO_QUANT_PARTITION_CONNECTED_FV.
+diff --git a/src/theory/quantifiers/quantifiers_preprocess.cpp b/src/theory/quantifiers/quantifiers_preprocess.cpp
+index fbcf603bc..20b20b45a 100644
+--- a/src/theory/quantifiers/quantifiers_preprocess.cpp
++++ b/src/theory/quantifiers/quantifiers_preprocess.cpp
+@@ -80,10 +80,11 @@ Node QuantifiersPreprocess::computePrenexAgg(
+   }
+   else
+   {
+-    std::unordered_set<Node> argsSet;
+-    std::unordered_set<Node> nargsSet;
+     Node q;
+-    Node nn = d_qrew.computePrenex(q, n, argsSet, nargsSet, true, true);
++    std::vector<Node> args, nargs;
++    Node nn = d_qrew.computePrenex(q, n, args, nargs, true, true);
++    std::unordered_set<Node> argsSet(args.begin(), args.end());
++    std::unordered_set<Node> nargsSet(args.begin(), args.end());
+     Assert(n != nn || argsSet.empty());
+     Assert(n != nn || nargsSet.empty());
+     if (n != nn)
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index 4595a9786..00551b5d1 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -108,6 +108,8 @@ QuantifiersRewriter::QuantifiersRewriter(NodeManager* nm,
+   // MACRO_QUANT_MERGE_PRENEX
+   registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_MERGE_PRENEX,
+                            TheoryRewriteCtx::PRE_DSL);
++  registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_PRENEX,
++                           TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_MINISCOPE,
+                            TheoryRewriteCtx::PRE_DSL);
+   // QUANT_MINISCOPE is part of the reconstruction for MACRO_QUANT_MINISCOPE
+@@ -180,6 +182,23 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
++    case ProofRewriteRule::MACRO_QUANT_PRENEX:
++    {
++      if (n.getKind() == Kind::FORALL)
++      {
++        std::vector<Node> args, nargs;
++        Node nn = computePrenex(n, n[1], args, nargs, true, false);
++        Assert(nargs.empty());
++        if (!args.empty())
++        {
++          std::vector<Node> qargs(n[0].begin(), n[0].end());
++          qargs.insert(qargs.end(), args.begin(), args.end());
++          Node bvl = d_nm->mkNode(Kind::BOUND_VAR_LIST, qargs);
++          return d_nm->mkNode(Kind::FORALL, bvl, nn);
++        }
++      }
++    }
++    break;
+     case ProofRewriteRule::MACRO_QUANT_MINISCOPE:
+     {
+       if (n.getKind() != Kind::FORALL || n[1].getKind() != Kind::AND)
+@@ -1038,20 +1057,36 @@ Node QuantifiersRewriter::computeCondSplit(Node body,
+     }
+     if (do_split)
+     {
++      // For the sake of proofs, if we are not splitting the first child,
++      // we first rearrange so that it is first, which can be proven by
++      // ACI_NORM.
++      std::vector<Node> splitChildren;
++      if (split_index != 0)
++      {
++        splitChildren.push_back(body[split_index]);
++        for (size_t i = 0; i < size; i++)
++        {
++          if (i != split_index)
++          {
++            splitChildren.push_back(body[i]);
++          }
++        }
++        return nm->mkNode(Kind::OR, splitChildren);
++      }
++      // This is expected to be proven by the RARE rule bool-or-and-distrib.
+       std::vector<Node> children;
+       for (TNode bc : body)
+       {
+         children.push_back(bc);
+       }
+-      std::vector<Node> split_children;
+       for (TNode bci : body[split_index])
+       {
+         children[split_index] = bci;
+-        split_children.push_back(nm->mkNode(Kind::OR, children));
++        splitChildren.push_back(nm->mkNode(Kind::OR, children));
+       }
+       // split the AND child, for example:
+       //  ( x!=a ^ P(x) ) V Q(x) ---> ( x!=a V Q(x) ) ^ ( P(x) V Q(x) )
+-      return nm->mkNode(Kind::AND, split_children);
++      return nm->mkNode(Kind::AND, splitChildren);
+     }
+   }
+ 
+@@ -1690,8 +1725,8 @@ Node QuantifiersRewriter::computeVarElimination(Node body,
+ 
+ Node QuantifiersRewriter::computePrenex(Node q,
+                                         Node body,
+-                                        std::unordered_set<Node>& args,
+-                                        std::unordered_set<Node>& nargs,
++                                        std::vector<Node>& args,
++                                        std::vector<Node>& nargs,
+                                         bool pol,
+                                         bool prenexAgg) const
+ {
+@@ -1732,11 +1767,11 @@ Node QuantifiersRewriter::computePrenex(Node q,
+       }
+       if (pol)
+       {
+-        args.insert(subs.begin(), subs.end());
++        args.insert(args.end(), subs.begin(), subs.end());
+       }
+       else
+       {
+-        nargs.insert(subs.begin(), subs.end());
++        nargs.insert(nargs.end(), subs.begin(), subs.end());
+       }
+       Node newBody = body[1];
+       newBody = newBody.substitute( terms.begin(), terms.end(), subs.begin(), subs.end() );
+@@ -2332,7 +2367,7 @@ Node QuantifiersRewriter::computeOperation(Node f,
+     }
+     else
+     {
+-      std::unordered_set<Node> argsSet, nargsSet;
++      std::vector<Node> argsSet, nargsSet;
+       n = computePrenex(f, n, argsSet, nargsSet, true, false);
+       Assert(nargsSet.empty());
+       args.insert(args.end(), argsSet.begin(), argsSet.end());
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.h b/src/theory/quantifiers/quantifiers_rewriter.h
+index 981bb63ac..058f3b628 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.h
++++ b/src/theory/quantifiers/quantifiers_rewriter.h
+@@ -203,8 +203,8 @@ class QuantifiersRewriter : public TheoryRewriter
+    */
+   Node computePrenex(Node q,
+                      Node body,
+-                     std::unordered_set<Node>& args,
+-                     std::unordered_set<Node>& nargs,
++                     std::vector<Node>& args,
++                     std::vector<Node>& nargs,
+                      bool pol,
+                      bool prenexAgg) const;
+   Node computeSplit(std::vector<Node>& args, Node body, QAttributes& qa) const;
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 63481e671..e789a6f09 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1348,6 +1348,7 @@ set(regress_0_tests
+   regress0/proofs/issue9770-open-sat-proof.smt2
+   regress0/proofs/issue9927.smt2
+   regress0/proofs/lfsc-test-1.smt2
++  regress0/proofs/macro-quant-prenex-simple.smt2
+   regress0/proofs/nomerge-alethe-pf.smt2
+   regress0/proofs/no-proof-uc.smt2
+   regress0/proofs/pfcheck_rw_441.smt2
+diff --git a/test/regress/cli/regress0/proofs/macro-quant-prenex-simple.smt2 b/test/regress/cli/regress0/proofs/macro-quant-prenex-simple.smt2
+new file mode 100644
+index 000000000..22e69c98b
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/macro-quant-prenex-simple.smt2
+@@ -0,0 +1,9 @@
++; EXPECT: unsat
++(set-logic UF)
++(declare-sort U 0)
++(declare-const u U)
++(declare-fun p (U U) Bool)
++(assert (distinct
++  (forall ((x U)) (or (p u x) (forall ((y U)) (p y x))))
++  (forall ((x U) (y U)) (or (p u x) (p y x)))))
++(check-sat)
+-- 
+2.47.1
+

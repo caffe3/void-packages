@@ -1,0 +1,225 @@
+From c27f5d6fc42d210ae415f26c157a9c154b096c77 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 15 Jan 2025 08:27:25 -0600
+Subject: [PATCH 305/312] Add elaboration for remaining case of
+ macro-dt-cons-eq (#11521)
+
+Covers 2 holes in regressions and 1 hole from SMT-LIB.
+---
+ src/rewriter/basic_rewrite_rcons.cpp          | 115 ++++++++++++------
+ .../datatypes/theory_datatypes_utils.cpp      |  13 +-
+ src/theory/datatypes/theory_datatypes_utils.h |  12 ++
+ .../nullables/nullable-lift-unsat.smt2        |   1 +
+ 4 files changed, 106 insertions(+), 35 deletions(-)
+
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index 90fc478c3..514099de1 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -30,6 +30,7 @@
+ #include "theory/arith/arith_proof_utilities.h"
+ #include "theory/booleans/theory_bool_rewriter.h"
+ #include "theory/bv/theory_bv_rewrite_rules.h"
++#include "theory/datatypes/theory_datatypes_utils.h"
+ #include "theory/quantifiers/quantifiers_rewriter.h"
+ #include "theory/rewriter.h"
+ #include "theory/strings/arith_entail.h"
+@@ -295,50 +296,96 @@ bool BasicRewriteRCons::ensureProofMacroDtConsEq(CDProof* cdp, const Node& eq)
+       cdp->addTheoryRewriteStep(eq, ProofRewriteRule::DT_CONS_EQ_CLASH);
+       return true;
+     }
++    Assert(eq[0].getKind() == Kind::EQUAL);
+     // otherwise, we require proving the non-datatype constants are distinct
+-    // this case is not yet handled.
+-    return false;
++    std::vector<size_t> path;
++    std::vector<Node> rew;
++    theory::datatypes::utils::checkClash(eq[0][0], eq[0][1], rew, true, path);
++    Trace("brc-macro") << "clash " << eq[0] << " with path " << path.size()
++                       << std::endl;
++    Node currEq = eq[0];
++    NodeManager* nm = nodeManager();
++    Node falsen = nm->mkConst(false);
++    for (size_t i = 0, npath = path.size(); i < npath; i++)
++    {
++      Trace("brc-macro") << "- unify eq " << currEq << std::endl;
++      // e.g C(t1...tn)=C(s1...sn) = (and (t1=s1) ... (tn=sn))
++      Node currConj = rr->rewriteViaRule(ProofRewriteRule::DT_CONS_EQ, currEq);
++      Assert(!currConj.isNull());
++      tcpg.addTheoryRewriteStep(currEq, currConj, ProofRewriteRule::DT_CONS_EQ);
++      size_t p = path[npath - i - 1];
++      Assert(p < currEq[0].getNumChildren());
++      Assert(p < currEq[1].getNumChildren());
++      if (currConj.getKind() == Kind::AND)
++      {
++        // (and (t1=s1) ... false .... (tn=sn)) = false
++        // should be proven by a RARE rule.
++        std::vector<Node> cc(currConj.begin(), currConj.end());
++        cc[p] = falsen;
++        Node currConjf = nm->mkAnd(cc);
++        tcpg.addRewriteStep(currConjf,
++                            falsen,
++                            nullptr,
++                            false,
++                            TrustId::MACRO_THEORY_REWRITE_RCONS_SIMPLE);
++      }
++      // recurse
++      currEq = currEq[0][p].eqNode(currEq[1][p]);
++    }
++    // base case, we have a conflicting value.
++    // should be proven by evaluation or by an ad-hoc rewrite.
++    Trace("brc-macro") << "- conflicting values " << currEq << std::endl;
++    Assert(currEq[0].isConst() && currEq[1].isConst()
++           && currEq[0] != currEq[1]);
++    tcpg.addRewriteStep(currEq,
++                        falsen,
++                        nullptr,
++                        false,
++                        TrustId::MACRO_THEORY_REWRITE_RCONS_SIMPLE);
+   }
+-  std::unordered_set<TNode> visited;
+-  std::vector<TNode> visit;
+-  TNode cur;
+-  visit.push_back(eq[0]);
+-  do
++  else
+   {
+-    cur = visit.back();
+-    visit.pop_back();
+-    if (visited.find(cur) == visited.end())
++    std::unordered_set<TNode> visited;
++    std::vector<TNode> visit;
++    TNode cur;
++    visit.push_back(eq[0]);
++    do
+     {
+-      visited.insert(cur);
+-      if (cur.getKind() == Kind::EQUAL)
++      cur = visit.back();
++      visit.pop_back();
++      if (visited.find(cur) == visited.end())
+       {
+-        // if a reflexive component, it rewrites to true
+-        if (cur[0] == cur[1])
++        visited.insert(cur);
++        if (cur.getKind() == Kind::EQUAL)
+         {
+-          Node truen = nodeManager()->mkConst(true);
+-          tcpg.addRewriteStep(cur,
+-                              truen,
+-                              nullptr,
+-                              true,
+-                              TrustId::MACRO_THEORY_REWRITE_RCONS_SIMPLE);
+-          continue;
++          // if a reflexive component, it rewrites to true
++          if (cur[0] == cur[1])
++          {
++            Node truen = nodeManager()->mkConst(true);
++            tcpg.addRewriteStep(cur,
++                                truen,
++                                nullptr,
++                                true,
++                                TrustId::MACRO_THEORY_REWRITE_RCONS_SIMPLE);
++            continue;
++          }
++          Node curRew = rr->rewriteViaRule(ProofRewriteRule::DT_CONS_EQ, cur);
++          if (!curRew.isNull())
++          {
++            tcpg.addTheoryRewriteStep(
++                cur, curRew, ProofRewriteRule::DT_CONS_EQ, true);
++            visit.push_back(curRew);
++          }
+         }
+-        Node curRew = rr->rewriteViaRule(ProofRewriteRule::DT_CONS_EQ, cur);
+-        if (!curRew.isNull())
++        else
+         {
+-          tcpg.addTheoryRewriteStep(
+-              cur, curRew, ProofRewriteRule::DT_CONS_EQ, true);
+-          visit.push_back(curRew);
++          // traverse AND
++          Assert(cur.getKind() == Kind::AND);
++          visit.insert(visit.end(), cur.begin(), cur.end());
+         }
+       }
+-      else
+-      {
+-        // traverse AND
+-        Assert(cur.getKind() == Kind::AND);
+-        visit.insert(visit.end(), cur.begin(), cur.end());
+-      }
+-    }
+-  } while (!visit.empty());
++    } while (!visit.empty());
++  }
+   // get proof for rewriting, which should expand equalities
+   std::shared_ptr<ProofNode> pfn = tcpg.getProofForRewriting(eq[0]);
+   Node res = pfn->getResult();
+diff --git a/src/theory/datatypes/theory_datatypes_utils.cpp b/src/theory/datatypes/theory_datatypes_utils.cpp
+index be7b19094..d4c53f36e 100644
+--- a/src/theory/datatypes/theory_datatypes_utils.cpp
++++ b/src/theory/datatypes/theory_datatypes_utils.cpp
+@@ -162,6 +162,16 @@ bool isNullaryConstructor(const DTypeConstructor& c)
+ }
+ 
+ bool checkClash(Node n1, Node n2, std::vector<Node>& rew, bool checkNdtConst)
++{
++  std::vector<size_t> path;
++  return checkClash(n1, n2, rew, checkNdtConst, path);
++}
++
++bool checkClash(Node n1,
++                Node n2,
++                std::vector<Node>& rew,
++                bool checkNdtConst,
++                std::vector<size_t>& path)
+ {
+   Trace("datatypes-rewrite-debug")
+       << "Check clash : " << n1 << " " << n2 << std::endl;
+@@ -178,8 +188,9 @@ bool checkClash(Node n1, Node n2, std::vector<Node>& rew, bool checkNdtConst)
+     Assert(n1.getNumChildren() == n2.getNumChildren());
+     for (unsigned i = 0, size = n1.getNumChildren(); i < size; i++)
+     {
+-      if (checkClash(n1[i], n2[i], rew, checkNdtConst))
++      if (checkClash(n1[i], n2[i], rew, checkNdtConst, path))
+       {
++        path.push_back(i);
+         return true;
+       }
+     }
+diff --git a/src/theory/datatypes/theory_datatypes_utils.h b/src/theory/datatypes/theory_datatypes_utils.h
+index 94d7aa88d..64a3a2a26 100644
+--- a/src/theory/datatypes/theory_datatypes_utils.h
++++ b/src/theory/datatypes/theory_datatypes_utils.h
+@@ -120,6 +120,18 @@ bool checkClash(Node n1,
+                 Node n2,
+                 std::vector<Node>& rew,
+                 bool checkNdtConst = true);
++/**
++ * Same as above, but tracks the path to the clashing equality.
++ * In particular, path contains the child index to follow in n1 and n2 to
++ * find a conflicting value, e.g.
++ *    C( x, D( y, z, 7 ) ) = C( w, D( 2, 3, 4) )
++ * would return path = { 1, 2 }, referencing the conflicting equality 7=4.
++ */
++bool checkClash(Node n1,
++                Node n2,
++                std::vector<Node>& rew,
++                bool checkNdtConst,
++                std::vector<size_t>& path);
+ 
+ }  // namespace utils
+ }  // namespace datatypes
+diff --git a/test/regress/cli/regress1/datatypes/nullables/nullable-lift-unsat.smt2 b/test/regress/cli/regress1/datatypes/nullables/nullable-lift-unsat.smt2
+index f01736168..c2cad0fe8 100644
+--- a/test/regress/cli/regress1/datatypes/nullables/nullable-lift-unsat.smt2
++++ b/test/regress/cli/regress1/datatypes/nullables/nullable-lift-unsat.smt2
+@@ -1,4 +1,5 @@
+ ; DISABLE-TESTER: lfsc
++; DISABLE-TESTER: cpc
+ (set-logic HO_ALL)
+ (set-info :status unsat)
+ (assert (= (nullable.lift (lambda ((x Bool) (y Bool)) (and x y)) (nullable.some false) (nullable.some false)) (nullable.some true)))
+-- 
+2.47.1
+

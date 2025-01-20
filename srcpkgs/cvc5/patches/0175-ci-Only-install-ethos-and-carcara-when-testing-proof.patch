@@ -1,0 +1,101 @@
+From 27f6edd472b464ecbb5e09de2bb42393287760ae Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Fri, 15 Nov 2024 12:52:49 -0600
+Subject: [PATCH 175/312] ci: Only install ethos and carcara when testing
+ proofs (#11343)
+
+It also immediately terminates the scripts that retrieve the ethos and
+carcara checkers if any command within the script returns a non-zero
+exit status. This helps to pinpoint pipeline failures related to the
+setup of these checkers more quickly.
+---
+ .github/actions/setup-cache/action.yml | 13 +++++++++++--
+ .github/workflows/ci.yml               |  2 ++
+ contrib/get-carcara-checker            |  2 ++
+ contrib/get-ethos-checker              |  2 ++
+ contrib/get-lfsc-checker               |  2 ++
+ 5 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/.github/actions/setup-cache/action.yml b/.github/actions/setup-cache/action.yml
+index b4a2bc461..0e65634ce 100644
+--- a/.github/actions/setup-cache/action.yml
++++ b/.github/actions/setup-cache/action.yml
+@@ -3,6 +3,10 @@ description: Setup caches (ccache, contribs and dependencies)
+ inputs:
+   cache-key:
+     default: "none"
++  install-ethos:
++    default: false
++  install-carcara:
++    default: false
+   shell:
+     default: bash
+ 
+@@ -61,8 +65,13 @@ runs:
+       if: steps.contrib-cache.outputs.cache-hit != 'true'
+       shell: ${{ inputs.shell }}
+       run: |
+-        ./contrib/get-carcara-checker
+-        ./contrib/get-ethos-checker
++        mkdir -p ./deps/bin
++        if [ "${{ inputs.install-carcara }}" = "true" ]; then
++          ./contrib/get-carcara-checker
++        fi
++        if [ "${{ inputs.install-ethos }}" = "true" ]; then
++          ./contrib/get-ethos-checker
++        fi
+ 
+     - name: Setup dependencies cache
+       uses: actions/cache@v4
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index f71ac621d..0f1946fce 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -179,6 +179,8 @@ jobs:
+       uses: ./.github/actions/setup-cache
+       with:
+         cache-key: ${{ matrix.build.cache-key }}
++        install-ethos: ${{ contains(matrix.build.run_regression_args, '--tester cpc') }}
++        install-carcara: ${{ contains(matrix.build.run_regression_args, '--tester alethe') }}
+         shell: ${{ matrix.build.shell }}
+ 
+     - name: Configure and build
+diff --git a/contrib/get-carcara-checker b/contrib/get-carcara-checker
+index 71cb8cf66..da158a816 100755
+--- a/contrib/get-carcara-checker
++++ b/contrib/get-carcara-checker
+@@ -1,5 +1,7 @@
+ #!/usr/bin/env bash
+ 
++set -e -o pipefail
++
+ # utility function to download a file
+ function download {
+   if [ -x "$(command -v wget)" ]; then
+diff --git a/contrib/get-ethos-checker b/contrib/get-ethos-checker
+index 01a41261a..8c8c15e09 100755
+--- a/contrib/get-ethos-checker
++++ b/contrib/get-ethos-checker
+@@ -1,5 +1,7 @@
+ #!/usr/bin/env bash
+ 
++set -e -o pipefail
++
+ # utility function to download a file
+ function download {
+   if [ -x "$(command -v wget)" ]; then
+diff --git a/contrib/get-lfsc-checker b/contrib/get-lfsc-checker
+index 425a0003c..085e2f988 100755
+--- a/contrib/get-lfsc-checker
++++ b/contrib/get-lfsc-checker
+@@ -1,5 +1,7 @@
+ #!/usr/bin/env bash
+ 
++set -e -o pipefail
++
+ # utility function to download a file
+ function download {
+   if [ -x "$(command -v wget)" ]; then
+-- 
+2.47.1
+

@@ -1,0 +1,81 @@
+From 16d16f7ece3165b5456313fb18b017252671e66d Mon Sep 17 00:00:00 2001
+From: Tai Chi Minh Ralph Eastwood <caffe@disroot.org>
+Date: Fri, 17 Jan 2025 16:02:49 +0100
+Subject: [PATCH 312/312] cadical: add support for 2.1.x API
+
+---
+ src/prop/cadical.cpp | 23 ++++++++++++++++++++---
+ 1 file changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/src/prop/cadical.cpp b/src/prop/cadical.cpp
+index 6c681c594..7b6625c1b 100644
+--- a/src/prop/cadical.cpp
++++ b/src/prop/cadical.cpp
+@@ -18,6 +18,7 @@
+ #include "prop/cadical.h"
+ 
+ #include <deque>
++#include <vector>
+ 
+ #include "base/check.h"
+ #include "options/base_options.h"
+@@ -69,7 +70,7 @@ CadicalVar toCadicalVar(SatVariable var) { return var; }
+ 
+ }  // namespace helper functions
+ 
+-class CadicalPropagator : public CaDiCaL::ExternalPropagator
++class CadicalPropagator : public CaDiCaL::ExternalPropagator, public CaDiCaL::FixedAssignmentListener
+ {
+  public:
+   CadicalPropagator(prop::TheoryProxy* proxy,
+@@ -80,6 +81,18 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator
+     d_var_info.emplace_back();  // 0: Not used
+   }
+ 
++  void notify_assignment(const std::vector<int> &lits) override
++  {
++    for (auto &lit : lits) {
++      notify_assignment(lit, false);
++    }
++  }
++
++  void notify_fixed_assignment(int lit) override
++  {
++    notify_assignment(lit, true);
++  }
++
+   /**
+    * Notification from the SAT solver on assignment of a new literal.
+    *
+@@ -89,7 +102,7 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator
+    * @param lit      The CaDiCaL literal that was assigned.
+    * @param is_fixed True if the assignment is fixed (on level 0).
+    */
+-  void notify_assignment(int lit, bool is_fixed) override
++  void notify_assignment(int lit, bool is_fixed)
+   {
+     if (d_found_solution)
+     {
+@@ -486,7 +499,10 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator
+    * Callback of the SAT solver to determine if we have a new clause to add.
+    * @return True to indicate that we have clauses to add.
+    */
+-  bool cb_has_external_clause() override { return !d_new_clauses.empty(); }
++  bool cb_has_external_clause (bool &forgettable) override {
++    forgettable = false;
++    return !d_new_clauses.empty();
++  }
+ 
+   /**
+    * Callback of the SAT solver to add a new clause.
+@@ -1022,6 +1038,7 @@ void CadicalSolver::init()
+     d_solver->set("ilb", 0);
+     d_solver->set("ilbassumptions", 0);
+     d_solver->connect_external_propagator(d_propagator.get());
++    d_solver->connect_fixed_listener(d_propagator.get());
+   }
+ 
+   d_true = newVar();
+-- 
+2.47.1
+

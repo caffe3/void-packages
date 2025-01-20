@@ -1,0 +1,189 @@
+From 3db8490b5c7cc0511b3dc17af3b4bbe252bd8364 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 7 Nov 2024 09:53:30 -0600
+Subject: [PATCH 166/312] Add Eunoia definition for
+ ProofRule::ARITH_MULT_TANGENT (#11313)
+
+Also simplifies the argument to the rule slightly.
+
+---------
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ include/cvc5/cvc5_proof_rule.h                |  6 ++--
+ proofs/eo/cpc/rules/Arith.eo                  | 33 +++++++++++++++++++
+ proofs/eo/cpc/theories/Arith.eo               |  2 +-
+ src/proof/alf/alf_printer.cpp                 |  1 +
+ src/theory/arith/nl/ext/proof_checker.cpp     |  5 ++-
+ .../arith/nl/ext/tangent_plane_check.cpp      |  2 +-
+ 6 files changed, 41 insertions(+), 8 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index cb29ec389..aa5e5f988 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -1962,13 +1962,13 @@ enum ENUM(ProofRule)
+    * **Arithmetic -- Multiplication tangent plane**
+    *
+    * .. math::
+-   *   \inferruleSC{- \mid x, y, a, b, \sigma}{(t \leq tplane) \leftrightarrow ((x \leq a \land y \geq b) \lor (x \geq a \land y \leq b))}{if $\sigma = -1$}
++   *   \inferruleSC{- \mid x, y, a, b, \sigma}{(t \leq tplane) = ((x \leq a \land y \geq b) \lor (x \geq a \land y \leq b))}{if $\sigma = \bot$}
+    *
+-   *   \inferruleSC{- \mid x, y, a, b, \sigma}{(t \geq tplane) \leftrightarrow ((x \leq a \land y \leq b) \lor (x \geq a \land y \geq b))}{if $\sigma = 1$}
++   *   \inferruleSC{- \mid x, y, a, b, \sigma}{(t \geq tplane) = ((x \leq a \land y \leq b) \lor (x \geq a \land y \geq b))}{if $\sigma = \top$}
+    *
+    * where :math:`x,y` are real terms (variables or extended terms),
+    * :math:`t = x \cdot y`, :math:`a,b` are real
+-   * constants, :math:`\sigma \in \{ 1, -1\}` and :math:`tplane := b \cdot x + a \cdot y - a \cdot b` is the tangent plane of :math:`x \cdot y` at :math:`(a,b)`.
++   * constants, :math:`\sigma \in \{ \top, \bot\}` and :math:`tplane := b \cdot x + a \cdot y - a \cdot b` is the tangent plane of :math:`x \cdot y` at :math:`(a,b)`.
+    * \endverbatim
+    */
+   EVALUE(ARITH_MULT_TANGENT),
+diff --git a/proofs/eo/cpc/rules/Arith.eo b/proofs/eo/cpc/rules/Arith.eo
+index 05e368077..8a33eaecf 100644
+--- a/proofs/eo/cpc/rules/Arith.eo
++++ b/proofs/eo/cpc/rules/Arith.eo
+@@ -4,6 +4,8 @@
+ (include "../programs/Arith.eo")
+ (include "../programs/Utils.eo")
+ 
++;;;;; ProofRule::ARITH_SUM_UB
++
+ ; program: $arith_rel_sum
+ ; args:
+ ; - r1 T : The first arithmetic relation.
+@@ -65,6 +67,8 @@
+   :conclusion ($mk_arith_sum_ub F)
+ )
+ 
++;;;;; ProofRule::ARITH_MULT_POS
++
+ ; program: $mk_arith_mult_pos
+ ; args:
+ ; - m S: A real or integer term to multiply by.
+@@ -92,6 +96,8 @@
+   :conclusion (=> (and (> m ($arith_mk_zero (eo::typeof m))) F) ($mk_arith_mult_pos m F))
+ )
+ 
++;;;;; ProofRule::ARITH_MULT_NEG
++
+ ; program: $arith_rel_inv
+ ; args:
+ ; - r T: An arithmetic relation.
+@@ -136,6 +142,8 @@
+   :conclusion (=> (and (< m ($arith_mk_zero (eo::typeof m))) F) ($mk_arith_mult_neg m F))
+ )
+ 
++;;;;; ProofRule::ARITH_TRICHOTOMY
++
+ ; program: $arith_rel_trichotomy
+ ; args:
+ ; - r1 T: The first arithmetic relation.
+@@ -207,6 +215,8 @@
+   :conclusion ($mk_arith_trichotomy ($arith_normalize_lit (not F1)) ($arith_normalize_lit (not F2)))
+ )
+ 
++;;;;; ProofRule::INT_TIGHT_UB
++
+ ; program: $greatest_int_lt
+ ; args:
+ ; - c R: A rational or integer value.
+@@ -231,6 +241,8 @@
+   :conclusion (<= s ($greatest_int_lt t))
+ )
+ 
++;;;;; ProofRule::INT_TIGHT_LB
++
+ ; program: $least_int_gt
+ ; args:
+ ; - c R: A rational or integer value.
+@@ -252,6 +264,27 @@
+   :conclusion (>= s ($least_int_gt t))
+ )
+ 
++;;;;; ProofRule::ARITH_MULT_TANGENT
++
++; rule: arith_mult_tangent
++; implements: ProofRule::ARITH_MULT_TANGENT
++; args:
++; - x R: The first arithmetic term.
++; - y S: The second arithmetic term.
++; - a R: The point of x we are considering.
++; - b S: The point of y we are considering.
++; - s Bool: Which direction the tangent plane is for, where true is >=, false is <=.
++; conclusion: The tangent plane lemma at (a,b) for (x,y).
++(declare-rule arith_mult_tangent ((R Type) (S Type) (x R) (y S) (a R) (b S) (s Bool))
++  :args (x y a b s)
++  :conclusion (eo::define ((tp (- (+ (* b x) (* a y)) (* a b))))
++              (eo::define ((r1 (eo::ite s >= <=)))
++              (eo::define ((r2 (eo::ite s <= >=)))
++                (= (r1 (* x y) tp)
++                   (or
++                     (and (<= x a) (r2 y b))
++                     (and (>= x a) (r1 y b))))))))
++
+ ;;;;; ProofRule::ARITH_REDUCTION
+ 
+ ; define: $arith_to_int_reduction
+diff --git a/proofs/eo/cpc/theories/Arith.eo b/proofs/eo/cpc/theories/Arith.eo
+index 753477438..b1e5eab3b 100644
+--- a/proofs/eo/cpc/theories/Arith.eo
++++ b/proofs/eo/cpc/theories/Arith.eo
+@@ -111,7 +111,7 @@
+                      T T))
+ 
+ ; Unary negation, which is overloaded with binary subtraction. We distinguish
+-; these two operators in EunoiaC based on their arity when applied, and with
++; these two operators in Eunoia based on their arity when applied, and with
+ ; eo::as when they are used in higher-order contexts, e.g. as an argument to
+ ; the cong proof rule.
+ ; disclaimer: This function is overloaded in SMT-LIB.
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 9682040d4..529cac08c 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -137,6 +137,7 @@ bool AlfPrinter::isHandled(const Options& opts, const ProofNode* pfn)
+     case ProofRule::ARITH_SUM_UB:
+     case ProofRule::ARITH_MULT_POS:
+     case ProofRule::ARITH_MULT_NEG:
++    case ProofRule::ARITH_MULT_TANGENT:
+     case ProofRule::ARITH_TRICHOTOMY:
+     case ProofRule::ARITH_TRANS_EXP_NEG:
+     case ProofRule::ARITH_TRANS_EXP_POSITIVITY:
+diff --git a/src/theory/arith/nl/ext/proof_checker.cpp b/src/theory/arith/nl/ext/proof_checker.cpp
+index 714661a24..1e6ef0e74 100644
+--- a/src/theory/arith/nl/ext/proof_checker.cpp
++++ b/src/theory/arith/nl/ext/proof_checker.cpp
+@@ -126,14 +126,13 @@ Node ExtProofRuleChecker::checkInternal(ProofRule id,
+     Assert(args[1].getType().isRealOrInt());
+     Assert(args[2].getType().isRealOrInt());
+     Assert(args[3].getType().isRealOrInt());
+-    Assert(args[4].isConst() && args[4].getConst<Rational>().isIntegral());
++    Assert(args[4].isConst() && args[4].getType().isBoolean());
+     Node x = args[0];
+     Node y = args[1];
+     Node t = nm->mkNode(Kind::NONLINEAR_MULT, x, y);
+     Node a = args[2];
+     Node b = args[3];
+-    int sgn = args[4].getConst<Rational>().getNumerator().sgn();
+-    Assert(sgn == -1 || sgn == 1);
++    int sgn = args[4].getConst<bool>() ? 1 : -1;
+     Node tplane = nm->mkNode(Kind::SUB,
+                              nm->mkNode(Kind::ADD,
+                                         nm->mkNode(Kind::MULT, b, x),
+diff --git a/src/theory/arith/nl/ext/tangent_plane_check.cpp b/src/theory/arith/nl/ext/tangent_plane_check.cpp
+index 50ac87d73..1b5d1f8d6 100644
+--- a/src/theory/arith/nl/ext/tangent_plane_check.cpp
++++ b/src/theory/arith/nl/ext/tangent_plane_check.cpp
+@@ -156,7 +156,7 @@ void TangentPlaneCheck::check(bool asWaitingLemmas)
+                                 b,
+                                 a_v,
+                                 b_v,
+-                                nm->mkConstReal(Rational(d == 0 ? -1 : 1))});
++                                nm->mkConst(d == 1)});
+               }
+               d_data->d_im.addPendingLemma(tlem,
+                                            InferenceId::ARITH_NL_TANGENT_PLANE,
+-- 
+2.47.1
+

@@ -1,0 +1,94 @@
+From 37d94a45b1250bfc351345994acf29432f32a872 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 7 Jan 2025 13:48:28 -0600
+Subject: [PATCH 275/312] Add a 'safe' build profile that enables safe-options
+ by default (#11434)
+
+---
+ CMakeLists.txt                   | 11 ++++++++++-
+ configure.sh                     |  4 ++++
+ src/options/options_template.cpp |  3 +++
+ 3 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 34b817bce..bf7b17708 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -97,6 +97,7 @@ cvc5_option(ENABLE_COMP_INC_TRACK
+             "Enable optimizations for incremental SMT-COMP tracks")
+ cvc5_option(ENABLE_DEBUG_SYMBOLS  "Enable debug symbols")
+ cvc5_option(ENABLE_MUZZLE         "Suppress ALL non-result output")
++cvc5_option(ENABLE_SAFE_MODE      "Enable safe mode")
+ cvc5_option(ENABLE_STATISTICS     "Enable statistics")
+ cvc5_option(ENABLE_TRACING        "Enable tracing")
+ cvc5_option(ENABLE_UNIT_TESTING   "Enable unit testing")
+@@ -518,6 +519,10 @@ if(ENABLE_TRACING)
+   add_definitions(-DCVC5_TRACING)
+ endif()
+ 
++if(ENABLE_SAFE_MODE)
++  add_definitions(-DCVC5_SAFE_MODE)
++endif()
++
+ if(ENABLE_STATISTICS)
+   add_definitions(-DCVC5_STATISTICS_ON)
+ endif()
+@@ -745,7 +750,11 @@ message("")
+ if(ENABLE_COMP_INC_TRACK)
+   print_config("Build profile             " "${CVC5_BUILD_PROFILE_STRING} (incremental)")
+ else()
+-  print_config("Build profile             " "${CVC5_BUILD_PROFILE_STRING}")
++  if (ENABLE_SAFE_MODE)
++    print_config("Build profile             " "${CVC5_BUILD_PROFILE_STRING} (safe mode)")
++  else()
++    print_config("Build profile             " "${CVC5_BUILD_PROFILE_STRING}")
++  endif()
+ endif()
+ message("")
+ print_config("Assertions                " ${ENABLE_ASSERTIONS})
+diff --git a/configure.sh b/configure.sh
+index c7abf872b..918cee4cd 100755
+--- a/configure.sh
++++ b/configure.sh
+@@ -131,6 +131,7 @@ pyvenv=default
+ java_bindings=default
+ editline=default
+ build_shared=ON
++safe_mode=default
+ static_binary=default
+ statistics=default
+ tracing=default
+@@ -336,6 +337,7 @@ do
+          testing)         buildtype=Testing;;
+          competition)     buildtype=Competition;;
+          competition-inc) buildtype=Competition; comp_inc=ON;;
++         safe-mode)       buildtype=Production; safe_mode=ON;;
+          *)               die "invalid build type (try -h)";;
+        esac
+        ;;
+@@ -369,6 +371,8 @@ fi
+   && cmake_opts="$cmake_opts -DENABLE_ASSERTIONS=$assertions"
+ [ $comp_inc != default ] \
+   && cmake_opts="$cmake_opts -DENABLE_COMP_INC_TRACK=$comp_inc"
++[ $safe_mode != default ] \
++  && cmake_opts="$cmake_opts -DENABLE_SAFE_MODE=$safe_mode"
+ [ $coverage != default ] \
+   && cmake_opts="$cmake_opts -DENABLE_COVERAGE=$coverage"
+ [ $debug_symbols != default ] \
+diff --git a/src/options/options_template.cpp b/src/options/options_template.cpp
+index c2e30833a..4c0972a69 100644
+--- a/src/options/options_template.cpp
++++ b/src/options/options_template.cpp
+@@ -34,6 +34,9 @@ ${holder_ref_inits}$
+ // clang-format on
+         d_handler(std::make_unique<options::OptionsHandler>(this))
+   {
++#ifdef CVC5_SAFE_MODE
++    d_base->safeOptions = true;
++#endif
+   }
+ 
+   Options::~Options() {}
+-- 
+2.47.1
+

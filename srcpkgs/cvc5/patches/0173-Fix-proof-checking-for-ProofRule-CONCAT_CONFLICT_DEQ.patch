@@ -1,0 +1,45 @@
+From 870cef591f58c690b8603a24d898a0cf2fe55982 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 15 Nov 2024 08:29:06 -0600
+Subject: [PATCH 173/312] Fix proof checking for ProofRule::CONCAT_CONFLICT_DEQ
+ (#11370)
+
+The proof checker for this rule was not enabled, meaning we would never
+successfully use this rule in our internals.
+
+Furthermore, this enables Eunoia output for this rule, which already has
+a definition in the CPC signature.
+---
+ src/proof/alf/alf_printer.cpp        | 1 +
+ src/theory/strings/proof_checker.cpp | 3 ++-
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index d44ff8a51..240b881b2 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -159,6 +159,7 @@ bool AlfPrinter::isHandled(const Options& opts, const ProofNode* pfn)
+     case ProofRule::CONCAT_CSPLIT:
+     case ProofRule::CONCAT_CPROP:
+     case ProofRule::CONCAT_CONFLICT:
++    case ProofRule::CONCAT_CONFLICT_DEQ:
+     case ProofRule::CONCAT_SPLIT:
+     case ProofRule::CONCAT_LPROP:
+     case ProofRule::STRING_LENGTH_POS:
+diff --git a/src/theory/strings/proof_checker.cpp b/src/theory/strings/proof_checker.cpp
+index 6a47df986..5fb790524 100644
+--- a/src/theory/strings/proof_checker.cpp
++++ b/src/theory/strings/proof_checker.cpp
+@@ -72,7 +72,8 @@ Node StringProofRuleChecker::checkInternal(ProofRule id,
+   NodeManager* nm = nodeManager();
+   // core rules for word equations
+   if (id == ProofRule::CONCAT_EQ || id == ProofRule::CONCAT_UNIFY
+-      || id == ProofRule::CONCAT_CONFLICT || id == ProofRule::CONCAT_SPLIT
++      || id == ProofRule::CONCAT_CONFLICT
++      || id == ProofRule::CONCAT_CONFLICT_DEQ || id == ProofRule::CONCAT_SPLIT
+       || id == ProofRule::CONCAT_CSPLIT || id == ProofRule::CONCAT_LPROP
+       || id == ProofRule::CONCAT_CPROP)
+   {
+-- 
+2.47.1
+

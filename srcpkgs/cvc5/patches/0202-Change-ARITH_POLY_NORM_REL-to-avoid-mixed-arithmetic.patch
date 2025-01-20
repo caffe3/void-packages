@@ -1,0 +1,159 @@
+From c5cb5467112468daa93463e2e47d431bad580764 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 26 Nov 2024 15:38:48 -0600
+Subject: [PATCH 202/312] Change ARITH_POLY_NORM_REL to avoid mixed arithmetic
+ (#11387)
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ include/cvc5/cvc5_proof_rule.h                |  6 ++++-
+ proofs/eo/cpc/Cpc.eo                          |  4 ++--
+ proofs/eo/cpc/programs/PolyNorm.eo            | 22 ++++++++++++++++---
+ src/theory/arith/arith_poly_norm.cpp          |  9 ++++++++
+ src/theory/arith/proof_checker.cpp            |  2 ++
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../proofs/arith-poly-norm-rel-mixed.smt2     |  7 ++++++
+ 7 files changed, 45 insertions(+), 6 deletions(-)
+ create mode 100644 test/regress/cli/regress0/proofs/arith-poly-norm-rel-mixed.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 301620d1e..26fe15ef3 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -1917,9 +1917,13 @@ enum ENUM(ProofRule)
+    *            {(x_1 \diamond x_2) = (y_1 \diamond y_2)}
+    *
+    * where :math:`\diamond \in \{<, \leq, =, \geq, >\}` for arithmetic and
+-   * :math:`\diamond \in \{=\}` for bitvectors. :math:`c_x` and :math:c_y` are
++   * :math:`\diamond \in \{=\}` for bitvectors. :math:`c_x` and :math:`c_y` are
+    * scaling factors. For :math:`<, \leq, \geq, >`, the scaling factors have the
+    * same sign. For bitvectors, they are set to :math:`1`.
++   *
++   * If :math:`c_x` has type :math:`Real` and :math:`x_1, x_2` are of type
++   * :math:`Int`, then :math:`(x_1 - x_2)` is wrapped in an application of
++   * `to_real`, similarly for :math:`(y_1 - y_2)`.
+    * \endverbatim
+    */
+   EVALUE(ARITH_POLY_NORM_REL),
+diff --git a/proofs/eo/cpc/Cpc.eo b/proofs/eo/cpc/Cpc.eo
+index 4567a1ac5..bd6e9dc58 100644
+--- a/proofs/eo/cpc/Cpc.eo
++++ b/proofs/eo/cpc/Cpc.eo
+@@ -37,8 +37,8 @@
+ ; is prefixed by MACRO_ are not formalized in this signature and will not
+ ; appear in final proofs.
+ ;
+-; The cases of ProofRule::DSL_REWRITE are by default provided on demand in
+-; the preamble of the proof that is output by cvc5.
++; The cases of ProofRule::DSL_REWRITE are each formalized as individual
++; proof rules in ./rules/Rewrites.eo.
+ ;
+ ; The rules ProofRule::TRUST and ProofRule::TRUST_THEORY_REWRITE are output in
+ ; proofs using a catch-all rule trust defined at the end of this file. This
+diff --git a/proofs/eo/cpc/programs/PolyNorm.eo b/proofs/eo/cpc/programs/PolyNorm.eo
+index a4c0e693a..216a79430 100644
+--- a/proofs/eo/cpc/programs/PolyNorm.eo
++++ b/proofs/eo/cpc/programs/PolyNorm.eo
+@@ -239,6 +239,18 @@
+   )
+ )
+ 
++; program: $remove_to_real
++; args:
++; - t U: The term to process.
++; return: The result of removing an application of to_real from t, if applicable.
++(program $remove_to_real ((U Type) (x U) (T Type))
++  (U) T
++  (
++  (($remove_to_real (to_real x)) x)
++  (($remove_to_real x)           x)
++  )
++)
++
+ ; program: $mk_poly_norm_rel
+ ; args:
+ ; - t U: The left hand side of the premise of ProofRule::ARITH_POLY_NORM_REL.
+@@ -247,14 +259,18 @@
+ ; return: >
+ ;   The conclusion of ProofRule::ARITH_POLY_NORM_REL. This program does not
+ ;   evaluate if the input to this proof rule is invalid.
+-(program $mk_poly_norm_rel ((U Type) (r (-> U U Bool)) (x1 U) (x2 U) (y1 U) (y2 U) (cx U) (cy U) 
++(program $mk_poly_norm_rel ((U Type) (r (-> U U Bool)) (x U) (y U) (cx U) (cy U)
+                             (n Int) (c (BitVec n)) (nil (BitVec n) :list) 
+                             (xb1 (BitVec n)) (xb2 (BitVec n)) (yb1 (BitVec n)) (yb2 (BitVec n)))
+   (U U (-> U U Bool)) Bool
+   (
+-    (($mk_poly_norm_rel (* cx (- x1 x2)) (* cy (- y1 y2)) r) 
++    (($mk_poly_norm_rel (* cx x) (* cy y) r)
+         (eo::requires ($is_poly_norm_rel_consts (r cx cy)) true
+-          (= (r x1 x2) (r y1 y2))))
++        (eo::match ((x1 U) (x2 U) (y1 U) (y2 U))
++          (@pair ($remove_to_real x) ($remove_to_real y))
++          (
++          ((@pair (- x1 x2) (- y1 y2)) (= (r x1 x2) (r y1 y2)))))
++          ))
+     (($mk_poly_norm_rel (bvmul c (bvsub xb1 xb2) nil) (bvmul c (bvsub yb1 yb2) nil) =)
+         (eo::requires (eo::to_z c) 1
+         (eo::requires (eo::to_z nil) 1
+diff --git a/src/theory/arith/arith_poly_norm.cpp b/src/theory/arith/arith_poly_norm.cpp
+index 72f5a62d1..08ca6816f 100644
+--- a/src/theory/arith/arith_poly_norm.cpp
++++ b/src/theory/arith/arith_poly_norm.cpp
+@@ -562,6 +562,15 @@ Node PolyNorm::getArithPolyNormRelPremise(TNode a,
+     {
+       cx = nm->mkConstReal(rx);
+       cy = nm->mkConstReal(ry);
++      // add TO_REAL to avoid mixed arithmetic
++      if (x.getType().isInteger())
++      {
++        x = nm->mkNode(Kind::TO_REAL, x);
++      }
++      if (y.getType().isInteger())
++      {
++        y = nm->mkNode(Kind::TO_REAL, y);
++      }
+     }
+     lhs = nm->mkNode(Kind::MULT, cx, x);
+     rhs = nm->mkNode(Kind::MULT, cy, y);
+diff --git a/src/theory/arith/proof_checker.cpp b/src/theory/arith/proof_checker.cpp
+index d8c01af62..be8828627 100644
+--- a/src/theory/arith/proof_checker.cpp
++++ b/src/theory/arith/proof_checker.cpp
+@@ -432,7 +432,9 @@ Node ArithProofRuleChecker::checkInternal(ProofRule id,
+         return Node::null();
+       }
+       Node lr = l[1];
++      lr = lr.getKind() == Kind::TO_REAL ? lr[0] : lr;
+       Node rr = r[1];
++      rr = rr.getKind() == Kind::TO_REAL ? rr[0] : rr;
+       if ((lr.getKind() != Kind::SUB && lr.getKind() != Kind::BITVECTOR_SUB)
+           || (rr.getKind() != Kind::SUB && rr.getKind() != Kind::BITVECTOR_SUB))
+       {
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index efa06409e..e96497642 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1308,6 +1308,7 @@ set(regress_0_tests
+   regress0/proj-issue307-get-value-re.smt2
+   regress0/proj-issue645-abs-value-subs.smt2
+   regress0/proofs/alethe-res-need-or-step.smt2
++  regress0/proofs/arith-poly-norm-rel-mixed.smt2
+   regress0/proofs/cyclic-ucp.smt2
+   regress0/proofs/bvrewrite-concat-merge.smt2
+   regress0/proofs/bvrewrite-extract.smt2
+diff --git a/test/regress/cli/regress0/proofs/arith-poly-norm-rel-mixed.smt2 b/test/regress/cli/regress0/proofs/arith-poly-norm-rel-mixed.smt2
+new file mode 100644
+index 000000000..e64b6b0a2
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/arith-poly-norm-rel-mixed.smt2
+@@ -0,0 +1,7 @@
++; EXPECT: unsat
++(set-option :proof-elim-subtypes true)
++(set-logic NIRA)
++(declare-const x Int)
++(declare-const y Int)
++(assert (distinct (<= x y) (<= (to_real x) (to_real y))))
++(check-sat)
+-- 
+2.47.1
+

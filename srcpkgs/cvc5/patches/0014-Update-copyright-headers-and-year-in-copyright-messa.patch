@@ -1,0 +1,124 @@
+From a210be566053b1a25c87aa20a2396fcb7cafd084 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Mon, 12 Aug 2024 17:28:36 +0200
+Subject: [PATCH 014/312] Update copyright headers and year in copyright
+ message (#11142)
+
+---
+ contrib/get-authors               | 2 +-
+ docs/CMakeLists.txt               | 2 +-
+ docs/api/CMakeLists.txt           | 2 +-
+ docs/api/java/CMakeLists.txt      | 2 +-
+ docs/api/python/CMakeLists.txt    | 2 +-
+ src/base/configuration.cpp        | 2 +-
+ src/theory/conflict_processor.cpp | 2 +-
+ src/theory/conflict_processor.h   | 2 +-
+ 8 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/contrib/get-authors b/contrib/get-authors
+index 1b0771e08..ec8277972 100755
+--- a/contrib/get-authors
++++ b/contrib/get-authors
+@@ -1,7 +1,7 @@
+ #!/bin/sh
+ #
+ # get-authors
+-# Copyright (c) 2009-2021  The cvc5 Project
++# Copyright (c) 2009-2024  The cvc5 Project
+ #
+ # usage: get-authors [ files... ]
+ #
+diff --git a/docs/CMakeLists.txt b/docs/CMakeLists.txt
+index 172e2a9d3..e8bf2c46b 100644
+--- a/docs/CMakeLists.txt
++++ b/docs/CMakeLists.txt
+@@ -4,7 +4,7 @@
+ #
+ # This file is part of the cvc5 project.
+ #
+-# Copyright (c) 2009-2021 by the authors listed in the file AUTHORS
++# Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+ # in the top-level source directory and their institutional affiliations.
+ # All rights reserved.  See the file COPYING in the top-level source
+ # directory for licensing information.
+diff --git a/docs/api/CMakeLists.txt b/docs/api/CMakeLists.txt
+index a052e5456..6b4cf9690 100644
+--- a/docs/api/CMakeLists.txt
++++ b/docs/api/CMakeLists.txt
+@@ -4,7 +4,7 @@
+ #
+ # This file is part of the cvc5 project.
+ #
+-# Copyright (c) 2009-2021 by the authors listed in the file AUTHORS
++# Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+ # in the top-level source directory and their institutional affiliations.
+ # All rights reserved.  See the file COPYING in the top-level source
+ # directory for licensing information.
+diff --git a/docs/api/java/CMakeLists.txt b/docs/api/java/CMakeLists.txt
+index 4e02e8e30..e4e34a4aa 100644
+--- a/docs/api/java/CMakeLists.txt
++++ b/docs/api/java/CMakeLists.txt
+@@ -4,7 +4,7 @@
+ #
+ # This file is part of the cvc5 project.
+ #
+-# Copyright (c) 2009-2021 by the authors listed in the file AUTHORS
++# Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+ # in the top-level source directory and their institutional affiliations.
+ # All rights reserved.  See the file COPYING in the top-level source
+ # directory for licensing information.
+diff --git a/docs/api/python/CMakeLists.txt b/docs/api/python/CMakeLists.txt
+index 19e4b819c..393462a7f 100644
+--- a/docs/api/python/CMakeLists.txt
++++ b/docs/api/python/CMakeLists.txt
+@@ -4,7 +4,7 @@
+ #
+ # This file is part of the cvc5 project.
+ #
+-# Copyright (c) 2009-2021 by the authors listed in the file AUTHORS
++# Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+ # in the top-level source directory and their institutional affiliations.
+ # All rights reserved.  See the file COPYING in the top-level source
+ # directory for licensing information.
+diff --git a/src/base/configuration.cpp b/src/base/configuration.cpp
+index af9c4af57..771c5fb49 100644
+--- a/src/base/configuration.cpp
++++ b/src/base/configuration.cpp
+@@ -77,7 +77,7 @@ string Configuration::getVersionString() { return CVC5_FULL_VERSION; }
+ 
+ std::string Configuration::copyright() {
+   std::stringstream ss;
+-  ss << "Copyright (c) 2009-2023 by the authors and their institutional\n"
++  ss << "Copyright (c) 2009-2024 by the authors and their institutional\n"
+      << "affiliations listed at https://cvc5.github.io/people.html\n\n";
+ 
+   if (Configuration::licenseIsGpl()) {
+diff --git a/src/theory/conflict_processor.cpp b/src/theory/conflict_processor.cpp
+index cf91cc9ee..5c53d2da7 100644
+--- a/src/theory/conflict_processor.cpp
++++ b/src/theory/conflict_processor.cpp
+@@ -4,7 +4,7 @@
+  *
+  * This file is part of the cvc5 project.
+  *
+- * Copyright (c) 2009-2023 by the authors listed in the file AUTHORS
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+  * in the top-level source directory and their institutional affiliations.
+  * All rights reserved.  See the file COPYING in the top-level source
+  * directory for licensing information.
+diff --git a/src/theory/conflict_processor.h b/src/theory/conflict_processor.h
+index 4cc1fc910..22d4f9dc7 100644
+--- a/src/theory/conflict_processor.h
++++ b/src/theory/conflict_processor.h
+@@ -4,7 +4,7 @@
+  *
+  * This file is part of the cvc5 project.
+  *
+- * Copyright (c) 2009-2023 by the authors listed in the file AUTHORS
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+  * in the top-level source directory and their institutional affiliations.
+  * All rights reserved.  See the file COPYING in the top-level source
+  * directory for licensing information.
+-- 
+2.47.1
+

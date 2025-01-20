@@ -1,0 +1,270 @@
+From e1d611385ef02009c037528fbbf8cd48c2cf7b87 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 10 Dec 2024 08:20:37 -0600
+Subject: [PATCH 229/312] Fix issues with alpha equivalence with quantifiers
+ with patterns (#11418)
+
+Currently the proof support in the alpha equivalence quantifiers module
+was not handling this case properly.
+
+A regression is added for the issue.
+
+Also fixes a potential issue in the proof generator for encode
+transformation (the utility that removes patterns).
+---
+ src/expr/term_context.cpp                     | 13 +++++++
+ src/expr/term_context.h                       | 16 ++++++++
+ src/rewriter/rewrite_db_term_process.cpp      |  3 +-
+ src/rewriter/rewrite_db_term_process.h        |  3 ++
+ src/theory/builtin/proof_checker.cpp          | 11 ++++--
+ src/theory/builtin/proof_checker.h            |  7 ++++
+ src/theory/quantifiers/alpha_equivalence.cpp  | 38 +++++++++++++++++--
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../regress0/proofs/dd_alpha_eq_qpattern.smt2 |  9 +++++
+ 9 files changed, 94 insertions(+), 7 deletions(-)
+ create mode 100644 test/regress/cli/regress0/proofs/dd_alpha_eq_qpattern.smt2
+
+diff --git a/src/expr/term_context.cpp b/src/expr/term_context.cpp
+index d4687f088..096c4848f 100644
+--- a/src/expr/term_context.cpp
++++ b/src/expr/term_context.cpp
+@@ -161,4 +161,17 @@ uint32_t BoolSkeletonTermContext::computeValue(TNode t,
+   return 1;
+ }
+ 
++uint32_t WithinKindTermContext::initialValue() const { return 0; }
++
++uint32_t WithinKindTermContext::computeValue(TNode t,
++                                             uint32_t tval,
++                                             size_t index) const
++{
++  if (tval == 0 && t.getKind() == d_kind)
++  {
++    return 1;
++  }
++  return 0;
++}
++
+ }  // namespace cvc5::internal
+diff --git a/src/expr/term_context.h b/src/expr/term_context.h
+index a21095594..871f3fdfc 100644
+--- a/src/expr/term_context.h
++++ b/src/expr/term_context.h
+@@ -196,6 +196,22 @@ class BoolSkeletonTermContext : public TermContext
+   uint32_t computeValue(TNode t, uint32_t tval, size_t index) const override;
+ };
+ 
++/**
++ * Returns 1 if we are in a term of Kind k, 0 otherwise.
++ */
++class WithinKindTermContext : public TermContext
++{
++ public:
++  WithinKindTermContext(Kind k) : d_kind(k) {}
++  /** The initial value: not within kind. */
++  uint32_t initialValue() const override;
++  /** Compute the value of the index^th child of t whose hash is tval */
++  uint32_t computeValue(TNode t, uint32_t tval, size_t index) const override;
++
++ protected:
++  /** The kind */
++  Kind d_kind;
++};
+ }  // namespace cvc5::internal
+ 
+ #endif /* CVC5__EXPR__TERM_CONVERSION_PROOF_GENERATOR_H */
+diff --git a/src/rewriter/rewrite_db_term_process.cpp b/src/rewriter/rewrite_db_term_process.cpp
+index 4a6abdd53..4a5a2be2b 100644
+--- a/src/rewriter/rewrite_db_term_process.cpp
++++ b/src/rewriter/rewrite_db_term_process.cpp
+@@ -199,13 +199,14 @@ void RewriteDbNodeConverter::recordProofStep(const Node& n,
+ 
+ ProofRewriteDbNodeConverter::ProofRewriteDbNodeConverter(Env& env)
+     : EnvObj(env),
++      d_wktc(Kind::INST_PATTERN_LIST),
+       // must rewrite within operators
+       d_tpg(env,
+             nullptr,
+             TConvPolicy::FIXPOINT,
+             TConvCachePolicy::NEVER,
+             "ProofRewriteDb",
+-            nullptr,
++            &d_wktc,
+             true),
+       d_proof(env)
+ {
+diff --git a/src/rewriter/rewrite_db_term_process.h b/src/rewriter/rewrite_db_term_process.h
+index a9368e6bd..ad4a5547c 100644
+--- a/src/rewriter/rewrite_db_term_process.h
++++ b/src/rewriter/rewrite_db_term_process.h
+@@ -22,6 +22,7 @@
+ 
+ #include "expr/node.h"
+ #include "expr/node_converter.h"
++#include "expr/term_context.h"
+ #include "proof/conv_proof_generator.h"
+ #include "proof/proof.h"
+ 
+@@ -91,6 +92,8 @@ class ProofRewriteDbNodeConverter : protected EnvObj
+   std::shared_ptr<ProofNode> convert(const Node& n);
+ 
+  private:
++  /** Term context matching the policy for the converter above */
++  WithinKindTermContext d_wktc;
+   /** A pointer to a TConvProofGenerator, if proof producing */
+   TConvProofGenerator d_tpg;
+   /** A CDProof */
+diff --git a/src/theory/builtin/proof_checker.cpp b/src/theory/builtin/proof_checker.cpp
+index 337a8a81a..d9c790a02 100644
+--- a/src/theory/builtin/proof_checker.cpp
++++ b/src/theory/builtin/proof_checker.cpp
+@@ -420,9 +420,7 @@ Node BuiltinProofRuleChecker::checkInternal(ProofRule id,
+   {
+     Assert(children.empty());
+     Assert(args.size() == 1);
+-    rewriter::RewriteDbNodeConverter rconv(nodeManager());
+-    // run a single (small) step conversion
+-    Node ac = rconv.postConvert(args[0]);
++    Node ac = getEncodeEqIntro(nodeManager(), args[0]);
+     return args[0].eqNode(ac);
+   }
+   else if (id == ProofRule::DSL_REWRITE)
+@@ -481,6 +479,13 @@ Node BuiltinProofRuleChecker::checkInternal(ProofRule id,
+   return Node::null();
+ }
+ 
++Node BuiltinProofRuleChecker::getEncodeEqIntro(NodeManager* nm, const Node& n)
++{
++  rewriter::RewriteDbNodeConverter rconv(nm);
++  // run a single (small) step conversion
++  return rconv.postConvert(n);
++}
++
+ bool BuiltinProofRuleChecker::getTheoryId(TNode n, TheoryId& tid)
+ {
+   uint32_t i;
+diff --git a/src/theory/builtin/proof_checker.h b/src/theory/builtin/proof_checker.h
+index f18f5b27e..3df4546fc 100644
+--- a/src/theory/builtin/proof_checker.h
++++ b/src/theory/builtin/proof_checker.h
+@@ -107,6 +107,13 @@ class BuiltinProofRuleChecker : public ProofRuleChecker
+   static bool getTheoryId(TNode n, TheoryId& tid);
+   /** Make a TheoryId into a node */
+   static Node mkTheoryIdNode(TheoryId tid);
++  /**
++   * @param nm The node manager.
++   * @param n The term to rewrite via ENCODE_EQ_INTRO.
++   * @return The right hand side of the equality concluded by ENCODE_EQ_INTRO
++   * for n.
++   */
++  static Node getEncodeEqIntro(NodeManager* nm, const Node& n);
+ 
+   /** Register all rules owned by this rule checker into pc. */
+   void registerTo(ProofChecker* pc) override;
+diff --git a/src/theory/quantifiers/alpha_equivalence.cpp b/src/theory/quantifiers/alpha_equivalence.cpp
+index a510469ac..23a165554 100644
+--- a/src/theory/quantifiers/alpha_equivalence.cpp
++++ b/src/theory/quantifiers/alpha_equivalence.cpp
+@@ -19,6 +19,7 @@
+ #include "proof/method_id.h"
+ #include "proof/proof.h"
+ #include "proof/proof_node.h"
++#include "theory/builtin/proof_checker.h"
+ 
+ using namespace cvc5::internal::kind;
+ 
+@@ -208,6 +209,38 @@ TrustNode AlphaEquivalence::reduceQuantifier(Node q)
+   // if successfully computed the substitution above
+   if (isProofEnabled() && !vars.empty())
+   {
++    NodeManager* nm = nodeManager();
++    Node proveLem = lem;
++    CDProof cdp(d_env);
++    // remove patterns from both sides
++    if (q.getNumChildren() == 3)
++    {
++      Node qo = q;
++      q = builtin::BuiltinProofRuleChecker::getEncodeEqIntro(nm, q);
++      if (q != qo)
++      {
++        Node eqq = qo.eqNode(q);
++        cdp.addStep(eqq, ProofRule::ENCODE_EQ_INTRO, {}, {qo});
++        Node eqqs = q.eqNode(qo);
++        cdp.addStep(eqqs, ProofRule::SYMM, {eqq}, {});
++        Node eqq2 = ret.eqNode(q);
++        cdp.addStep(proveLem, ProofRule::TRANS, {eqq2, eqqs}, {});
++        proveLem = eqq2;
++      }
++    }
++    if (ret.getNumChildren() == 3)
++    {
++      Node reto = ret;
++      ret = builtin::BuiltinProofRuleChecker::getEncodeEqIntro(nm, ret);
++      if (ret != reto)
++      {
++        Node eqq = reto.eqNode(ret);
++        cdp.addStep(eqq, ProofRule::ENCODE_EQ_INTRO, {}, {reto});
++        Node eqq2 = ret.eqNode(q);
++        cdp.addStep(proveLem, ProofRule::TRANS, {eqq, eqq2}, {});
++        proveLem = eqq2;
++      }
++    }
+     if (Configuration::isAssertionBuild())
+     {
+       // all variables should be unique since we are processing rewritten
+@@ -217,7 +250,6 @@ TrustNode AlphaEquivalence::reduceQuantifier(Node q)
+       std::unordered_set<Node> sset(subs.begin(), subs.end());
+       Assert(sset.size() == subs.size());
+     }
+-    CDProof cdp(d_env);
+     std::vector<Node> transEq;
+     // if there is variable shadowing, we do an intermediate step with fresh
+     // variables
+@@ -252,7 +284,7 @@ TrustNode AlphaEquivalence::reduceQuantifier(Node q)
+       {
+         children.push_back(sret[2]);
+       }
+-      Node sreorder = nodeManager()->mkNode(Kind::FORALL, children);
++      Node sreorder = nm->mkNode(Kind::FORALL, children);
+       Node eqqr = sret.eqNode(sreorder);
+       if (cdp.addStep(eqqr, ProofRule::QUANT_VAR_REORDERING, {}, {eqqr}))
+       {
+@@ -292,7 +324,7 @@ TrustNode AlphaEquivalence::reduceQuantifier(Node q)
+       if (transEq.size() > 1)
+       {
+         // TRANS of ALPHA_EQ and MACRO_SR_PRED_INTRO steps from above
+-        cdp.addStep(lem, ProofRule::TRANS, transEq, {});
++        cdp.addStep(proveLem, ProofRule::TRANS, transEq, {});
+       }
+       std::shared_ptr<ProofNode> pn = cdp.getProofFor(lem);
+       Trace("alpha-eq") << "Proof is " << *pn.get() << std::endl;
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index a06d3ab45..63481e671 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1318,6 +1318,7 @@ set(regress_0_tests
+   regress0/proofs/bvrewrite-ite.smt2
+   regress0/proofs/bvrewrite-shlbyconst.smt2
+   regress0/proofs/dd_ada_open.smt2
++  regress0/proofs/dd_alpha_eq_qpattern.smt2
+   regress0/proofs/dd_bug787_beta_reduce.smt2
+   regress0/proofs/dd_fv-bvl.smt2
+   regress0/proofs/dd_ic_pf_764.smt2
+diff --git a/test/regress/cli/regress0/proofs/dd_alpha_eq_qpattern.smt2 b/test/regress/cli/regress0/proofs/dd_alpha_eq_qpattern.smt2
+new file mode 100644
+index 000000000..40ce648b7
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/dd_alpha_eq_qpattern.smt2
+@@ -0,0 +1,9 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-sort g 0)
++(declare-sort c 0)
++(declare-datatypes ((u 0)) (((uc))))
++(declare-fun i (u (Array Int Bool) (Array Int g) (Array Int c)) Bool)
++(assert (forall ((a u)) (forall ((s (Array Int Bool))) (forall ((t (Array Int g))) (forall ((st (Array Int c))) (! (distinct true (i a s t st)) :pattern ((i uc s t st))))))))
++(assert (exists ((u u) (o (Array Int c)) (t (Array Int Bool)) (e (Array Int g))) (= true (i uc t e o))))
++(check-sat)
+-- 
+2.47.1
+

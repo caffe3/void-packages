@@ -1,0 +1,1771 @@
+From bb3cb33324bca42769bb81eceda594be9b00e60d Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 3 Dec 2024 17:45:25 -0600
+Subject: [PATCH 212/312] Make several methods in NodeManager static (#11403)
+
+This makes some of the methods in NodeManager that have explicit access
+to a Node or TypeNode static.
+
+This has two advantages:
+(1) we don't need explict access to a `NodeManager*` where these methods
+are called,
+(2) for methods with a single argument, we guarantee the correct
+NodeManager is used automatically, e.g. `NodeManager::mkBoundVar` always
+uses the node manager associated with the given type.
+
+This adds `TypeNode::getNodeManager` as a *protected* method, which can
+be accessed by `NodeManager` already since it is a friend.
+
+It cleans up some of the unecessary calls to `NodeManager::currentNM()`
+at a few call sites.
+---
+ src/api/cpp/cvc5.cpp                          |  4 +-
+ src/expr/dtype.cpp                            |  3 +-
+ src/expr/dtype_cons.cpp                       |  3 +-
+ src/expr/free_var_cache.cpp                   |  3 +-
+ src/expr/node_manager_template.cpp            | 42 ++++++++--------
+ src/expr/node_manager_template.h              | 50 +++++++++++--------
+ src/expr/sygus_grammar.cpp                    |  5 +-
+ src/expr/term_canonize.cpp                    |  3 +-
+ src/expr/type_node.h                          |  5 ++
+ src/preprocessing/passes/fun_def_fmf.cpp      |  4 +-
+ src/preprocessing/passes/global_negate.cpp    |  2 +-
+ src/preprocessing/passes/ho_elim.cpp          | 32 ++++++------
+ src/preprocessing/passes/sygus_inference.cpp  |  4 +-
+ src/preprocessing/passes/synth_rew_rules.cpp  |  8 +--
+ src/printer/let_binding.cpp                   |  2 +-
+ src/printer/smt2/smt2_printer.cpp             |  2 +-
+ src/proof/alethe/alethe_let_binding.cpp       |  9 ++--
+ src/proof/alethe/alethe_node_converter.cpp    |  4 +-
+ src/proof/alethe/alethe_post_processor.cpp    | 30 ++++++-----
+ src/proof/alf/alf_node_converter.cpp          |  4 +-
+ src/proof/lfsc/lfsc_node_converter.cpp        |  6 +--
+ src/proof/lfsc/lfsc_post_processor.cpp        |  2 +-
+ src/proof/lfsc/lfsc_printer.cpp               |  5 +-
+ src/proof/proof_node_to_sexpr.cpp             | 20 ++++----
+ src/rewriter/mkrewrites.py                    |  2 +-
+ src/smt/solver_engine.cpp                     |  6 +--
+ src/smt/sygus_solver.cpp                      |  4 +-
+ src/theory/arith/nl/poly_conversion.cpp       |  4 +-
+ .../arrays/theory_arrays_type_rules.cpp       |  3 +-
+ src/theory/bags/bag_reduction.cpp             |  2 +-
+ src/theory/bags/theory_bags.cpp               |  2 +-
+ src/theory/bv/int_blaster.cpp                 |  5 +-
+ src/theory/datatypes/sygus_datatype_utils.cpp |  6 +--
+ src/theory/datatypes/theory_datatypes.cpp     |  4 +-
+ src/theory/quantifiers/alpha_equivalence.cpp  |  3 +-
+ .../candidate_rewrite_database.cpp            |  3 +-
+ .../quantifiers/fmf/first_order_model_fmc.cpp |  2 +-
+ src/theory/quantifiers/inst_strategy_mbqi.cpp |  4 +-
+ src/theory/quantifiers/mbqi_fast_sygus.cpp    |  2 +-
+ .../quantifiers/quantifiers_attributes.cpp    |  4 +-
+ src/theory/quantifiers/quantifiers_macros.cpp |  2 +-
+ .../quantifiers/quantifiers_rewriter.cpp      |  2 +-
+ .../quantifiers/single_inv_partition.cpp      |  2 +-
+ src/theory/quantifiers/sygus/cegis.cpp        |  2 +-
+ src/theory/quantifiers/sygus/cegis_unif.cpp   |  3 +-
+ .../quantifiers/sygus/embedding_converter.cpp |  8 ++-
+ .../sygus/print_sygus_to_builtin.cpp          |  3 +-
+ src/theory/quantifiers/sygus/sygus_abduct.cpp |  6 +--
+ .../quantifiers/sygus/sygus_grammar_cons.cpp  | 12 ++---
+ .../quantifiers/sygus/sygus_interpol.cpp      |  6 +--
+ .../sygus/sygus_random_enumerator.cpp         |  4 +-
+ .../quantifiers/sygus/sygus_reconstruct.cpp   |  3 +-
+ .../quantifiers/sygus/sygus_unif_strat.cpp    |  2 +-
+ src/theory/quantifiers/sygus/sygus_utils.cpp  |  8 +--
+ .../quantifiers/sygus/synth_conjecture.cpp    |  2 +-
+ src/theory/sets/set_reduction.cpp             |  2 +-
+ src/theory/sets/theory_sets_private.cpp       |  6 +--
+ src/theory/smt_engine_subsolver.cpp           |  3 +-
+ src/theory/sort_inference.cpp                 |  6 +--
+ src/theory/strings/arith_entail.cpp           |  2 +-
+ src/theory/theory_model.cpp                   |  5 +-
+ src/theory/uf/ho_extension.cpp                |  2 +-
+ src/theory/uf/theory_uf_type_rules.cpp        |  2 +-
+ 63 files changed, 205 insertions(+), 196 deletions(-)
+
+diff --git a/src/api/cpp/cvc5.cpp b/src/api/cpp/cvc5.cpp
+index 0d82acbf8..fa3ae14c9 100644
+--- a/src/api/cpp/cvc5.cpp
++++ b/src/api/cpp/cvc5.cpp
+@@ -5425,8 +5425,8 @@ bool TermManager::isValidInteger(const std::string& s) const
+ internal::Node TermManager::mkVarHelper(
+     const internal::TypeNode& type, const std::optional<std::string>& symbol)
+ {
+-  internal::Node res =
+-      symbol ? d_nm->mkBoundVar(*symbol, type) : d_nm->mkBoundVar(type);
++  internal::Node res = symbol ? internal::NodeManager::mkBoundVar(*symbol, type)
++                              : internal::NodeManager::mkBoundVar(type);
+   (void)res.getType(true); /* kick off type checking */
+   increment_vars_consts_stats(type, true);
+   return res;
+diff --git a/src/expr/dtype.cpp b/src/expr/dtype.cpp
+index d5db2ee12..446c7b151 100644
+--- a/src/expr/dtype.cpp
++++ b/src/expr/dtype.cpp
+@@ -332,8 +332,7 @@ void DType::setSygus(TypeNode st, Node bvl, bool allowConst, bool allowAll)
+     if (!hasConstant)
+     {
+       // add an arbitrary one
+-      NodeManager* nm = NodeManager::currentNM();
+-      Node op = nm->mkGroundTerm(st);
++      Node op = NodeManager::mkGroundTerm(st);
+       // use same naming convention as SygusDatatype
+       std::stringstream ss;
+       ss << getName() << "_" << getNumConstructors() << "_" << op;
+diff --git a/src/expr/dtype_cons.cpp b/src/expr/dtype_cons.cpp
+index 685966e00..dafc5e41f 100644
+--- a/src/expr/dtype_cons.cpp
++++ b/src/expr/dtype_cons.cpp
+@@ -451,7 +451,8 @@ Node DTypeConstructor::computeGroundTerm(TypeNode t,
+     else
+     {
+       // call mkGroundValue or mkGroundTerm based on isValue
+-      arg = isValue ? nm->mkGroundValue(selType) : nm->mkGroundTerm(selType);
++      arg = isValue ? NodeManager::mkGroundValue(selType)
++                    : NodeManager::mkGroundTerm(selType);
+     }
+     if (arg.isNull())
+     {
+diff --git a/src/expr/free_var_cache.cpp b/src/expr/free_var_cache.cpp
+index 62edb15c9..c65a4ae24 100644
+--- a/src/expr/free_var_cache.cpp
++++ b/src/expr/free_var_cache.cpp
+@@ -20,10 +20,9 @@ namespace cvc5::internal {
+ 
+ TNode FreeVarCache::getFreeVar(const TypeNode& tn, size_t i)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   while (i >= d_fv[tn].size())
+   {
+-    Node v = nm->mkBoundVar(tn);
++    Node v = NodeManager::mkBoundVar(tn);
+     d_allVars.push_back(v);
+     // store its id
+     d_fvId[v] = d_fv[tn].size();
+diff --git a/src/expr/node_manager_template.cpp b/src/expr/node_manager_template.cpp
+index 1eb33da69..0df590ad2 100644
+--- a/src/expr/node_manager_template.cpp
++++ b/src/expr/node_manager_template.cpp
+@@ -513,8 +513,9 @@ TypeNode NodeManager::getType(TNode n, bool check, std::ostream* errOut)
+   TypeNode typeNode;
+   TypeAttr ta;
+   TypeCheckedAttr tca;
+-  bool hasType = getAttribute(n, ta, typeNode);
+-  bool needsCheck = check && !getAttribute(n, tca);
++  NodeManager* nm = n.getNodeManager();
++  bool hasType = nm->getAttribute(n, ta, typeNode);
++  bool needsCheck = check && !nm->getAttribute(n, tca);
+   if (hasType && !needsCheck)
+   {
+     return typeNode;
+@@ -529,7 +530,8 @@ TypeNode NodeManager::getType(TNode n, bool check, std::ostream* errOut)
+     cur = visit.back();
+     visit.pop_back();
+     // already computed (and checked, if necessary) this type
+-    if (!getAttribute(cur, ta).isNull() && (!check || getAttribute(cur, tca)))
++    if (!nm->getAttribute(cur, ta).isNull()
++        && (!check || nm->getAttribute(cur, tca)))
+     {
+       continue;
+     }
+@@ -542,11 +544,11 @@ TypeNode NodeManager::getType(TNode n, bool check, std::ostream* errOut)
+       // check the children types.
+       if (!check)
+       {
+-        typeNode = TypeChecker::preComputeType(this, cur);
++        typeNode = TypeChecker::preComputeType(nm, cur);
+         if (!typeNode.isNull())
+         {
+           visited[cur] = true;
+-          setAttribute(cur, ta, typeNode);
++          nm->setAttribute(cur, ta, typeNode);
+           // note that the result of preComputeType is not cached
+           continue;
+         }
+@@ -560,21 +562,21 @@ TypeNode NodeManager::getType(TNode n, bool check, std::ostream* errOut)
+     {
+       visited[cur] = true;
+       // children now have types assigned
+-      typeNode = TypeChecker::computeType(this, cur, check, errOut);
++      typeNode = TypeChecker::computeType(nm, cur, check, errOut);
+       // if null, immediately return without further caching
+       if (typeNode.isNull())
+       {
+         return typeNode;
+       }
+-      setAttribute(cur, ta, typeNode);
+-      setAttribute(cur, tca, check || getAttribute(cur, tca));
++      nm->setAttribute(cur, ta, typeNode);
++      nm->setAttribute(cur, tca, check || nm->getAttribute(cur, tca));
+     }
+   } while (!visit.empty());
+ 
+   /* The type should be have been computed and stored. */
+-  Assert(hasAttribute(n, ta));
++  Assert(n.hasAttribute(ta));
+   /* The check should have happened, if we asked for it. */
+-  Assert(!check || getAttribute(n, tca));
++  Assert(!check || n.getAttribute(tca));
+   // should be the last type computed in the above loop
+   return typeNode;
+ }
+@@ -1117,7 +1119,7 @@ Node NodeManager::mkVar(const std::string& name,
+ Node NodeManager::mkBoundVar(const std::string& name, const TypeNode& type)
+ {
+   Node n = mkBoundVar(type);
+-  setAttribute(n, expr::VarNameAttr(), name);
++  n.setAttribute(expr::VarNameAttr(), name);
+   return n;
+ }
+ 
+@@ -1233,23 +1235,23 @@ Node NodeManager::mkChain(Kind kind, const std::vector<Node>& children)
+ 
+ Node NodeManager::mkVar(const TypeNode& type)
+ {
+-  Node n = NodeBuilder(this, Kind::VARIABLE);
+-  setAttribute(n, TypeAttr(), type);
+-  setAttribute(n, TypeCheckedAttr(), true);
++  Node n = NodeBuilder(type.getNodeManager(), Kind::VARIABLE);
++  n.setAttribute(TypeAttr(), type);
++  n.setAttribute(TypeCheckedAttr(), true);
+   return n;
+ }
+ 
+ Node NodeManager::mkBoundVar(const TypeNode& type)
+ {
+-  Node n = NodeBuilder(this, Kind::BOUND_VARIABLE);
+-  setAttribute(n, TypeAttr(), type);
+-  setAttribute(n, TypeCheckedAttr(), true);
++  Node n = NodeBuilder(type.getNodeManager(), Kind::BOUND_VARIABLE);
++  n.setAttribute(TypeAttr(), type);
++  n.setAttribute(TypeCheckedAttr(), true);
+   return n;
+ }
+ 
+ Node NodeManager::mkInstConstant(const TypeNode& type)
+ {
+-  Node n = NodeBuilder(this, Kind::INST_CONSTANT);
++  Node n = NodeBuilder(type.getNodeManager(), Kind::INST_CONSTANT);
+   n.setAttribute(TypeAttr(), type);
+   n.setAttribute(TypeCheckedAttr(), true);
+   return n;
+@@ -1257,10 +1259,10 @@ Node NodeManager::mkInstConstant(const TypeNode& type)
+ 
+ Node NodeManager::mkRawSymbol(const std::string& name, const TypeNode& type)
+ {
+-  Node n = NodeBuilder(this, Kind::RAW_SYMBOL);
++  Node n = NodeBuilder(type.getNodeManager(), Kind::RAW_SYMBOL);
+   n.setAttribute(TypeAttr(), type);
+   n.setAttribute(TypeCheckedAttr(), true);
+-  setAttribute(n, expr::VarNameAttr(), name);
++  n.setAttribute(expr::VarNameAttr(), name);
+   return n;
+ }
+ 
+diff --git a/src/expr/node_manager_template.h b/src/expr/node_manager_template.h
+index 96879c28b..27a42b2e6 100644
+--- a/src/expr/node_manager_template.h
++++ b/src/expr/node_manager_template.h
+@@ -339,7 +339,9 @@ class NodeManager
+    * (default: false)
+    * @param errOut An (optional) output stream to print type checking errors
+    */
+-  TypeNode getType(TNode n, bool check = false, std::ostream* errOut = nullptr);
++  static TypeNode getType(TNode n,
++                          bool check = false,
++                          std::ostream* errOut = nullptr);
+ 
+   /** Get the (singleton) type for Booleans. */
+   TypeNode booleanType();
+@@ -507,13 +509,13 @@ class NodeManager
+   Node mkNode(Kind kind);
+ 
+   /** Create a node with one child. */
+-  Node mkNode(Kind kind, TNode child1);
++  static Node mkNode(Kind kind, TNode child1);
+ 
+   /** Create a node with two children. */
+-  Node mkNode(Kind kind, TNode child1, TNode child2);
++  static Node mkNode(Kind kind, TNode child1, TNode child2);
+ 
+   /** Create a node with three children. */
+-  Node mkNode(Kind kind, TNode child1, TNode child2, TNode child3);
++  static Node mkNode(Kind kind, TNode child1, TNode child2, TNode child3);
+ 
+   /** Create a node with an arbitrary number of children. */
+   template <bool ref_count>
+@@ -575,9 +577,17 @@ class NodeManager
+    */
+   Node mkNode(TNode opNode, std::initializer_list<TNode> children);
+ 
+-  Node mkBoundVar(const std::string& name, const TypeNode& type);
+-
+-  Node mkBoundVar(const TypeNode& type);
++  /**
++   * @param name The name.
++   * @param tn The type.
++   * @return a bound variable of that type and name.
++   */
++  static Node mkBoundVar(const std::string& name, const TypeNode& type);
++  /**
++   * @param tn The type.
++   * @return a bound variable of that type and a default name.
++   */
++  static Node mkBoundVar(const TypeNode& type);
+ 
+   /**
+    * Construct and return a ground term of a given type. If the type is not
+@@ -586,7 +596,7 @@ class NodeManager
+    * @param tn The type
+    * @return a ground term of the type
+    */
+-  Node mkGroundTerm(const TypeNode& tn);
++  static Node mkGroundTerm(const TypeNode& tn);
+ 
+   /**
+    * Construct and return a ground value of a given type. If the type is not
+@@ -595,7 +605,7 @@ class NodeManager
+    * @param tn The type
+    * @return a ground value of the type
+    */
+-  Node mkGroundValue(const TypeNode& tn);
++  static Node mkGroundValue(const TypeNode& tn);
+ 
+   /**
+    * Create an Node by applying an associative operator to the children.
+@@ -634,10 +644,10 @@ class NodeManager
+   Node mkChain(Kind kind, const std::vector<Node>& children);
+ 
+   /** Create a instantiation constant with the given type. */
+-  Node mkInstConstant(const TypeNode& type);
++  static Node mkInstConstant(const TypeNode& type);
+ 
+   /** Create a raw symbol with the given type. */
+-  Node mkRawSymbol(const std::string& name, const TypeNode& type);
++  static Node mkRawSymbol(const std::string& name, const TypeNode& type);
+ 
+   /** make unique (per Type,Kind) variable. */
+   Node mkNullaryOperator(const TypeNode& type, Kind k);
+@@ -976,7 +986,7 @@ class NodeManager
+   Node mkVar(const std::string& name, const TypeNode& type, bool fresh = true);
+ 
+   /** Create a variable with the given type. */
+-  Node mkVar(const TypeNode& type);
++  static Node mkVar(const TypeNode& type);
+ 
+   /** Make a new sort with the given name and arity. */
+   TypeNode mkSortConstructorInternal(const std::string& name, size_t arity);
+@@ -1105,20 +1115,20 @@ inline Node NodeManager::mkNode(Kind kind)
+ }
+ 
+ inline Node NodeManager::mkNode(Kind kind, TNode child1) {
+-  NodeBuilder nb(this, kind);
++  NodeBuilder nb(child1.getNodeManager(), kind);
+   nb << child1;
+   return nb.constructNode();
+ }
+ 
+ inline Node NodeManager::mkNode(Kind kind, TNode child1, TNode child2) {
+-  NodeBuilder nb(this, kind);
++  NodeBuilder nb(child1.getNodeManager(), kind);
+   nb << child1 << child2;
+   return nb.constructNode();
+ }
+ 
+ inline Node NodeManager::mkNode(Kind kind, TNode child1, TNode child2,
+                                 TNode child3) {
+-  NodeBuilder nb(this, kind);
++  NodeBuilder nb(child1.getNodeManager(), kind);
+   nb << child1 << child2 << child3;
+   return nb.constructNode();
+ }
+@@ -1163,7 +1173,7 @@ Node NodeManager::mkOr(const std::vector<NodeTemplate<ref_count> >& children)
+ 
+ // for operators
+ inline Node NodeManager::mkNode(TNode opNode) {
+-  NodeBuilder nb(this, operatorToKind(opNode));
++  NodeBuilder nb(opNode.getNodeManager(), operatorToKind(opNode));
+   if (opNode.getKind() != Kind::BUILTIN)
+   {
+     nb << opNode;
+@@ -1172,7 +1182,7 @@ inline Node NodeManager::mkNode(TNode opNode) {
+ }
+ 
+ inline Node NodeManager::mkNode(TNode opNode, TNode child1) {
+-  NodeBuilder nb(this, operatorToKind(opNode));
++  NodeBuilder nb(opNode.getNodeManager(), operatorToKind(opNode));
+   if (opNode.getKind() != Kind::BUILTIN)
+   {
+     nb << opNode;
+@@ -1182,7 +1192,7 @@ inline Node NodeManager::mkNode(TNode opNode, TNode child1) {
+ }
+ 
+ inline Node NodeManager::mkNode(TNode opNode, TNode child1, TNode child2) {
+-  NodeBuilder nb(this, operatorToKind(opNode));
++  NodeBuilder nb(opNode.getNodeManager(), operatorToKind(opNode));
+   if (opNode.getKind() != Kind::BUILTIN)
+   {
+     nb << opNode;
+@@ -1193,7 +1203,7 @@ inline Node NodeManager::mkNode(TNode opNode, TNode child1, TNode child2) {
+ 
+ inline Node NodeManager::mkNode(TNode opNode, TNode child1, TNode child2,
+                                 TNode child3) {
+-  NodeBuilder nb(this, operatorToKind(opNode));
++  NodeBuilder nb(opNode.getNodeManager(), operatorToKind(opNode));
+   if (opNode.getKind() != Kind::BUILTIN)
+   {
+     nb << opNode;
+@@ -1207,7 +1217,7 @@ template <bool ref_count>
+ inline Node NodeManager::mkNode(TNode opNode,
+                                 const std::vector<NodeTemplate<ref_count> >&
+                                 children) {
+-  NodeBuilder nb(this, operatorToKind(opNode));
++  NodeBuilder nb(opNode.getNodeManager(), operatorToKind(opNode));
+   if (opNode.getKind() != Kind::BUILTIN)
+   {
+     nb << opNode;
+diff --git a/src/expr/sygus_grammar.cpp b/src/expr/sygus_grammar.cpp
+index e37aea4f3..0eaa31c0c 100644
+--- a/src/expr/sygus_grammar.cpp
++++ b/src/expr/sygus_grammar.cpp
+@@ -46,7 +46,6 @@ SygusGrammar::SygusGrammar(const std::vector<Node>& sygusVars,
+   // ensure that sdt is first
+   tnlist.push_back(sdt);
+   std::map<TypeNode, Node> ntsyms;
+-  NodeManager* nm = NodeManager::currentNM();
+   for (size_t i = 0; i < tnlist.size(); i++)
+   {
+     TypeNode tn = tnlist[i];
+@@ -54,7 +53,7 @@ SygusGrammar::SygusGrammar(const std::vector<Node>& sygusVars,
+     const DType& dt = tn.getDType();
+     std::stringstream ss;
+     ss << dt.getName();
+-    Node v = nm->mkBoundVar(ss.str(), dt.getSygusType());
++    Node v = NodeManager::mkBoundVar(ss.str(), dt.getSygusType());
+     ntsyms[tn] = v;
+     d_ntSyms.push_back(v);
+     d_rules.emplace(v, std::vector<Node>{});
+@@ -183,7 +182,7 @@ Node purifySygusGNode(const Node& n,
+   // if n is non-terminal
+   if (std::find(nts.begin(), nts.end(), n) != nts.end())
+   {
+-    Node ret = nm->mkBoundVar(n.getType());
++    Node ret = NodeManager::mkBoundVar(n.getType());
+     ntSymMap[ret] = n;
+     args.push_back(ret);
+     return ret;
+diff --git a/src/expr/term_canonize.cpp b/src/expr/term_canonize.cpp
+index 40298d848..3bc1bd37a 100644
+--- a/src/expr/term_canonize.cpp
++++ b/src/expr/term_canonize.cpp
+@@ -100,7 +100,6 @@ bool TermCanonize::getTermOrder(Node a, Node b)
+ Node TermCanonize::getCanonicalFreeVar(TypeNode tn, size_t i, uint32_t tc)
+ {
+   Assert(!tn.isNull());
+-  NodeManager* nm = NodeManager::currentNM();
+   std::pair<TypeNode, uint32_t> key(tn, tc);
+   std::vector<Node>& tvars = d_cn_free_var[key];
+   while (tvars.size() <= i)
+@@ -121,7 +120,7 @@ Node TermCanonize::getCanonicalFreeVar(TypeNode tn, size_t i, uint32_t tc)
+       }
+       os << typ_name[0] << i;
+     }
+-    Node x = nm->mkBoundVar(os.str().c_str(), tn);
++    Node x = NodeManager::mkBoundVar(os.str().c_str(), tn);
+     d_fvIndex[x] = tvars.size();
+     tvars.push_back(x);
+   }
+diff --git a/src/expr/type_node.h b/src/expr/type_node.h
+index 37d647d9a..48a77ca97 100644
+--- a/src/expr/type_node.h
++++ b/src/expr/type_node.h
+@@ -99,6 +99,11 @@ class CVC5_EXPORT TypeNode
+                       Iterator2 replacementsEnd,
+                       std::unordered_map<TypeNode, TypeNode>& cache) const;
+ 
++  /**
++   * Returns the associated node manager
++   */
++  NodeManager* getNodeManager() const { return d_nv->getNodeManager(); }
++
+  public:
+   /** Default constructor, makes a null expression. */
+   TypeNode() : d_nv(&expr::NodeValue::null()) { }
+diff --git a/src/preprocessing/passes/fun_def_fmf.cpp b/src/preprocessing/passes/fun_def_fmf.cpp
+index 59885baf6..d0fad4c16 100644
+--- a/src/preprocessing/passes/fun_def_fmf.cpp
++++ b/src/preprocessing/passes/fun_def_fmf.cpp
+@@ -145,7 +145,7 @@ void FunDefFmf::process(AssertionPipeline* assertionsToPreprocess)
+ 
+         // construct new quantifier forall S. F[f1(S)/x1....fn(S)/xn]
+         std::vector<Node> children;
+-        Node bv = nm->mkBoundVar("?i", iType);
++        Node bv = NodeManager::mkBoundVar("?i", iType);
+         Node bvl = nm->mkNode(Kind::BOUND_VAR_LIST, bv);
+         std::vector<Node> subs;
+         std::vector<Node> vars;
+@@ -446,7 +446,7 @@ void FunDefFmf::getConstraints(Node n,
+       if (it != d_sorts.end())
+       {
+         // create existential
+-        Node z = nm->mkBoundVar("?z", it->second);
++        Node z = NodeManager::mkBoundVar("?z", it->second);
+         Node bvl = nm->mkNode(Kind::BOUND_VAR_LIST, z);
+         std::vector<Node> children;
+         for (unsigned j = 0, size = n.getNumChildren(); j < size; j++)
+diff --git a/src/preprocessing/passes/global_negate.cpp b/src/preprocessing/passes/global_negate.cpp
+index bb1813e28..0d5d4ef58 100644
+--- a/src/preprocessing/passes/global_negate.cpp
++++ b/src/preprocessing/passes/global_negate.cpp
+@@ -73,7 +73,7 @@ Node GlobalNegate::simplify(const std::vector<Node>& assertions,
+     std::vector<Node> bvs;
+     for (const Node& v : fvs)
+     {
+-      Node bv = nm->mkBoundVar(v.getType());
++      Node bv = NodeManager::mkBoundVar(v.getType());
+       bvs.push_back(bv);
+     }
+ 
+diff --git a/src/preprocessing/passes/ho_elim.cpp b/src/preprocessing/passes/ho_elim.cpp
+index 683238829..a3b00c29d 100644
+--- a/src/preprocessing/passes/ho_elim.cpp
++++ b/src/preprocessing/passes/ho_elim.cpp
+@@ -75,7 +75,7 @@ Node HoElim::eliminateLambdaComplete(Node n, std::map<Node, Node>& newLambda)
+           {
+             TypeNode vt = v.getType();
+             ftypes.push_back(vt);
+-            Node vs = nm->mkBoundVar(vt);
++            Node vs = NodeManager::mkBoundVar(vt);
+             vars.push_back(v);
+             nvars.push_back(vs);
+             lvars.push_back(vs);
+@@ -193,7 +193,7 @@ Node HoElim::eliminateHo(Node n)
+             TypeNode ut = getUSort(tn);
+             if (cur.getKind() == Kind::BOUND_VARIABLE)
+             {
+-              ret = nm->mkBoundVar(ut);
++              ret = NodeManager::mkBoundVar(ut);
+             }
+             else
+             {
+@@ -348,7 +348,7 @@ PreprocessingPassResult HoElim::applyInternal(
+         std::vector<Node> nvars;
+         for (const Node& v : lambda[0])
+         {
+-          Node bv = nm->mkBoundVar(v.getType());
++          Node bv = NodeManager::mkBoundVar(v.getType());
+           vars.push_back(v);
+           nvars.push_back(bv);
+         }
+@@ -410,9 +410,9 @@ PreprocessingPassResult HoElim::applyInternal(
+       TypeNode uf = getUSort(ft[0]);
+       TypeNode ut = getUSort(ft[1]);
+       // extensionality
+-      Node x = nm->mkBoundVar("x", uf);
+-      Node y = nm->mkBoundVar("y", uf);
+-      Node z = nm->mkBoundVar("z", ut);
++      Node x = NodeManager::mkBoundVar("x", uf);
++      Node y = NodeManager::mkBoundVar("y", uf);
++      Node z = NodeManager::mkBoundVar("z", ut);
+       Node eq = nm->mkNode(Kind::APPLY_UF, h, x, z)
+                     .eqNode(nm->mkNode(Kind::APPLY_UF, h, y, z));
+       Node antec =
+@@ -429,12 +429,12 @@ PreprocessingPassResult HoElim::applyInternal(
+       // Without this axiom, the translation is model unsound.
+       if (options().quantifiers.hoElimStoreAx)
+       {
+-        Node u = nm->mkBoundVar("u", uf);
+-        Node v = nm->mkBoundVar("v", uf);
+-        Node i = nm->mkBoundVar("i", ut);
+-        Node ii = nm->mkBoundVar("ii", ut);
++        Node u = NodeManager::mkBoundVar("u", uf);
++        Node v = NodeManager::mkBoundVar("v", uf);
++        Node i = NodeManager::mkBoundVar("i", ut);
++        Node ii = NodeManager::mkBoundVar("ii", ut);
+         Node huii = nm->mkNode(Kind::APPLY_UF, h, u, ii);
+-        Node e = nm->mkBoundVar("e", huii.getType());
++        Node e = NodeManager::mkBoundVar("e", huii.getType());
+         Node store = nm->mkNode(
+             Kind::FORALL,
+             nm->mkNode(Kind::BOUND_VAR_LIST, u, e, i),
+@@ -451,13 +451,13 @@ PreprocessingPassResult HoElim::applyInternal(
+     }
+     else if (options().quantifiers.hoElimStoreAx)
+     {
+-      Node u = nm->mkBoundVar("u", ftn);
+-      Node v = nm->mkBoundVar("v", ftn);
++      Node u = NodeManager::mkBoundVar("u", ftn);
++      Node v = NodeManager::mkBoundVar("v", ftn);
+       std::vector<TypeNode> argTypes = ftn.getArgTypes();
+-      Node i = nm->mkBoundVar("i", argTypes[0]);
+-      Node ii = nm->mkBoundVar("ii", argTypes[0]);
++      Node i = NodeManager::mkBoundVar("i", argTypes[0]);
++      Node ii = NodeManager::mkBoundVar("ii", argTypes[0]);
+       Node huii = nm->mkNode(Kind::HO_APPLY, u, ii);
+-      Node e = nm->mkBoundVar("e", huii.getType());
++      Node e = NodeManager::mkBoundVar("e", huii.getType());
+       Node store = nm->mkNode(
+           Kind::FORALL,
+           nm->mkNode(Kind::BOUND_VAR_LIST, u, e, i),
+diff --git a/src/preprocessing/passes/sygus_inference.cpp b/src/preprocessing/passes/sygus_inference.cpp
+index b92500663..5abb0d1dc 100644
+--- a/src/preprocessing/passes/sygus_inference.cpp
++++ b/src/preprocessing/passes/sygus_inference.cpp
+@@ -170,7 +170,7 @@ bool SygusInference::solveSygus(const std::vector<Node>& assertions,
+         else
+         {
+           Assert(vnum == qtvars[tnv].size());
+-          Node bv = nm->mkBoundVar(tnv);
++          Node bv = NodeManager::mkBoundVar(tnv);
+           qtvars[tnv].push_back(bv);
+           qvars.push_back(bv);
+           subs.push_back(bv);
+@@ -257,7 +257,7 @@ bool SygusInference::solveSygus(const std::vector<Node>& assertions,
+   std::map<Node, Node> ff_var_to_ff;
+   for (const Node& ff : free_functions)
+   {
+-    Node ffv = nm->mkBoundVar(ff.getType());
++    Node ffv = NodeManager::mkBoundVar(ff.getType());
+     ff_vars.push_back(ffv);
+     Trace("sygus-infer") << "  synth-fun: " << ff << " as " << ffv << std::endl;
+     ff_var_to_ff[ffv] = ff;
+diff --git a/src/preprocessing/passes/synth_rew_rules.cpp b/src/preprocessing/passes/synth_rew_rules.cpp
+index b3d0c9089..2ae3edc53 100644
+--- a/src/preprocessing/passes/synth_rew_rules.cpp
++++ b/src/preprocessing/passes/synth_rew_rules.cpp
+@@ -201,7 +201,7 @@ std::map<TypeNode, TypeNode> SynthRewRulesPass::constructTopLevelGrammar(
+         ssv << "x" << (varCounter - 26);
+       }
+       varCounter++;
+-      Node v = nm->mkBoundVar(ssv.str(), tn);
++      Node v = NodeManager::mkBoundVar(ssv.str(), tn);
+       Trace("srs-input") << "Make variable " << v << " of type " << tn
+                          << std::endl;
+       tvars[tn].push_back(v);
+@@ -225,7 +225,7 @@ std::map<TypeNode, TypeNode> SynthRewRulesPass::constructTopLevelGrammar(
+   for (const Node& v : vars)
+   {
+     TypeNode tnv = v.getType();
+-    Node vs = nm->mkBoundVar(tnv);
++    Node vs = NodeManager::mkBoundVar(tnv);
+     vsubs.push_back(vs);
+   }
+   if (!vars.empty())
+@@ -344,7 +344,7 @@ std::map<TypeNode, TypeNode> SynthRewRulesPass::constructTopLevelGrammar(
+ 
+         // we make one type per child
+         // the operator of each constructor is a no-op
+-        Node tbv = nm->mkBoundVar(ctt);
++        Node tbv = NodeManager::mkBoundVar(ctt);
+         Node lambdaOp = nm->mkNode(
+             Kind::LAMBDA, nm->mkNode(Kind::BOUND_VAR_LIST, tbv), tbv);
+         std::vector<TypeNode> argListc;
+@@ -422,7 +422,7 @@ std::map<TypeNode, TypeNode> SynthRewRulesPass::constructTopLevelGrammar(
+     std::stringstream ss;
+     ss << "T_" << t;
+     SygusDatatype sdttl(ss.str());
+-    Node tbv = nm->mkBoundVar(t);
++    Node tbv = NodeManager::mkBoundVar(t);
+     // the operator of each constructor is a no-op
+     Node lambdaOp =
+         nm->mkNode(Kind::LAMBDA, nm->mkNode(Kind::BOUND_VAR_LIST, tbv), tbv);
+diff --git a/src/printer/let_binding.cpp b/src/printer/let_binding.cpp
+index 98a0d07c8..eb307ccee 100644
+--- a/src/printer/let_binding.cpp
++++ b/src/printer/let_binding.cpp
+@@ -110,7 +110,7 @@ Node LetBinding::convert(Node n, bool letTop) const
+         // make the let variable
+         std::stringstream ss;
+         ss << d_prefix << id;
+-        visited[cur] = nm->mkBoundVar(ss.str(), cur.getType());
++        visited[cur] = NodeManager::mkBoundVar(ss.str(), cur.getType());
+       }
+       else if (cur.isClosure())
+       {
+diff --git a/src/printer/smt2/smt2_printer.cpp b/src/printer/smt2/smt2_printer.cpp
+index 4f8776146..141f7fb54 100644
+--- a/src/printer/smt2/smt2_printer.cpp
++++ b/src/printer/smt2/smt2_printer.cpp
+@@ -2266,7 +2266,7 @@ std::string Smt2Printer::sygusGrammarString(const TypeNode& t)
+             TypeNode argType = cons[j].getRangeType();
+             std::stringstream ss;
+             ss << argType;
+-            Node bv = nm->mkBoundVar(ss.str(), argType);
++            Node bv = NodeManager::mkBoundVar(ss.str(), argType);
+             cchildren.push_back(bv);
+             // if fresh type, store it for later processing
+             if (grammarTypes.insert(argType).second)
+diff --git a/src/proof/alethe/alethe_let_binding.cpp b/src/proof/alethe/alethe_let_binding.cpp
+index cb2ac123b..fe5776003 100644
+--- a/src/proof/alethe/alethe_let_binding.cpp
++++ b/src/proof/alethe/alethe_let_binding.cpp
+@@ -68,7 +68,7 @@ Node AletheLetBinding::convert(NodeManager* nm,
+           // create the let variable for cur
+           std::stringstream ss;
+           ss << prefix << id;
+-          visited[cur] = nm->mkBoundVar(ss.str(), cur.getType());
++          visited[cur] = NodeManager::mkBoundVar(ss.str(), cur.getType());
+           Trace("alethe-printer-share")
+               << "\tdeclared, use var " << visited[cur] << "\n";
+           continue;
+@@ -119,7 +119,7 @@ Node AletheLetBinding::convert(NodeManager* nm,
+         options::ioutils::applyFlattenHOChains(ss, true);
+         cur.toStream(ss);
+         ss << " :named " << prefix << id << ")";
+-        Node letVar = nm->mkRawSymbol(ss.str(), cur.getType());
++        Node letVar = NodeManager::mkRawSymbol(ss.str(), cur.getType());
+         visited[cur] = letVar;
+         declaredValue[cur] = letVar;
+         continue;
+@@ -213,10 +213,11 @@ Node AletheLetBinding::convert(NodeManager* nm,
+         ret.toStream(ss);
+         ssVar << prefix << id;
+         ss << " :named " << ssVar.str() << ")";
+-        Node declaration = nm->mkRawSymbol(ss.str(), ret.getType());
++        Node declaration = NodeManager::mkRawSymbol(ss.str(), ret.getType());
+         declaredValue[cur] = declaration;
+         visited[cur] =
+-            cur == n ? declaration : nm->mkBoundVar(ssVar.str(), cur.getType());
++            cur == n ? declaration
++                     : NodeManager::mkBoundVar(ssVar.str(), cur.getType());
+         continue;
+       }
+       visited[cur] = ret;
+diff --git a/src/proof/alethe/alethe_node_converter.cpp b/src/proof/alethe/alethe_node_converter.cpp
+index edc99e48b..0d1b8a167 100644
+--- a/src/proof/alethe/alethe_node_converter.cpp
++++ b/src/proof/alethe/alethe_node_converter.cpp
+@@ -496,8 +496,8 @@ Node AletheNodeConverter::mkInternalSymbol(const std::string& name,
+   {
+     return it->second;
+   }
+-  Node sym =
+-      useRawSym ? d_nm->mkRawSymbol(name, tn) : d_nm->mkBoundVar(name, tn);
++  Node sym = useRawSym ? NodeManager::mkRawSymbol(name, tn)
++                       : NodeManager::mkBoundVar(name, tn);
+   d_symbolsMap[key] = sym;
+   return sym;
+ }
+diff --git a/src/proof/alethe/alethe_post_processor.cpp b/src/proof/alethe/alethe_post_processor.cpp
+index 0256459ec..34511923b 100644
+--- a/src/proof/alethe/alethe_post_processor.cpp
++++ b/src/proof/alethe/alethe_post_processor.cpp
+@@ -61,7 +61,7 @@ AletheProofPostprocessCallback::AletheProofPostprocessCallback(
+     : EnvObj(env), d_anc(anc), d_resPivots(resPivots)
+ {
+   NodeManager* nm = nodeManager();
+-  d_cl = nm->mkBoundVar("cl", nm->sExprType());
++  d_cl = NodeManager::mkBoundVar("cl", nm->sExprType());
+   d_true = nm->mkConst(true);
+   d_false = nm->mkConst(false);
+ }
+@@ -407,7 +407,7 @@ bool AletheProofPostprocessCallback::update(Node res,
+       {
+         std::stringstream ss;
+         ss << "\"" << di << "\"";
+-        rule = nm->mkRawSymbol(ss.str(), nm->sExprType());
++        rule = NodeManager::mkRawSymbol(ss.str(), nm->sExprType());
+       }
+       else
+       {
+@@ -420,12 +420,13 @@ bool AletheProofPostprocessCallback::update(Node res,
+         {
+           if (args[i].toString() == "")
+           {  // TODO: better way
+-            new_args.push_back(nm->mkBoundVar("rare-list", nm->sExprType()));
++            new_args.push_back(
++                NodeManager::mkBoundVar("rare-list", nm->sExprType()));
+           }
+           else if (args[i].getKind() == Kind::SEXPR)
+           {
+             std::vector<Node> list_arg{
+-                nm->mkBoundVar("rare-list", nm->sExprType())};
++                NodeManager::mkBoundVar("rare-list", nm->sExprType())};
+             list_arg.insert(list_arg.end(), args[i].begin(), args[i].end());
+             new_args.push_back(nm->mkNode(Kind::SEXPR, list_arg));
+           }
+@@ -451,17 +452,18 @@ bool AletheProofPostprocessCallback::update(Node res,
+           res,
+           nm->mkNode(Kind::SEXPR, d_cl, res),
+           children,
+-          {nm->mkRawSymbol("\"arith-poly-norm\"", nm->sExprType())},
++          {NodeManager::mkRawSymbol("\"arith-poly-norm\"", nm->sExprType())},
+           *cdp);
+     }
+     case ProofRule::EVALUATE:
+     {
+-      return addAletheStep(AletheRule::RARE_REWRITE,
+-                           res,
+-                           nm->mkNode(Kind::SEXPR, d_cl, res),
+-                           children,
+-                           {nm->mkRawSymbol("\"evaluate\"", nm->sExprType())},
+-                           *cdp);
++      return addAletheStep(
++          AletheRule::RARE_REWRITE,
++          res,
++          nm->mkNode(Kind::SEXPR, d_cl, res),
++          children,
++          {NodeManager::mkRawSymbol("\"evaluate\"", nm->sExprType())},
++          *cdp);
+     }
+     // If the trusted rule is a theory lemma from arithmetic, we try to phrase
+     // it with "lia_generic".
+@@ -523,7 +525,8 @@ bool AletheProofPostprocessCallback::update(Node res,
+       {
+         ss << "\"" << args[0] << "\"";
+       }
+-      std::vector<Node> newArgs{nm->mkRawSymbol(ss.str(), nm->sExprType())};
++      std::vector<Node> newArgs{
++          NodeManager::mkRawSymbol(ss.str(), nm->sExprType())};
+       newArgs.insert(newArgs.end(), args.begin() + 1, args.end());
+       return addAletheStep(AletheRule::HOLE,
+                            res,
+@@ -2133,7 +2136,8 @@ bool AletheProofPostprocessCallback::update(Node res,
+           << children << " " << args << std::endl;
+       std::stringstream ss;
+       ss << "\"" << id << "\"";
+-      std::vector<Node> newArgs{nm->mkRawSymbol(ss.str(), nm->sExprType())};
++      std::vector<Node> newArgs{
++          NodeManager::mkRawSymbol(ss.str(), nm->sExprType())};
+       newArgs.insert(newArgs.end(), args.begin(), args.end());
+       return addAletheStep(AletheRule::HOLE,
+                            res,
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index ba3aea500..bed4fe8fc 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -400,8 +400,8 @@ Node AlfNodeConverter::mkInternalSymbol(const std::string& name,
+                                         bool useRawSym)
+ {
+   // use raw symbol so that it is never quoted
+-  Node sym =
+-      useRawSym ? d_nm->mkRawSymbol(name, tn) : d_nm->mkBoundVar(name, tn);
++  Node sym = useRawSym ? NodeManager::mkRawSymbol(name, tn)
++                       : NodeManager::mkBoundVar(name, tn);
+   d_symbols.insert(sym);
+   return sym;
+ }
+diff --git a/src/proof/lfsc/lfsc_node_converter.cpp b/src/proof/lfsc/lfsc_node_converter.cpp
+index a2a9d4e15..6d987003b 100644
+--- a/src/proof/lfsc/lfsc_node_converter.cpp
++++ b/src/proof/lfsc/lfsc_node_converter.cpp
+@@ -521,7 +521,7 @@ Node LfscNodeConverter::mkApplyUf(Node op, const std::vector<Node>& args) const
+     options::ioutils::applyOutputLanguage(ss, Language::LANG_SMTLIB_V2_6);
+     options::ioutils::applyDagThresh(ss, 0);
+     ss << op;
+-    Node opv = d_nm->mkRawSymbol(ss.str(), op.getType());
++    Node opv = NodeManager::mkRawSymbol(ss.str(), op.getType());
+     aargs.push_back(opv);
+   }
+   aargs.insert(aargs.end(), args.begin(), args.end());
+@@ -838,8 +838,8 @@ Node LfscNodeConverter::mkInternalSymbol(const std::string& name,
+                                          bool useRawSym)
+ {
+   // use raw symbol so that it is never quoted
+-  Node sym =
+-      useRawSym ? d_nm->mkRawSymbol(name, tn) : d_nm->mkBoundVar(name, tn);
++  Node sym = useRawSym ? NodeManager::mkRawSymbol(name, tn)
++                       : NodeManager::mkBoundVar(name, tn);
+   d_symbols.insert(sym);
+   return sym;
+ }
+diff --git a/src/proof/lfsc/lfsc_post_processor.cpp b/src/proof/lfsc/lfsc_post_processor.cpp
+index 04139e053..45f1a187f 100644
+--- a/src/proof/lfsc/lfsc_post_processor.cpp
++++ b/src/proof/lfsc/lfsc_post_processor.cpp
+@@ -537,7 +537,7 @@ Node LfscProofPostprocessCallback::mkChain(Kind k,
+ 
+ Node LfscProofPostprocessCallback::mkDummyPredicate(NodeManager* nm)
+ {
+-  return nm->mkBoundVar(nm->booleanType());
++  return NodeManager::mkBoundVar(nm->booleanType());
+ }
+ 
+ LfscProofPostprocess::LfscProofPostprocess(Env& env, LfscNodeConverter& ltp)
+diff --git a/src/proof/lfsc/lfsc_printer.cpp b/src/proof/lfsc/lfsc_printer.cpp
+index 0b2762eb5..f3ddf9ccc 100644
+--- a/src/proof/lfsc/lfsc_printer.cpp
++++ b/src/proof/lfsc/lfsc_printer.cpp
+@@ -186,12 +186,11 @@ void LfscPrinter::print(std::ostream& out, const ProofNode* pn)
+     }
+     const DType& dt = stc.getDType();
+     preamble << "; DATATYPE " << dt.getName() << std::endl;
+-    NodeManager* nm = nodeManager();
+     for (size_t i = 0, ncons = dt.getNumConstructors(); i < ncons; i++)
+     {
+       const DTypeConstructor& cons = dt[i];
+       std::string cname = d_tproc.getNameForUserNameOf(cons.getConstructor());
+-      Node cc = nm->mkRawSymbol(cname, stc);
++      Node cc = NodeManager::mkRawSymbol(cname, stc);
+       // print constructor/tester
+       preamble << "(declare " << cc << " term)" << std::endl;
+       for (size_t j = 0, nargs = cons.getNumArgs(); j < nargs; j++)
+@@ -199,7 +198,7 @@ void LfscPrinter::print(std::ostream& out, const ProofNode* pn)
+         const DTypeSelector& arg = cons[j];
+         // print selector
+         std::string sname = d_tproc.getNameForUserNameOf(arg.getSelector());
+-        Node sc = nm->mkRawSymbol(sname, stc);
++        Node sc = NodeManager::mkRawSymbol(sname, stc);
+         preamble << "(declare " << sc << " term)" << std::endl;
+       }
+     }
+diff --git a/src/proof/proof_node_to_sexpr.cpp b/src/proof/proof_node_to_sexpr.cpp
+index 69e1d0537..0f27923a2 100644
+--- a/src/proof/proof_node_to_sexpr.cpp
++++ b/src/proof/proof_node_to_sexpr.cpp
+@@ -31,8 +31,8 @@ ProofNodeToSExpr::ProofNodeToSExpr()
+ {
+   NodeManager* nm = NodeManager::currentNM();
+   // use raw symbols so that `:args` is not converted to `|:args|`
+-  d_conclusionMarker = nm->mkRawSymbol(":conclusion", nm->sExprType());
+-  d_argsMarker = nm->mkRawSymbol(":args", nm->sExprType());
++  d_conclusionMarker = NodeManager::mkRawSymbol(":conclusion", nm->sExprType());
++  d_argsMarker = NodeManager::mkRawSymbol(":args", nm->sExprType());
+ }
+ 
+ Node ProofNodeToSExpr::convertToSExpr(const ProofNode* pn, bool printConclusion)
+@@ -125,7 +125,7 @@ Node ProofNodeToSExpr::getOrMkProofRuleVariable(ProofRule r)
+   std::stringstream ss;
+   ss << r;
+   NodeManager* nm = NodeManager::currentNM();
+-  Node var = nm->mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
+   d_pfrMap[r] = var;
+   return var;
+ }
+@@ -146,7 +146,7 @@ Node ProofNodeToSExpr::getOrMkKindVariable(TNode n)
+   std::stringstream ss;
+   ss << k;
+   NodeManager* nm = NodeManager::currentNM();
+-  Node var = nm->mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
+   d_kindMap[k] = var;
+   return var;
+ }
+@@ -168,7 +168,7 @@ Node ProofNodeToSExpr::getOrMkTheoryIdVariable(TNode n)
+   std::stringstream ss;
+   ss << tid;
+   NodeManager* nm = NodeManager::currentNM();
+-  Node var = nm->mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
+   d_tidMap[tid] = var;
+   return var;
+ }
+@@ -190,7 +190,7 @@ Node ProofNodeToSExpr::getOrMkMethodIdVariable(TNode n)
+   std::stringstream ss;
+   ss << mid;
+   NodeManager* nm = NodeManager::currentNM();
+-  Node var = nm->mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
+   d_midMap[mid] = var;
+   return var;
+ }
+@@ -211,7 +211,7 @@ Node ProofNodeToSExpr::getOrMkTrustIdVariable(TNode n)
+   std::stringstream ss;
+   ss << tid;
+   NodeManager* nm = NodeManager::currentNM();
+-  Node var = nm->mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
+   d_tridMap[tid] = var;
+   return var;
+ }
+@@ -232,7 +232,7 @@ Node ProofNodeToSExpr::getOrMkInferenceIdVariable(TNode n)
+   std::stringstream ss;
+   ss << iid;
+   NodeManager* nm = NodeManager::currentNM();
+-  Node var = nm->mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
+   d_iidMap[iid] = var;
+   return var;
+ }
+@@ -254,7 +254,7 @@ Node ProofNodeToSExpr::getOrMkDslRewriteVariable(TNode n)
+   std::stringstream ss;
+   ss << rid;
+   NodeManager* nm = NodeManager::currentNM();
+-  Node var = nm->mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
+   d_dslrMap[rid] = var;
+   return var;
+ }
+@@ -269,7 +269,7 @@ Node ProofNodeToSExpr::getOrMkNodeVariable(TNode n)
+   std::stringstream ss;
+   ss << n;
+   NodeManager* nm = NodeManager::currentNM();
+-  Node var = nm->mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
+   d_nodeMap[n] = var;
+   return var;
+ }
+diff --git a/src/rewriter/mkrewrites.py b/src/rewriter/mkrewrites.py
+index cb448667e..5428a9422 100644
+--- a/src/rewriter/mkrewrites.py
++++ b/src/rewriter/mkrewrites.py
+@@ -59,7 +59,7 @@ def gen_mk_skolem(name, sort):
+         sort_code = f'nm->mkBitVectorType({sort.children[0]})'
+     else:
+         die(f'Cannot generate code for {sort}')
+-    res = f'Node {name} = nm->mkBoundVar("{name}", {sort_code});'
++    res = f'Node {name} = NodeManager::mkBoundVar("{name}", {sort_code});'
+     if sort.is_list:
+         res += f'expr::markListVar({name});'
+     return res
+diff --git a/src/smt/solver_engine.cpp b/src/smt/solver_engine.cpp
+index c5c129be7..4c5a15ce8 100644
+--- a/src/smt/solver_engine.cpp
++++ b/src/smt/solver_engine.cpp
+@@ -1106,9 +1106,9 @@ void SolverEngine::declareOracleFun(
+     const std::vector<TypeNode>& argTypes = tn.getArgTypes();
+     for (const TypeNode& t : argTypes)
+     {
+-      inputs.push_back(nm->mkBoundVar(t));
++      inputs.push_back(NodeManager::mkBoundVar(t));
+     }
+-    outputs.push_back(nm->mkBoundVar(tn.getRangeType()));
++    outputs.push_back(NodeManager::mkBoundVar(tn.getRangeType()));
+     std::vector<Node> appc;
+     appc.push_back(var);
+     appc.insert(appc.end(), inputs.begin(), inputs.end());
+@@ -1116,7 +1116,7 @@ void SolverEngine::declareOracleFun(
+   }
+   else
+   {
+-    outputs.push_back(nm->mkBoundVar(tn.getRangeType()));
++    outputs.push_back(NodeManager::mkBoundVar(tn.getRangeType()));
+     app = var;
+   }
+   // makes equality assumption
+diff --git a/src/smt/sygus_solver.cpp b/src/smt/sygus_solver.cpp
+index f0e010190..6a5d44372 100644
+--- a/src/smt/sygus_solver.cpp
++++ b/src/smt/sygus_solver.cpp
+@@ -162,11 +162,11 @@ void SygusSolver::assertSygusInvConstraint(Node inv,
+   std::vector<TypeNode> argTypes = inv.getType().getArgTypes();
+   for (const TypeNode& tn : argTypes)
+   {
+-    vars.push_back(nm->mkBoundVar(tn));
++    vars.push_back(NodeManager::mkBoundVar(tn));
+     d_sygusVars.push_back(vars.back());
+     std::stringstream ss;
+     ss << vars.back() << "'";
+-    primed_vars.push_back(nm->mkBoundVar(ss.str(), tn));
++    primed_vars.push_back(NodeManager::mkBoundVar(ss.str(), tn));
+     d_sygusVars.push_back(primed_vars.back());
+   }
+ 
+diff --git a/src/theory/arith/nl/poly_conversion.cpp b/src/theory/arith/nl/poly_conversion.cpp
+index 419032182..7dc07f303 100644
+--- a/src/theory/arith/nl/poly_conversion.cpp
++++ b/src/theory/arith/nl/poly_conversion.cpp
+@@ -838,7 +838,7 @@ Node PolyConverter::ran_to_defining_polynomial(const RealAlgebraicNumber& ran,
+ Node PolyConverter::ran_to_lower(const RealAlgebraicNumber& ran)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+-  Node ran_variable = nm->mkBoundVar(nm->realType());
++  Node ran_variable = NodeManager::mkBoundVar(nm->realType());
+   Node witness = ran_to_node(ran, ran_variable);
+   if (witness.getKind() == Kind::WITNESS)
+   {
+@@ -855,7 +855,7 @@ Node PolyConverter::ran_to_lower(const RealAlgebraicNumber& ran)
+ Node PolyConverter::ran_to_upper(const RealAlgebraicNumber& ran)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+-  Node ran_variable = nm->mkBoundVar(nm->realType());
++  Node ran_variable = NodeManager::mkBoundVar(nm->realType());
+   Node witness = ran_to_node(ran, ran_variable);
+   if (witness.getKind() == Kind::WITNESS)
+   {
+diff --git a/src/theory/arrays/theory_arrays_type_rules.cpp b/src/theory/arrays/theory_arrays_type_rules.cpp
+index 83f4ac810..35d1fa3c9 100644
+--- a/src/theory/arrays/theory_arrays_type_rules.cpp
++++ b/src/theory/arrays/theory_arrays_type_rules.cpp
+@@ -268,9 +268,8 @@ bool ArraysProperties::isWellFounded(TypeNode type)
+ Node ArraysProperties::mkGroundTerm(TypeNode type)
+ {
+   Assert(type.getKind() == Kind::ARRAY_TYPE);
+-  NodeManager* nm = NodeManager::currentNM();
+   TypeNode elemType = type.getArrayConstituentType();
+-  Node elem = nm->mkGroundTerm(elemType);
++  Node elem = NodeManager::mkGroundTerm(elemType);
+   if (elem.isConst())
+   {
+     return NodeManager::currentNM()->mkConst(ArrayStoreAll(type, elem));
+diff --git a/src/theory/bags/bag_reduction.cpp b/src/theory/bags/bag_reduction.cpp
+index bbccfeb1d..c238e79f2 100644
+--- a/src/theory/bags/bag_reduction.cpp
++++ b/src/theory/bags/bag_reduction.cpp
+@@ -225,7 +225,7 @@ Node BagReduction::reduceProjectOperator(Node n)
+   TypeNode elementType = A.getType().getBagElementType();
+   ProjectOp projectOp = n.getOperator().getConst<ProjectOp>();
+   Node op = nm->mkConst(Kind::TUPLE_PROJECT_OP, projectOp);
+-  Node t = nm->mkBoundVar("t", elementType);
++  Node t = NodeManager::mkBoundVar("t", elementType);
+   Node projection = nm->mkNode(Kind::TUPLE_PROJECT, op, t);
+   Node lambda =
+       nm->mkNode(Kind::LAMBDA, nm->mkNode(Kind::BOUND_VAR_LIST, t), projection);
+diff --git a/src/theory/bags/theory_bags.cpp b/src/theory/bags/theory_bags.cpp
+index 8e6e9597a..a7320360d 100644
+--- a/src/theory/bags/theory_bags.cpp
++++ b/src/theory/bags/theory_bags.cpp
+@@ -150,7 +150,7 @@ TrustNode TheoryBags::expandChooseOperator(const Node& node,
+   Node A = node[0];
+   TypeNode bagType = A.getType();
+   // use canonical constant to ensure it can be typed
+-  Node mkElem = nm->mkGroundValue(bagType);
++  Node mkElem = NodeManager::mkGroundValue(bagType);
+   // a Null node is used here to get a unique skolem function per bag type
+   Node uf = sm->mkSkolemFunction(SkolemId::BAGS_CHOOSE, mkElem);
+   Node ufA = nodeManager()->mkNode(Kind::APPLY_UF, uf, A);
+diff --git a/src/theory/bv/int_blaster.cpp b/src/theory/bv/int_blaster.cpp
+index b649b9819..65d1db51c 100644
+--- a/src/theory/bv/int_blaster.cpp
++++ b/src/theory/bv/int_blaster.cpp
+@@ -789,7 +789,8 @@ Node IntBlaster::translateNoChildren(Node original,
+         // they will be added once the quantifier itself is handled.
+         std::stringstream ss;
+         ss << original;
+-        translation = d_nm->mkBoundVar(ss.str() + "_int", d_nm->integerType());
++        translation =
++            NodeManager::mkBoundVar(ss.str() + "_int", d_nm->integerType());
+       }
+       else
+       {
+@@ -868,7 +869,7 @@ Node IntBlaster::translateFunctionSymbol(Node bvUF,
+   {
+     // Each bit-vector argument is casted to a natural number
+     // Other arguments are left intact.
+-    Node fresh_bound_var = d_nm->mkBoundVar(d);
++    Node fresh_bound_var = NodeManager::mkBoundVar(d);
+     args.push_back(fresh_bound_var);
+     Node castedArg = args[i];
+     if (d.isBitVector())
+diff --git a/src/theory/datatypes/sygus_datatype_utils.cpp b/src/theory/datatypes/sygus_datatype_utils.cpp
+index 7daaf044e..376c5cb03 100644
+--- a/src/theory/datatypes/sygus_datatype_utils.cpp
++++ b/src/theory/datatypes/sygus_datatype_utils.cpp
+@@ -291,8 +291,7 @@ Node sygusToBuiltin(Node n, bool isExternal)
+           ss << cur;
+           const DType& dt = cur.getType().getDType();
+           // make a fresh variable
+-          NodeManager * nm = NodeManager::currentNM();
+-          Node var = nm->mkBoundVar(ss.str(), dt.getSygusType());
++          Node var = NodeManager::mkBoundVar(ss.str(), dt.getSygusType());
+           SygusToBuiltinVarAttribute stbv;
+           cur.setAttribute(stbv, var);
+           visited[cur] = var;
+@@ -587,11 +586,10 @@ TypeNode generalizeSygusType(TypeNode sdt)
+   }
+   std::vector<Node> svec;
+   std::vector<Node> vars;
+-  NodeManager* nm = NodeManager::currentNM();
+   for (const Node& s : syms)
+   {
+     svec.push_back(s);
+-    vars.push_back(nm->mkBoundVar(s.getName(), s.getType()));
++    vars.push_back(NodeManager::mkBoundVar(s.getName(), s.getType()));
+   }
+   return substituteAndGeneralizeSygusType(sdt, svec, vars);
+ }
+diff --git a/src/theory/datatypes/theory_datatypes.cpp b/src/theory/datatypes/theory_datatypes.cpp
+index 03480546d..73aa21a61 100644
+--- a/src/theory/datatypes/theory_datatypes.cpp
++++ b/src/theory/datatypes/theory_datatypes.cpp
+@@ -1127,8 +1127,8 @@ Node TheoryDatatypes::getSingletonLemma( TypeNode tn, bool pol ) {
+   if( it==d_singleton_lemma[index].end() ){
+     Node a;
+     if( pol ){
+-      Node v1 = nm->mkBoundVar(tn);
+-      Node v2 = nm->mkBoundVar(tn);
++      Node v1 = NodeManager::mkBoundVar(tn);
++      Node v2 = NodeManager::mkBoundVar(tn);
+       a = nm->mkNode(Kind::FORALL,
+                      nm->mkNode(Kind::BOUND_VAR_LIST, v1, v2),
+                      v1.eqNode(v2));
+diff --git a/src/theory/quantifiers/alpha_equivalence.cpp b/src/theory/quantifiers/alpha_equivalence.cpp
+index 3b22af1c1..a510469ac 100644
+--- a/src/theory/quantifiers/alpha_equivalence.cpp
++++ b/src/theory/quantifiers/alpha_equivalence.cpp
+@@ -224,10 +224,9 @@ TrustNode AlphaEquivalence::reduceQuantifier(Node q)
+     if (expr::hasSubterm(ret, subs))
+     {
+       std::vector<Node> isubs;
+-      NodeManager* nm = nodeManager();
+       for (const Node& v : subs)
+       {
+-        isubs.emplace_back(nm->mkBoundVar(v.getType()));
++        isubs.emplace_back(NodeManager::mkBoundVar(v.getType()));
+       }
+       // ---------- ALPHA_EQUIV
+       // ret = iret
+diff --git a/src/theory/quantifiers/candidate_rewrite_database.cpp b/src/theory/quantifiers/candidate_rewrite_database.cpp
+index 7b3ae5730..a1a965579 100644
+--- a/src/theory/quantifiers/candidate_rewrite_database.cpp
++++ b/src/theory/quantifiers/candidate_rewrite_database.cpp
+@@ -158,7 +158,6 @@ Node CandidateRewriteDatabase::addOrGetTerm(Node sol,
+         if (r.getStatus() == Result::SAT)
+         {
+           Trace("rr-check") << "...rewrite does not hold for: " << std::endl;
+-          NodeManager* nm = NodeManager::currentNM();
+           is_unique_term = true;
+           std::vector<Node> vars;
+           d_sampler->getVariables(vars);
+@@ -175,7 +174,7 @@ Node CandidateRewriteDatabase::addOrGetTerm(Node sol,
+               if (itf == d_fv_to_skolem.end())
+               {
+                 // not in conjecture, can use arbitrary value
+-                val = nm->mkGroundTerm(v.getType());
++                val = NodeManager::mkGroundTerm(v.getType());
+               }
+               else
+               {
+diff --git a/src/theory/quantifiers/fmf/first_order_model_fmc.cpp b/src/theory/quantifiers/fmf/first_order_model_fmc.cpp
+index 3132b0e1b..b4f004f0e 100644
+--- a/src/theory/quantifiers/fmf/first_order_model_fmc.cpp
++++ b/src/theory/quantifiers/fmf/first_order_model_fmc.cpp
+@@ -110,7 +110,7 @@ Node FirstOrderModelFmc::getFunctionValue(Node op, const char* argPrefix)
+   {
+     std::stringstream ss;
+     ss << argPrefix << (i + 1);
+-    Node b = nm->mkBoundVar(ss.str(), type[i]);
++    Node b = NodeManager::mkBoundVar(ss.str(), type[i]);
+     vars.push_back(b);
+   }
+   Node boundVarList = nm->mkNode(Kind::BOUND_VAR_LIST, vars);
+diff --git a/src/theory/quantifiers/inst_strategy_mbqi.cpp b/src/theory/quantifiers/inst_strategy_mbqi.cpp
+index e32dfadc2..85e16e892 100644
+--- a/src/theory/quantifiers/inst_strategy_mbqi.cpp
++++ b/src/theory/quantifiers/inst_strategy_mbqi.cpp
+@@ -276,7 +276,7 @@ void InstStrategyMbqi::process(Node q)
+       Trace("mbqi") << "warning: failed to process model value " << vc
+                     << ", from " << v
+                     << ", use arbitrary term for instantiation" << std::endl;
+-      vc = nm->mkGroundTerm(v.getType());
++      vc = NodeManager::mkGroundTerm(v.getType());
+     }
+     v = vc;
+   }
+@@ -295,7 +295,7 @@ void InstStrategyMbqi::process(Node q)
+     {
+       Trace("mbqi") << "warning: failed to get term from value " << ov
+                     << ", use arbitrary term in query" << std::endl;
+-      mvt = nm->mkGroundTerm(ov.getType());
++      mvt = NodeManager::mkGroundTerm(ov.getType());
+     }
+     Assert(v.getType() == mvt.getType());
+     fvToInst.add(v, mvt);
+diff --git a/src/theory/quantifiers/mbqi_fast_sygus.cpp b/src/theory/quantifiers/mbqi_fast_sygus.cpp
+index 6bc584edf..7f4c3e042 100644
+--- a/src/theory/quantifiers/mbqi_fast_sygus.cpp
++++ b/src/theory/quantifiers/mbqi_fast_sygus.cpp
+@@ -47,7 +47,7 @@ void MVarInfo::initialize(Env& env,
+     std::vector<Node> vs;
+     for (const TypeNode& tnc : argTypes)
+     {
+-      Node vc = nm->mkBoundVar(tnc);
++      Node vc = NodeManager::mkBoundVar(tnc);
+       vs.push_back(vc);
+     }
+     d_lamVars = nm->mkNode(Kind::BOUND_VAR_LIST, vs);
+diff --git a/src/theory/quantifiers/quantifiers_attributes.cpp b/src/theory/quantifiers/quantifiers_attributes.cpp
+index 4bc984d96..929145515 100644
+--- a/src/theory/quantifiers/quantifiers_attributes.cpp
++++ b/src/theory/quantifiers/quantifiers_attributes.cpp
+@@ -236,7 +236,7 @@ void QuantAttributes::computeQuantAttributes( Node q, QAttributes& qa ){
+         if (q[2][i][0].getKind() == Kind::CONST_STRING)
+         {
+           // make a dummy variable to be used below
+-          avar = nm->mkBoundVar(nm->booleanType());
++          avar = NodeManager::mkBoundVar(nm->booleanType());
+           std::vector<Node> nodeValues(q[2][i].begin() + 1, q[2][i].end());
+           // set user attribute on the dummy variable
+           setUserAttribute(
+@@ -288,7 +288,7 @@ void QuantAttributes::computeQuantAttributes( Node q, QAttributes& qa ){
+                                 << " for " << q << std::endl;
+             // assign the name to a variable with the given name (to avoid
+             // enclosing the name in quotes)
+-            qa.d_name = nm->mkBoundVar(name, nm->booleanType());
++            qa.d_name = NodeManager::mkBoundVar(name, nm->booleanType());
+           }
+           else
+           {
+diff --git a/src/theory/quantifiers/quantifiers_macros.cpp b/src/theory/quantifiers/quantifiers_macros.cpp
+index 8fafddc89..ed0bb507c 100644
+--- a/src/theory/quantifiers/quantifiers_macros.cpp
++++ b/src/theory/quantifiers/quantifiers_macros.cpp
+@@ -265,7 +265,7 @@ Node QuantifiersMacros::solveEq(Node n, Node ndef)
+   for (const Node& nc : n)
+   {
+     vars.push_back(nc);
+-    Node v = nm->mkBoundVar(nc.getType());
++    Node v = NodeManager::mkBoundVar(nc.getType());
+     fvars.push_back(v);
+   }
+   Node fdef =
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index 4e5e484a3..2fb812d8d 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -1726,7 +1726,7 @@ Node QuantifiersRewriter::computePrenex(Node q,
+         else
+         {
+           // not specific to a quantified formula, use normal
+-          vv = nm->mkBoundVar(vt);
++          vv = NodeManager::mkBoundVar(vt);
+         }
+         subs.push_back(vv);
+       }
+diff --git a/src/theory/quantifiers/single_inv_partition.cpp b/src/theory/quantifiers/single_inv_partition.cpp
+index 9dd61ba02..e0a451e97 100644
+--- a/src/theory/quantifiers/single_inv_partition.cpp
++++ b/src/theory/quantifiers/single_inv_partition.cpp
+@@ -194,7 +194,7 @@ bool SingleInvocationPartition::init(std::vector<Node>& funcs,
+   {
+     std::stringstream ss;
+     ss << "s_" << j;
+-    Node si_v = nm->mkBoundVar(ss.str(), d_arg_types[j]);
++    Node si_v = NodeManager::mkBoundVar(ss.str(), d_arg_types[j]);
+     d_si_vars.push_back(si_v);
+   }
+   Assert(d_si_vars.size() == d_arg_types.size());
+diff --git a/src/theory/quantifiers/sygus/cegis.cpp b/src/theory/quantifiers/sygus/cegis.cpp
+index b0e4d5caf..aee908475 100644
+--- a/src/theory/quantifiers/sygus/cegis.cpp
++++ b/src/theory/quantifiers/sygus/cegis.cpp
+@@ -89,7 +89,7 @@ bool Cegis::initialize(Node conj, Node n, const std::vector<Node>& candidates)
+       std::vector<Node> vs;
+       for (const Node& v : vars)
+       {
+-        vs.push_back(nm->mkBoundVar(v.getType()));
++        vs.push_back(NodeManager::mkBoundVar(v.getType()));
+       }
+       std::vector<Node> eargs;
+       eargs.push_back(candidates[i]);
+diff --git a/src/theory/quantifiers/sygus/cegis_unif.cpp b/src/theory/quantifiers/sygus/cegis_unif.cpp
+index 2469d8ccb..4ea4b6b90 100644
+--- a/src/theory/quantifiers/sygus/cegis_unif.cpp
++++ b/src/theory/quantifiers/sygus/cegis_unif.cpp
+@@ -470,7 +470,8 @@ Node CegisUnifEnumDecisionStrategy::mkLiteral(unsigned n)
+     {
+       // we construct the default integer grammar with no variables, e.g.:
+       //   A -> 1 | A + A
+-      Node a = nm->mkBoundVar("_virtual_enum_grammar", nm->integerType());
++      Node a =
++          NodeManager::mkBoundVar("_virtual_enum_grammar", nm->integerType());
+       SygusGrammar g({}, {a});
+       g.addRules(a, {nm->mkConstInt(Rational(1)), nm->mkNode(Kind::ADD, a, a)});
+       d_virtual_enum = sm->mkDummySkolem("_ve", g.resolve());
+diff --git a/src/theory/quantifiers/sygus/embedding_converter.cpp b/src/theory/quantifiers/sygus/embedding_converter.cpp
+index b5fbf488d..e2d4734ef 100644
+--- a/src/theory/quantifiers/sygus/embedding_converter.cpp
++++ b/src/theory/quantifiers/sygus/embedding_converter.cpp
+@@ -112,8 +112,6 @@ Node EmbeddingConverter::process(Node q,
+   std::map<TypeNode, std::unordered_set<Node>> exc_cons;
+   std::map<TypeNode, std::unordered_set<Node>> inc_cons;
+ 
+-  NodeManager* nm = nodeManager();
+-
+   std::vector<Node> ebvl;
+   for (unsigned i = 0; i < q[0].getNumChildren(); i++)
+   {
+@@ -193,7 +191,7 @@ Node EmbeddingConverter::process(Node q,
+     }
+ 
+     // ev is the first-order variable corresponding to this synth fun
+-    Node ev = nm->mkBoundVar("f" + sf.getName(), tn);
++    Node ev = NodeManager::mkBoundVar("f" + sf.getName(), tn);
+     ebvl.push_back(ev);
+     Trace("cegqi") << "...embedding synth fun : " << sf << " -> " << ev
+                    << std::endl;
+@@ -241,7 +239,7 @@ Node EmbeddingConverter::process(Node q,
+       for (unsigned j = 0; j < sfvl.getNumChildren(); j++)
+       {
+         schildren.push_back(sfvl[j]);
+-        largs.push_back(nm->mkBoundVar(sfvl[j].getType()));
++        largs.push_back(NodeManager::mkBoundVar(sfvl[j].getType()));
+       }
+       std::vector<Node> subsfn_children;
+       subsfn_children.push_back(sf);
+@@ -375,7 +373,7 @@ Node EmbeddingConverter::convertToEmbedding(Node n)
+           std::vector<Node> vs;
+           for (const Node& v : vars)
+           {
+-            vs.push_back(nm->mkBoundVar(v.getType()));
++            vs.push_back(NodeManager::mkBoundVar(v.getType()));
+           }
+           Node lvl = nm->mkNode(Kind::BOUND_VAR_LIST, vs);
+           std::vector<Node> eargs;
+diff --git a/src/theory/quantifiers/sygus/print_sygus_to_builtin.cpp b/src/theory/quantifiers/sygus/print_sygus_to_builtin.cpp
+index 108623192..cb90023c2 100644
+--- a/src/theory/quantifiers/sygus/print_sygus_to_builtin.cpp
++++ b/src/theory/quantifiers/sygus/print_sygus_to_builtin.cpp
+@@ -26,7 +26,6 @@ namespace quantifiers {
+ 
+ Node getPrintableSygusToBuiltin(Node n)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   std::unordered_map<TNode, Node> visited;
+   std::unordered_map<TNode, Node>::iterator it;
+   std::vector<TNode> visit;
+@@ -77,7 +76,7 @@ Node getPrintableSygusToBuiltin(Node n)
+         // then, annotate with the name of the datatype
+         std::stringstream ss;
+         ss << "(! " << ret << " :gterm " << dt.getName() << ")";
+-        ret = nm->mkRawSymbol(ss.str(), ret.getType());
++        ret = NodeManager::mkRawSymbol(ss.str(), ret.getType());
+       }
+       visited[cur] = ret;
+     }
+diff --git a/src/theory/quantifiers/sygus/sygus_abduct.cpp b/src/theory/quantifiers/sygus/sygus_abduct.cpp
+index 3ed997411..17b2dc816 100644
+--- a/src/theory/quantifiers/sygus/sygus_abduct.cpp
++++ b/src/theory/quantifiers/sygus/sygus_abduct.cpp
+@@ -71,10 +71,10 @@ Node SygusAbduct::mkAbductionConjecture(const std::string& name,
+     // with UF.
+     std::stringstream ss;
+     ss << s;
+-    Node var = nm->mkBoundVar(tn);
++    Node var = NodeManager::mkBoundVar(tn);
+     syms.push_back(s);
+     vars.push_back(var);
+-    Node vlv = nm->mkBoundVar(ss.str(), tn);
++    Node vlv = NodeManager::mkBoundVar(ss.str(), tn);
+     varlist.push_back(vlv);
+     varlistTypes.push_back(tn);
+     // set that this variable encodes the term s
+@@ -87,7 +87,7 @@ Node SygusAbduct::mkAbductionConjecture(const std::string& name,
+   // make the abduction predicate to synthesize
+   TypeNode abdType = varlistTypes.empty() ? nm->booleanType()
+                                           : nm->mkPredicateType(varlistTypes);
+-  Node abd = nm->mkBoundVar(name.c_str(), abdType);
++  Node abd = NodeManager::mkBoundVar(name.c_str(), abdType);
+   Trace("sygus-abduct-debug") << "...finish" << std::endl;
+ 
+   // the sygus variable list
+diff --git a/src/theory/quantifiers/sygus/sygus_grammar_cons.cpp b/src/theory/quantifiers/sygus/sygus_grammar_cons.cpp
+index 0162d919d..f1cd4fa76 100644
+--- a/src/theory/quantifiers/sygus/sygus_grammar_cons.cpp
++++ b/src/theory/quantifiers/sygus/sygus_grammar_cons.cpp
+@@ -102,7 +102,7 @@ SygusGrammar SygusGrammarCons::mkDefaultGrammar(const Env& env,
+     std::vector<TypeNode> argTypes = range.getArgTypes();
+     for (const TypeNode& tn : argTypes)
+     {
+-      Node v = nm->mkBoundVar(tn);
++      Node v = NodeManager::mkBoundVar(tn);
+       vars.push_back(v);
+       // add variable as a terminal
+       trulesAll.push_back(v);
+@@ -228,13 +228,13 @@ SygusGrammar SygusGrammarCons::mkEmptyGrammar(const Env& env,
+     {
+       ss << t;
+     }
+-    Node a = nm->mkBoundVar(ss.str(), t);
++    Node a = NodeManager::mkBoundVar(ss.str(), t);
+     ntSyms.push_back(a);
+     // Some types require more than one non-terminal. Handle these cases here.
+     if (t.isReal())
+     {
+       // the positive real constant grammar, for denominators
+-      Node apc = nm->mkBoundVar("A_Real_PosC", t);
++      Node apc = NodeManager::mkBoundVar("A_Real_PosC", t);
+       ntSyms.push_back(apc);
+     }
+     if (tsgcm == options::SygusGrammarConsMode::ANY_TERM
+@@ -246,7 +246,7 @@ SygusGrammar SygusGrammarCons::mkEmptyGrammar(const Env& env,
+         // "any constant".
+         std::stringstream ssc;
+         ssc << "A_" << t << "_AnyC";
+-        Node aac = nm->mkBoundVar(ssc.str(), t);
++        Node aac = NodeManager::mkBoundVar(ssc.str(), t);
+         ntSyms.push_back(aac);
+       }
+     }
+@@ -689,7 +689,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+       // if there are not constructors yet by this point, which can happen,
+       // e.g. for unimplemented types that have no variables in the argument
+       // list of the function-to-synthesize, create a fresh ground term
+-      g.addRule(ntSym, nm->mkGroundTerm(tn));
++      g.addRule(ntSym, NodeManager::mkGroundTerm(tn));
+     }
+     // now, ITE which always comes last
+     bool considerIte = true;
+@@ -919,7 +919,7 @@ void SygusGrammarCons::mkSygusConstantsForType(const TypeNode& type,
+   else if (type.isArray() || type.isSet())
+   {
+     // generate constant array over the first element of the constituent type
+-    Node c = nm->mkGroundTerm(type);
++    Node c = NodeManager::mkGroundTerm(type);
+     // note that c should never contain an uninterpreted sort value
+     Assert(!expr::hasSubtermKind(Kind::UNINTERPRETED_SORT_VALUE, c));
+     ops.push_back(c);
+diff --git a/src/theory/quantifiers/sygus/sygus_interpol.cpp b/src/theory/quantifiers/sygus/sygus_interpol.cpp
+index b0f14c36a..ae7cb4559 100644
+--- a/src/theory/quantifiers/sygus/sygus_interpol.cpp
++++ b/src/theory/quantifiers/sygus/sygus_interpol.cpp
+@@ -81,9 +81,9 @@ void SygusInterpol::createVariables(bool needsShared)
+     // Notice that we allow for non-first class (e.g. function) variables here.
+     std::stringstream ss;
+     ss << s;
+-    Node var = nm->mkBoundVar(tn);
++    Node var = NodeManager::mkBoundVar(tn);
+     d_vars.push_back(var);
+-    Node vlv = nm->mkBoundVar(ss.str(), tn);
++    Node vlv = NodeManager::mkBoundVar(ss.str(), tn);
+     // set that this variable encodes the term s
+     SygusVarToTermAttribute sta;
+     vlv.setAttribute(sta, s);
+@@ -232,7 +232,7 @@ Node SygusInterpol::mkPredicate(const std::string& name)
+   TypeNode itpType = d_varTypesShared.empty()
+                          ? nm->booleanType()
+                          : nm->mkPredicateType(d_varTypesShared);
+-  Node itp = nm->mkBoundVar(name.c_str(), itpType);
++  Node itp = NodeManager::mkBoundVar(name.c_str(), itpType);
+   Trace("sygus-interpol-debug") << "...finish" << std::endl;
+   return itp;
+ }
+diff --git a/src/theory/quantifiers/sygus/sygus_random_enumerator.cpp b/src/theory/quantifiers/sygus/sygus_random_enumerator.cpp
+index 368ffa4da..afa8b96b2 100644
+--- a/src/theory/quantifiers/sygus/sygus_random_enumerator.cpp
++++ b/src/theory/quantifiers/sygus/sygus_random_enumerator.cpp
+@@ -108,7 +108,7 @@ Node SygusRandomEnumerator::incrementH()
+     if (d_argCons[currSkolemType].empty()
+         && d_noArgCons[currSkolemType].empty())
+     {
+-      groundTerm[currSkolem] = nm->mkGroundValue(currSkolemType);
++      groundTerm[currSkolem] = NodeManager::mkGroundValue(currSkolemType);
+       continue;
+     }
+     stack.push_back(currSkolem);
+@@ -139,7 +139,7 @@ Node SygusRandomEnumerator::incrementH()
+     TypeNode skolemType = skolem.getType();
+     if (d_noArgCons[skolemType].empty())
+     {
+-      groundTerm[skolem] = nm->mkGroundValue(skolemType);
++      groundTerm[skolem] = NodeManager::mkGroundValue(skolemType);
+     }
+     else
+     {
+diff --git a/src/theory/quantifiers/sygus/sygus_reconstruct.cpp b/src/theory/quantifiers/sygus/sygus_reconstruct.cpp
+index 018622e98..356eba9dc 100644
+--- a/src/theory/quantifiers/sygus/sygus_reconstruct.cpp
++++ b/src/theory/quantifiers/sygus/sygus_reconstruct.cpp
+@@ -559,10 +559,9 @@ Node SygusReconstruct::mkGround(Node n) const
+   std::unordered_map<TNode, TNode> subs;
+ 
+   // generate a ground value for each one of those variables
+-  NodeManager* nm = nodeManager();
+   for (const Node& var : vars)
+   {
+-    subs.emplace(var, nm->mkGroundValue(var.getType()));
++    subs.emplace(var, NodeManager::mkGroundValue(var.getType()));
+   }
+ 
+   // substitute the variables with ground values
+diff --git a/src/theory/quantifiers/sygus/sygus_unif_strat.cpp b/src/theory/quantifiers/sygus/sygus_unif_strat.cpp
+index afe145cfe..576865cb9 100644
+--- a/src/theory/quantifiers/sygus/sygus_unif_strat.cpp
++++ b/src/theory/quantifiers/sygus/sygus_unif_strat.cpp
+@@ -610,7 +610,7 @@ void SygusUnifStrategy::buildStrategyGraph(TypeNode tn, NodeRole nrole)
+           if (sol_templ_children[j].isNull())
+           {
+             sol_templ_children[j] =
+-                nm->mkGroundTerm(cop_to_sks[cop][j].getType());
++                NodeManager::mkGroundTerm(cop_to_sks[cop][j].getType());
+           }
+         }
+         sol_templ_children.insert(sol_templ_children.begin(), cop);
+diff --git a/src/theory/quantifiers/sygus/sygus_utils.cpp b/src/theory/quantifiers/sygus/sygus_utils.cpp
+index 2c34c5935..a7cffb938 100644
+--- a/src/theory/quantifiers/sygus/sygus_utils.cpp
++++ b/src/theory/quantifiers/sygus/sygus_utils.cpp
+@@ -172,7 +172,7 @@ Node SygusUtils::getOrMkSygusArgumentList(Node f)
+     {
+       std::stringstream ss;
+       ss << "arg" << j;
+-      bvs.push_back(nm->mkBoundVar(ss.str(), argTypes[j]));
++      bvs.push_back(NodeManager::mkBoundVar(ss.str(), argTypes[j]));
+     }
+     sfvl = nm->mkNode(Kind::BOUND_VAR_LIST, bvs);
+     f.setAttribute(SygusSynthFunVarListAttribute(), sfvl);
+@@ -231,17 +231,17 @@ Node SygusUtils::mkSygusTermFor(const Node& f)
+     if (f.getType().isFunction())
+     {
+       Assert(!bvl.isNull());
+-      ret = nm->mkGroundValue(f.getType().getRangeType());
++      ret = NodeManager::mkGroundValue(f.getType().getRangeType());
+       // give the appropriate variable list
+       ret = nm->mkNode(Kind::LAMBDA, bvl, ret);
+     }
+     else
+     {
+-      ret = nm->mkGroundValue(f.getType());
++      ret = NodeManager::mkGroundValue(f.getType());
+     }
+     return ret;
+   }
+-  Node ret = nm->mkGroundValue(tn);
++  Node ret = NodeManager::mkGroundValue(tn);
+   // use external=true
+   ret = datatypes::utils::sygusToBuiltin(ret, true);
+   if (!bvl.isNull())
+diff --git a/src/theory/quantifiers/sygus/synth_conjecture.cpp b/src/theory/quantifiers/sygus/synth_conjecture.cpp
+index fbcce9151..585daba84 100644
+--- a/src/theory/quantifiers/sygus/synth_conjecture.cpp
++++ b/src/theory/quantifiers/sygus/synth_conjecture.cpp
+@@ -190,7 +190,7 @@ void SynthConjecture::assign(Node q)
+         std::vector<Node> lvars;
+         for (const TypeNode& tn : atypes)
+         {
+-          lvars.push_back(nm->mkBoundVar(tn));
++          lvars.push_back(NodeManager::mkBoundVar(tn));
+         }
+         s = nm->mkNode(
+             Kind::LAMBDA, nm->mkNode(Kind::BOUND_VAR_LIST, lvars), s);
+diff --git a/src/theory/sets/set_reduction.cpp b/src/theory/sets/set_reduction.cpp
+index 1ceae4c64..a1e105b76 100644
+--- a/src/theory/sets/set_reduction.cpp
++++ b/src/theory/sets/set_reduction.cpp
+@@ -145,7 +145,7 @@ Node SetReduction::reduceProjectOperator(Node n)
+   TypeNode elementType = A.getType().getSetElementType();
+   ProjectOp projectOp = n.getOperator().getConst<ProjectOp>();
+   Node op = nm->mkConst(Kind::TUPLE_PROJECT_OP, projectOp);
+-  Node t = nm->mkBoundVar("t", elementType);
++  Node t = NodeManager::mkBoundVar("t", elementType);
+   Node projection = nm->mkNode(Kind::TUPLE_PROJECT, op, t);
+   Node lambda =
+       nm->mkNode(Kind::LAMBDA, nm->mkNode(Kind::BOUND_VAR_LIST, t), projection);
+diff --git a/src/theory/sets/theory_sets_private.cpp b/src/theory/sets/theory_sets_private.cpp
+index 2000bfa8d..79d48557c 100644
+--- a/src/theory/sets/theory_sets_private.cpp
++++ b/src/theory/sets/theory_sets_private.cpp
+@@ -1338,7 +1338,7 @@ void TheorySetsPrivate::checkReduceComprehensions()
+       continue;
+     }
+     d_termProcessed.insert(n);
+-    Node v = nm->mkBoundVar(n[2].getType());
++    Node v = NodeManager::mkBoundVar(n[2].getType());
+     Node body = nm->mkNode(Kind::AND, n[1], v.eqNode(n[2]));
+     // must do substitution
+     std::vector<Node> vars;
+@@ -1346,7 +1346,7 @@ void TheorySetsPrivate::checkReduceComprehensions()
+     for (const Node& cv : n[0])
+     {
+       vars.push_back(cv);
+-      Node cvs = nm->mkBoundVar(cv.getType());
++      Node cvs = NodeManager::mkBoundVar(cv.getType());
+       subs.push_back(cvs);
+     }
+     body = body.substitute(vars.begin(), vars.end(), subs.begin(), subs.end());
+@@ -1730,7 +1730,7 @@ TrustNode TheorySetsPrivate::expandChooseOperator(
+   TypeNode setType = A.getType();
+   ensureFirstClassSetType(setType);
+   // use canonical constant to ensure it can be typed
+-  Node mkElem = nm->mkGroundValue(setType);
++  Node mkElem = NodeManager::mkGroundValue(setType);
+   // a Null node is used here to get a unique skolem function per set type
+   Node uf = sm->mkSkolemFunction(SkolemId::SETS_CHOOSE, mkElem);
+   Node ufA = nodeManager()->mkNode(Kind::APPLY_UF, uf, A);
+diff --git a/src/theory/smt_engine_subsolver.cpp b/src/theory/smt_engine_subsolver.cpp
+index 8db6b4419..5e3131cdf 100644
+--- a/src/theory/smt_engine_subsolver.cpp
++++ b/src/theory/smt_engine_subsolver.cpp
+@@ -139,10 +139,9 @@ Result checkWithSubsolver(Node query,
+     if (r.getStatus() == Result::SAT)
+     {
+       // default model
+-      NodeManager* nm = NodeManager::currentNM();
+       for (const Node& v : vars)
+       {
+-        modelVals.push_back(nm->mkGroundTerm(v.getType()));
++        modelVals.push_back(NodeManager::mkGroundTerm(v.getType()));
+       }
+     }
+     return r;
+diff --git a/src/theory/sort_inference.cpp b/src/theory/sort_inference.cpp
+index 902aaf3ca..82f3372a8 100644
+--- a/src/theory/sort_inference.cpp
++++ b/src/theory/sort_inference.cpp
+@@ -629,7 +629,7 @@ Node SortInference::getNewSymbol( Node old, TypeNode tn ){
+   {
+     std::stringstream ss;
+     ss << "b_" << old;
+-    return nm->mkBoundVar(ss.str(), tn);
++    return NodeManager::mkBoundVar(ss.str(), tn);
+   }
+   std::stringstream ss;
+   ss << "i_" << old;
+@@ -820,8 +820,8 @@ Node SortInference::mkInjection( TypeNode tn1, TypeNode tn2 ) {
+   Node f =
+       sm->mkDummySkolem("inj", typ, "injection for monotonicity constraint");
+   Trace("sort-inference") << "-> Make injection " << f << " from " << tn1 << " to " << tn2 << std::endl;
+-  Node v1 = nm->mkBoundVar("?x", tn1);
+-  Node v2 = nm->mkBoundVar("?y", tn1);
++  Node v1 = NodeManager::mkBoundVar("?x", tn1);
++  Node v2 = NodeManager::mkBoundVar("?y", tn1);
+   Node ret =
+       nm->mkNode(Kind::FORALL,
+                  nm->mkNode(Kind::BOUND_VAR_LIST, v1, v2),
+diff --git a/src/theory/strings/arith_entail.cpp b/src/theory/strings/arith_entail.cpp
+index 331ad65e5..10fa355c3 100644
+--- a/src/theory/strings/arith_entail.cpp
++++ b/src/theory/strings/arith_entail.cpp
+@@ -864,7 +864,7 @@ bool ArithEntail::checkWithAssumption(Node assumption,
+       y = assumption[0][0];
+     }
+ 
+-    Node s = nm->mkBoundVar("slackVal", nm->stringType());
++    Node s = NodeManager::mkBoundVar("slackVal", nm->stringType());
+     Node slen = nm->mkNode(Kind::STRING_LENGTH, s);
+     Node sleny = nm->mkNode(Kind::ADD, y, slen);
+     Node rr = rewriteArith(nm->mkNode(Kind::SUB, x, sleny));
+diff --git a/src/theory/theory_model.cpp b/src/theory/theory_model.cpp
+index 964455bde..7ff89fba1 100644
+--- a/src/theory/theory_model.cpp
++++ b/src/theory/theory_model.cpp
+@@ -121,8 +121,7 @@ std::vector<Node> TheoryModel::getDomainElements(TypeNode tn) const
+     // Sorts are always interpreted as non-empty, thus we add a single element.
+     // We use mkGroundValue here, since domain elements must all be
+     // of UNINTERPRETED_SORT_VALUE kind.
+-    NodeManager* nm = nodeManager();
+-    elements.push_back(nm->mkGroundValue(tn));
++    elements.push_back(NodeManager::mkGroundValue(tn));
+     return elements;
+   }
+   return *type_refs;
+@@ -350,7 +349,7 @@ Node TheoryModel::getModelValue(TNode n) const
+         vector<Node> args;
+         for (unsigned i = 0, size = argTypes.size(); i < size; ++i)
+         {
+-          args.push_back(nm->mkBoundVar(argTypes[i]));
++          args.push_back(NodeManager::mkBoundVar(argTypes[i]));
+         }
+         Node boundVarList = nm->mkNode(Kind::BOUND_VAR_LIST, args);
+         TypeEnumerator te(t.getRangeType());
+diff --git a/src/theory/uf/ho_extension.cpp b/src/theory/uf/ho_extension.cpp
+index fcdb43863..a3b673017 100644
+--- a/src/theory/uf/ho_extension.cpp
++++ b/src/theory/uf/ho_extension.cpp
+@@ -227,7 +227,7 @@ Node HoExtension::getApplyUfForHoApply(Node node)
+         {
+           TypeNode vt = v.getType();
+           newTypes.push_back(vt);
+-          Node nv = nm->mkBoundVar(vt);
++          Node nv = NodeManager::mkBoundVar(vt);
+           vs.push_back(v);
+           nvs.push_back(nv);
+         }
+diff --git a/src/theory/uf/theory_uf_type_rules.cpp b/src/theory/uf/theory_uf_type_rules.cpp
+index 1e102a826..267af22d1 100644
+--- a/src/theory/uf/theory_uf_type_rules.cpp
++++ b/src/theory/uf/theory_uf_type_rules.cpp
+@@ -280,7 +280,7 @@ Node FunctionProperties::mkGroundTerm(TypeNode type)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+   Node bvl = nm->getBoundVarListForFunctionType(type);
+-  Node ret = nm->mkGroundTerm(type.getRangeType());
++  Node ret = NodeManager::mkGroundTerm(type.getRangeType());
+   return nm->mkNode(Kind::LAMBDA, bvl, ret);
+ }
+ 
+-- 
+2.47.1
+

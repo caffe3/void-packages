@@ -1,0 +1,157 @@
+From 5c38437a4fc9180c3511c55258d31dfbc489cf95 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 18 Sep 2024 11:35:40 -0500
+Subject: [PATCH 058/312] Do not insist that ensureType is called on
+ instantiations (#11202)
+
+This check was only necessary when we had Int/Real subtyping, which does
+not exist anymore.
+
+This method was taking 6% on a toy example.
+---
+ src/theory/quantifiers/instantiate.cpp     | 34 ++--------------------
+ src/theory/quantifiers/instantiate.h       |  6 ----
+ src/theory/quantifiers/relevant_domain.cpp |  2 +-
+ src/theory/quantifiers/term_util.cpp       | 18 ++++++++++++
+ src/theory/quantifiers/term_util.h         |  5 ++++
+ 5 files changed, 26 insertions(+), 39 deletions(-)
+
+diff --git a/src/theory/quantifiers/instantiate.cpp b/src/theory/quantifiers/instantiate.cpp
+index 96354ca5d..0cb8a9d9a 100644
+--- a/src/theory/quantifiers/instantiate.cpp
++++ b/src/theory/quantifiers/instantiate.cpp
+@@ -133,21 +133,9 @@ bool Instantiate::addInstantiationInternal(
+   // ensure the terms are non-null and well-typed
+   for (size_t i = 0, size = terms.size(); i < size; i++)
+   {
+-    TypeNode tn = q[0][i].getType();
+     if (terms[i].isNull())
+     {
+-      terms[i] = d_treg.getTermForType(tn);
+-    }
+-    // Ensure the type is correct, this for instance ensures that real terms
+-    // are cast to integers for { x -> t } where x has type Int and t has
+-    // type Real.
+-    terms[i] = ensureType(terms[i], tn);
+-    if (terms[i].isNull())
+-    {
+-      Trace("inst-add-debug")
+-          << " --> Failed to make term vector, due to term/type restrictions."
+-          << std::endl;
+-      return false;
++      terms[i] = d_treg.getTermForType(q[0][i].getType());
+     }
+   }
+ #ifdef CVC5_ASSERTIONS
+@@ -155,6 +143,7 @@ bool Instantiate::addInstantiationInternal(
+   {
+     TypeNode tn = q[0][i].getType();
+     Assert(!terms[i].isNull());
++    Assert (terms[i].getType()==tn);
+     bool bad_inst = false;
+     if (TermUtil::containsUninterpretedConstant(terms[i]))
+     {
+@@ -752,25 +741,6 @@ void Instantiate::debugPrintModel()
+   }
+ }
+ 
+-Node Instantiate::ensureType(Node n, TypeNode tn)
+-{
+-  Trace("inst-add-debug2") << "Ensure " << n << " : " << tn << std::endl;
+-  TypeNode ntn = n.getType();
+-  if (ntn == tn)
+-  {
+-    return n;
+-  }
+-  if (tn.isInteger())
+-  {
+-    return NodeManager::currentNM()->mkNode(Kind::TO_INTEGER, n);
+-  }
+-  else if (tn.isReal())
+-  {
+-    return NodeManager::currentNM()->mkNode(Kind::TO_REAL, n);
+-  }
+-  return Node::null();
+-}
+-
+ InstLemmaList* Instantiate::getOrMkInstLemmaList(TNode q)
+ {
+   NodeInstListMap::iterator it = d_insts.find(q);
+diff --git a/src/theory/quantifiers/instantiate.h b/src/theory/quantifiers/instantiate.h
+index 7afa47d7d..a6d7dc75c 100644
+--- a/src/theory/quantifiers/instantiate.h
++++ b/src/theory/quantifiers/instantiate.h
+@@ -294,12 +294,6 @@ class Instantiate : public QuantifiersUtil
+   }; /* class Instantiate::Statistics */
+   Statistics d_statistics;
+ 
+-  /**
+-   * Ensure that n has type tn, return a term equivalent to it for that type
+-   * if possible.
+-   */
+-  static Node ensureType(Node n, TypeNode tn);
+-
+  private:
+   /** Add instantiation internal */
+   bool addInstantiationInternal(Node q,
+diff --git a/src/theory/quantifiers/relevant_domain.cpp b/src/theory/quantifiers/relevant_domain.cpp
+index f9f76bcb0..58f854761 100644
+--- a/src/theory/quantifiers/relevant_domain.cpp
++++ b/src/theory/quantifiers/relevant_domain.cpp
+@@ -446,7 +446,7 @@ void RelevantDomain::computeRelevantDomainLit( Node q, bool hasPol, bool pol, No
+     // Ensure that rAdd has the same type as the variable. This is necessary
+     // since GEQ may mix Int and Real, as well as the equality solving above
+     // may introduce mixed Int and Real.
+-    rAdd = Instantiate::ensureType(rAdd, rVar.getType());
++    rAdd = TermUtil::ensureType(rAdd, rVar.getType());
+   }
+   if (!rAdd.isNull() && !TermUtil::hasInstConstAttr(rAdd))
+   {
+diff --git a/src/theory/quantifiers/term_util.cpp b/src/theory/quantifiers/term_util.cpp
+index cb0132783..bd059fedf 100644
+--- a/src/theory/quantifiers/term_util.cpp
++++ b/src/theory/quantifiers/term_util.cpp
+@@ -648,6 +648,24 @@ bool TermUtil::hasOffsetArg(Kind ik, int arg, int& offset, Kind& ok)
+   return false;
+ }
+ 
++Node TermUtil::ensureType(Node n, TypeNode tn)
++{
++  TypeNode ntn = n.getType();
++  if (ntn == tn)
++  {
++    return n;
++  }
++  if (tn.isInteger())
++  {
++    return NodeManager::currentNM()->mkNode(Kind::TO_INTEGER, n);
++  }
++  else if (tn.isReal())
++  {
++    return NodeManager::currentNM()->mkNode(Kind::TO_REAL, n);
++  }
++  return Node::null();
++}
++
+ }  // namespace quantifiers
+ }  // namespace theory
+ }  // namespace cvc5::internal
+diff --git a/src/theory/quantifiers/term_util.h b/src/theory/quantifiers/term_util.h
+index abd916f2e..105b218db 100644
+--- a/src/theory/quantifiers/term_util.h
++++ b/src/theory/quantifiers/term_util.h
+@@ -217,6 +217,11 @@ public:
+    * minimum and maximum elements, for example tn is Bool or BitVector.
+    */
+   static Node mkTypeConst(TypeNode tn, bool pol);
++  /**
++   * Ensure that n has type tn, return a term equivalent to it for that type
++   * if possible.
++   */
++  static Node ensureType(Node n, TypeNode tn);
+ };/* class TermUtil */
+ 
+ }  // namespace quantifiers
+-- 
+2.47.1
+

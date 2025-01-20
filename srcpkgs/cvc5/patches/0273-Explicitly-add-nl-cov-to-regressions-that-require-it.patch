@@ -1,0 +1,161 @@
+From a991790c39f9fef36f8f6b8795bf639fa7880fc6 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 7 Jan 2025 11:08:04 -0600
+Subject: [PATCH 273/312] Explicitly add nl-cov to regressions that require it
+ (#11482)
+
+This is in preparation for CI for "safe" mode.
+
+Note `--nl-cov` will be disabled by default when safe options is
+enabled, and thus any regression requiring `nl-cov` to be enabled should
+explicitly have it marked in the regression, so that safe options
+ignores the regression.
+---
+ test/regress/cli/regress0/arith/arith-rewrite-with-ran.smt2  | 1 +
+ test/regress/cli/regress0/nl/issue3003.smt2                  | 2 +-
+ test/regress/cli/regress0/nl/issue3652.smt2                  | 5 +++--
+ test/regress/cli/regress0/nl/issue3719.smt2                  | 1 +
+ test/regress/cli/regress0/nl/issue6547-ran-model.smt2        | 1 +
+ test/regress/cli/regress0/nl/issue6619-ran-model.smt2        | 1 +
+ test/regress/cli/regress0/nl/issue8226-ran-refinement.smt2   | 2 +-
+ .../cli/regress0/nl/proj-issue-444-memout-eqelim.smt2        | 1 +
+ test/regress/cli/regress0/nl/real-as-int.smt2                | 2 +-
+ test/regress/cli/regress0/nl/sin-cos-346-b-chunk-0169.smt2   | 2 +-
+ test/regress/cli/regress0/nl/sqrt2-value.smt2                | 1 +
+ test/regress/cli/regress1/nl/approx-sqrt.smt2                | 1 +
+ .../cli/regress1/nl/issue3300-approx-sqrt-witness.smt2       | 2 +-
+ 13 files changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/test/regress/cli/regress0/arith/arith-rewrite-with-ran.smt2 b/test/regress/cli/regress0/arith/arith-rewrite-with-ran.smt2
+index f413737cc..717d7eb58 100644
+--- a/test/regress/cli/regress0/arith/arith-rewrite-with-ran.smt2
++++ b/test/regress/cli/regress0/arith/arith-rewrite-with-ran.smt2
+@@ -1,3 +1,4 @@
++; COMMAND-LINE: --nl-cov
+ ; REQUIRES: poly
+ ; EXPECT: sat
+ (set-logic QF_NRA)
+diff --git a/test/regress/cli/regress0/nl/issue3003.smt2 b/test/regress/cli/regress0/nl/issue3003.smt2
+index 5ef198120..dc965e40c 100644
+--- a/test/regress/cli/regress0/nl/issue3003.smt2
++++ b/test/regress/cli/regress0/nl/issue3003.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --nl-ext=none
++; COMMAND-LINE: --nl-ext=none --nl-cov
+ ; EXPECT: sat
+ ; REQUIRES: poly
+ (set-logic QF_NRA)
+diff --git a/test/regress/cli/regress0/nl/issue3652.smt2 b/test/regress/cli/regress0/nl/issue3652.smt2
+index ede4fc368..b3f189076 100644
+--- a/test/regress/cli/regress0/nl/issue3652.smt2
++++ b/test/regress/cli/regress0/nl/issue3652.smt2
+@@ -1,5 +1,6 @@
+-;REQUIRES: poly
+-;EXPECT: sat
++; COMMAND-LINE: --nl-cov
++; REQUIRES: poly
++; EXPECT: sat
+ (set-logic QF_NRA)
+ (declare-fun a () Real)
+ (assert (= (* a a) 2))
+diff --git a/test/regress/cli/regress0/nl/issue3719.smt2 b/test/regress/cli/regress0/nl/issue3719.smt2
+index 382bb1a6a..2a90a5881 100644
+--- a/test/regress/cli/regress0/nl/issue3719.smt2
++++ b/test/regress/cli/regress0/nl/issue3719.smt2
+@@ -1,3 +1,4 @@
++; COMMAND-LINE: --nl-cov
+ ; REQUIRES: poly
+ (set-logic QF_NRA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/nl/issue6547-ran-model.smt2 b/test/regress/cli/regress0/nl/issue6547-ran-model.smt2
+index 45642873a..761cb9f67 100644
+--- a/test/regress/cli/regress0/nl/issue6547-ran-model.smt2
++++ b/test/regress/cli/regress0/nl/issue6547-ran-model.smt2
+@@ -1,3 +1,4 @@
++; COMMAND-LINE: --nl-cov
+ ; REQUIRES: poly
+ ; EXPECT: sat
+ (set-logic QF_NRA)
+diff --git a/test/regress/cli/regress0/nl/issue6619-ran-model.smt2 b/test/regress/cli/regress0/nl/issue6619-ran-model.smt2
+index a065824b0..800c274a2 100644
+--- a/test/regress/cli/regress0/nl/issue6619-ran-model.smt2
++++ b/test/regress/cli/regress0/nl/issue6619-ran-model.smt2
+@@ -1,3 +1,4 @@
++; COMMAND-LINE: --nl-cov
+ ; REQUIRES: poly
+ ; EXPECT: sat
+ (set-logic QF_NRA)
+diff --git a/test/regress/cli/regress0/nl/issue8226-ran-refinement.smt2 b/test/regress/cli/regress0/nl/issue8226-ran-refinement.smt2
+index c917f4057..c11e4f814 100644
+--- a/test/regress/cli/regress0/nl/issue8226-ran-refinement.smt2
++++ b/test/regress/cli/regress0/nl/issue8226-ran-refinement.smt2
+@@ -1,6 +1,6 @@
+ ;; needs --check-models, as --debug-check-models does not trigger the issue
+ ; REQUIRES: poly
+-; COMMAND-LINE: --check-models
++; COMMAND-LINE: --check-models --nl-cov
+ ; EXPECT: sat
+ (set-logic QF_NRA)
+ (declare-fun r1 () Real)
+diff --git a/test/regress/cli/regress0/nl/proj-issue-444-memout-eqelim.smt2 b/test/regress/cli/regress0/nl/proj-issue-444-memout-eqelim.smt2
+index 479dc3905..e5a04d99d 100644
+--- a/test/regress/cli/regress0/nl/proj-issue-444-memout-eqelim.smt2
++++ b/test/regress/cli/regress0/nl/proj-issue-444-memout-eqelim.smt2
+@@ -1,3 +1,4 @@
++; COMMAND-LINE: --nl-cov
+ ; REQUIRES: poly
+ ; EXPECT: sat
+ (set-logic QF_UFNRA)
+diff --git a/test/regress/cli/regress0/nl/real-as-int.smt2 b/test/regress/cli/regress0/nl/real-as-int.smt2
+index 8f7f2e535..6c09457b0 100644
+--- a/test/regress/cli/regress0/nl/real-as-int.smt2
++++ b/test/regress/cli/regress0/nl/real-as-int.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --solve-real-as-int 
++; COMMAND-LINE: --solve-real-as-int
+ ; EXPECT: sat
+ (set-logic QF_NRA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/nl/sin-cos-346-b-chunk-0169.smt2 b/test/regress/cli/regress0/nl/sin-cos-346-b-chunk-0169.smt2
+index ab10a29a5..48974a3f0 100644
+--- a/test/regress/cli/regress0/nl/sin-cos-346-b-chunk-0169.smt2
++++ b/test/regress/cli/regress0/nl/sin-cos-346-b-chunk-0169.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --nl-ext-tplanes
++; COMMAND-LINE: --nl-ext-tplanes --nl-cov
+ ; REQUIRES: poly
+ ; EXPECT: sat
+ (set-info :smt-lib-version 2.6)
+diff --git a/test/regress/cli/regress0/nl/sqrt2-value.smt2 b/test/regress/cli/regress0/nl/sqrt2-value.smt2
+index 0e5abd61f..19562ddc6 100644
+--- a/test/regress/cli/regress0/nl/sqrt2-value.smt2
++++ b/test/regress/cli/regress0/nl/sqrt2-value.smt2
+@@ -1,4 +1,5 @@
+ ; SCRUBBER: sed -e 's/(_ real_algebraic_number <.*>)/value/'
++; COMMAND-LINE: --nl-cov
+ ; REQUIRES: poly
+ ; EXPECT: sat
+ ; EXPECT: ((x value))
+diff --git a/test/regress/cli/regress1/nl/approx-sqrt.smt2 b/test/regress/cli/regress1/nl/approx-sqrt.smt2
+index be2482eb1..4e44d79ff 100644
+--- a/test/regress/cli/regress1/nl/approx-sqrt.smt2
++++ b/test/regress/cli/regress1/nl/approx-sqrt.smt2
+@@ -1,3 +1,4 @@
++; COMMAND-LINE: --nl-cov
+ ; REQUIRES: poly
+ ; EXPECT: sat
+ (set-logic QF_NRA)
+diff --git a/test/regress/cli/regress1/nl/issue3300-approx-sqrt-witness.smt2 b/test/regress/cli/regress1/nl/issue3300-approx-sqrt-witness.smt2
+index fa9616847..e1a22c1c1 100644
+--- a/test/regress/cli/regress1/nl/issue3300-approx-sqrt-witness.smt2
++++ b/test/regress/cli/regress1/nl/issue3300-approx-sqrt-witness.smt2
+@@ -1,5 +1,5 @@
+ ; SCRUBBER: sed -e 's/((x (_ real_algebraic_number .*/((x (_ real_algebraic_number/'
+-; COMMAND-LINE: --produce-models
++; COMMAND-LINE: --produce-models --nl-cov
+ ; REQUIRES: poly
+ ; EXPECT: sat
+ ; EXPECT: ((x (_ real_algebraic_number
+-- 
+2.47.1
+

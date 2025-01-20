@@ -1,0 +1,243 @@
+From 60d2c7bd1c74bc71bec12b6d01788f248e1b2e9b Mon Sep 17 00:00:00 2001
+From: Vinicius Gomes <vinicius.svgomes@gmail.com>
+Date: Wed, 21 Aug 2024 16:53:01 -0300
+Subject: [PATCH 037/312] Adds the Carcara proof checker infrastructure
+ (#10529)
+
+This PR adds the [Carcara](https://github.com/ufmg-smite/carcara)
+infrastructure.
+
+Future PR's will add the updates that will allow run Carcara in the
+regression tests and verify proofs in the Alethe format.
+
+Signed-off-by: Vinicius S. Gomes
+[vinisilvag@ufmg.br](mailto:vinisilvag@ufmg.br)
+
+---------
+
+Co-authored-by: Haniel Barbosa <hanielbbarbosa@gmail.com>
+---
+ contrib/get-carcara-checker        | 70 ++++++++++++++++++++++++++++++
+ test/regress/cli/CMakeLists.txt    |  1 +
+ test/regress/cli/run_regression.py | 66 ++++++++++++++++++++++++++++
+ 3 files changed, 137 insertions(+)
+ create mode 100755 contrib/get-carcara-checker
+
+diff --git a/contrib/get-carcara-checker b/contrib/get-carcara-checker
+new file mode 100755
+index 000000000..43bf2f6f2
+--- /dev/null
++++ b/contrib/get-carcara-checker
+@@ -0,0 +1,70 @@
++#!/usr/bin/env bash
++
++# utility function to download a file
++function download {
++  if [ -x "$(command -v wget)" ]; then
++    wget -c -O "$2" "$1"
++  elif [ -x "$(command -v curl)" ]; then
++    curl -L "$1" >"$2"
++  else
++    echo "Can't figure out how to download from web.  Please install wget or curl." >&2
++    exit 1
++  fi
++}
++
++CVC_DIR=$(dirname $(dirname "$0"))
++mkdir -p $CVC_DIR/deps
++pushd $CVC_DIR/deps
++
++BASE_DIR=`pwd`
++mkdir -p $BASE_DIR/tmp/
++
++###### Carcara
++CARCARA_DIR="$BASE_DIR/carcara"
++mkdir -p $CARCARA_DIR
++
++# download and unpack Carcara
++CARCARA_VERSION="e770994b5d981257d53a83d38a679fa98c144005"
++download "https://github.com/hanielb/carcara/archive/$CARCARA_VERSION.tar.gz" $BASE_DIR/tmp/carcara.tgz
++tar --strip 1 -xzf $BASE_DIR/tmp/carcara.tgz -C $CARCARA_DIR
++
++# build carcara
++pushd $CARCARA_DIR
++cargo build --release
++mkdir -p $BASE_DIR/bin
++cp ./target/release/carcara $BASE_DIR/bin/carcara
++popd
++
++cat << EOF > $BASE_DIR/bin/cvc5-carcara-check.sh
++#!/usr/bin/env bash
++echo "=== Generate proof: \$@"
++echo "> \$2.alethe"
++$BASE_DIR/bin/cvc5-alethe-proof.sh \$@ > \$2.alethe
++echo "=== Check proof with Carcara"
++$BASE_DIR/bin/carcara-check.sh \$2.alethe \$2
++EOF
++chmod +x $BASE_DIR/bin/cvc5-carcara-check.sh
++
++cat << EOF > $BASE_DIR/bin/cvc5-alethe-proof.sh
++#!/usr/bin/env bash
++# call cvc5 and remove the first line of the output (should be "unsat")
++\$@ --dump-proofs --proof-format=alethe --proof-alethe-experimental | tail -n +2
++EOF
++chmod +x $BASE_DIR/bin/cvc5-alethe-proof.sh
++
++cat << EOF > $BASE_DIR/bin/carcara-check.sh
++#!/usr/bin/env bash
++$BASE_DIR/bin/carcara check --allow-int-real-subtyping --expand-let-bindings --ignore-unknown-rules \$@ > carcara.out
++cat carcara.out
++rm carcara.out
++EOF
++chmod +x $BASE_DIR/bin/carcara-check.sh
++
++echo ""
++echo "========== How to use Carcara =========="
++echo "Generate an Alethe proof with cvc5 (for terms printed without sharing, use --dag-thresh=0):"
++echo "  $CVC_DIR/deps/bin/cvc5-alethe-proof.sh cvc5 <input file> <options>"
++echo "Check a proof:"
++echo "  $CVC_DIR/deps/bin/carcara-check.sh <proof file> <input file>"
++echo "Run cvc5 and check the generated proof:"
++echo "  $CVC_DIR/deps/bin/cvc5-carcara-check.sh cvc5 <input file> <options>"
+\ No newline at end of file
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 390f8ce98..d3c412970 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -3971,6 +3971,7 @@ macro(cvc5_add_regression_test level file)
+     ${RUN_REGRESSION_ARGS}
+     --lfsc-binary ${CMAKE_SOURCE_DIR}/deps/bin/lfscc
+     --lfsc-sig-dir ${CMAKE_SOURCE_DIR}/proofs/lfsc/signatures
++    --carcara-binary ${CMAKE_SOURCE_DIR}/deps/bin/carcara
+     --ethos-binary ${CMAKE_SOURCE_DIR}/deps/bin/ethos
+     --cpc-sig-dir ${CMAKE_SOURCE_DIR}/proofs/eo
+     ${wrapper}
+diff --git a/test/regress/cli/run_regression.py b/test/regress/cli/run_regression.py
+index 7c55c6e13..521125cd4 100755
+--- a/test/regress/cli/run_regression.py
++++ b/test/regress/cli/run_regression.py
+@@ -262,6 +262,64 @@ class LfscTester(Tester):
+             print_ok("OK")
+         return exit_code
+ 
++class AletheTester(Tester):
++    def __init__(self):
++        super().__init__("alethe")
++
++    def applies(self, benchmark_info):
++        return (
++            benchmark_info.benchmark_ext != ".sy"
++            and benchmark_info.expected_output.strip() == "unsat"
++        )
++
++    def run_internal(self, benchmark_info):
++        exit_code = EXIT_OK
++        with tempfile.NamedTemporaryFile(suffix=".smt2.proof") as tmpf:
++            cvc5_args = benchmark_info.command_line_args + [
++                "--dump-proofs",
++                "--proof-format=alethe",
++                "--proof-alethe-experimental"
++            ]
++            # remove duplicates
++            cvc5_args = list(dict.fromkeys(cvc5_args))
++            output, error, exit_status = run_process(
++                [benchmark_info.cvc5_binary]
++                + cvc5_args
++                + [benchmark_info.benchmark_basename],
++                benchmark_info.benchmark_dir,
++                benchmark_info.timeout,
++            )
++            tmpf.write(output.strip("unsat\n".encode()))
++            tmpf.flush()
++            output, error = output.decode(), error.decode()
++            exit_code = self.check_exit_status(EXIT_OK, exit_status, output,
++                                               error, cvc5_args)
++            if exit_code != EXIT_OK:
++                return exit_code
++            original_file = benchmark_info.benchmark_dir + '/' + benchmark_info.benchmark_basename
++            carcara_args = [
++                "--allow-int-real-subtyping",
++                "--expand-let-bindings",
++                "--ignore-unknown-rules"
++            ]
++            output, error, exit_status = run_process(
++                [benchmark_info.carcara_binary] + ["check"] +
++                carcara_args + [tmpf.name] + [original_file],
++                benchmark_info.benchmark_dir,
++                timeout=benchmark_info.timeout,
++            )
++            output, error = output.decode(), error.decode()
++            exit_code = self.check_exit_status(EXIT_OK, exit_status, output,
++                                               error, cvc5_args)
++            if "valid" not in output and "holey" not in output:
++                print_error("Invalid proof")
++                print()
++                print_outputs(output, error)
++                return EXIT_FAILURE
++        if exit_code == EXIT_OK:
++            print_ok("OK")
++        return exit_code
++
+ class CpcTester(Tester):
+ 
+     def __init__(self):
+@@ -478,6 +536,7 @@ BenchmarkInfo = collections.namedtuple(
+         "cvc5_binary",
+         "lfsc_binary",
+         "lfsc_sigs",
++        "carcara_binary",
+         "ethos_binary",
+         "benchmark_dir",
+         "benchmark_basename",
+@@ -683,6 +742,7 @@ def run_regression(
+     cvc5_binary,
+     lfsc_binary,
+     lfsc_sigs,
++    carcara_binary,
+     ethos_binary,
+     benchmark_path,
+     timeout,
+@@ -762,6 +822,8 @@ def run_regression(
+                     testers.remove("lfsc")
+                 if "dsl-proof" in testers:
+                     testers.remove("dsl-proof")
++                if "alethe" in testers:
++                    testers.remove("alethe")
+                 if "cpc" in testers:
+                     testers.remove("cpc")
+ 
+@@ -828,6 +890,7 @@ def run_regression(
+             cvc5_binary=cvc5_binary,
+             lfsc_binary=lfsc_binary,
+             lfsc_sigs=lfsc_sigs,
++            carcara_binary=carcara_binary,
+             ethos_binary=ethos_binary,
+             benchmark_dir=benchmark_dir,
+             benchmark_basename=benchmark_basename,
+@@ -875,6 +938,7 @@ def main():
+     parser.add_argument("--tester", choices=tester_choices, action="append")
+     parser.add_argument("--lfsc-binary", default="")
+     parser.add_argument("--lfsc-sig-dir", default="")
++    parser.add_argument("--carcara-binary", default="")
+     parser.add_argument("--ethos-binary", default="")
+     parser.add_argument("--cpc-sig-dir", default="")
+     parser.add_argument("wrapper", nargs="*")
+@@ -890,6 +954,7 @@ def main():
+ 
+     cvc5_binary = os.path.abspath(g_args.cvc5_binary)
+     lfsc_binary = os.path.abspath(g_args.lfsc_binary)
++    carcara_binary = os.path.abspath(g_args.carcara_binary)
+     ethos_binary = os.path.abspath(g_args.ethos_binary)
+ 
+     wrapper = g_args.wrapper
+@@ -922,6 +987,7 @@ def main():
+         cvc5_binary,
+         lfsc_binary,
+         lfsc_sigs,
++        carcara_binary,
+         ethos_binary,
+         g_args.benchmark,
+         timeout,
+-- 
+2.47.1
+

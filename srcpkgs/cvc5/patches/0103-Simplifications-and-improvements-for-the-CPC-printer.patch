@@ -1,0 +1,664 @@
+From b08221cfe59323b355fee82aa26c40206cc55ef9 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 3 Oct 2024 16:00:47 -0500
+Subject: [PATCH 103/312] Simplifications and improvements for the CPC printer
+ (#11242)
+
+This is towards a proof logging mode, which will print proofs of
+preprocessing, theory lemmas and SAT refutations as they are learned.
+
+This PR adds the necessary functionality to the CPC (ALF) printer for
+this.
+
+First, it makes a major simplification to the way quantified variables
+are treated. We now always convert variables `x` of type `T` to
+`(eo::var x T)` and then rely on the letification to handle them in a
+uniform way. This means that we don't need any custom tracking of
+variables in our print channel utility.
+
+Second, we add support for a `printNext` function which prints the
+"next" proof in a proof log. This requires keeping the let bindings as
+data members of the printer. This also requires keeping a cache of proof
+nodes we have already printed.
+
+Third, we add support for different "scope" modes.
+---
+ src/proof/alf/alf_node_converter.cpp |  27 +++--
+ src/proof/alf/alf_node_converter.h   |   2 -
+ src/proof/alf/alf_print_channel.cpp  |  68 ++++-------
+ src/proof/alf/alf_print_channel.h    |  13 +--
+ src/proof/alf/alf_printer.cpp        | 164 ++++++++++++++++-----------
+ src/proof/alf/alf_printer.h          |  59 +++++++++-
+ src/smt/proof_manager.h              |  14 +--
+ 7 files changed, 201 insertions(+), 146 deletions(-)
+
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index c1b18a367..4d0d18417 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -111,8 +111,6 @@ Node AlfNodeConverter::postConvert(Node n)
+   }
+   else if (k == Kind::BOUND_VARIABLE)
+   {
+-    // note: we always distinguish variables, to ensure they do not have
+-    // names that are overloaded with user names
+     std::string sname;
+     if (n.hasName())
+     {
+@@ -126,11 +124,14 @@ Node AlfNodeConverter::postConvert(Node n)
+       ss << n;
+       sname = ss.str();
+     }
+-    size_t index = d_varIndex[sname];
+-    d_varIndex[sname]++;
+-    std::stringstream ssn;
+-    ssn << "@v." << index << "." << sname;
+-    return NodeManager::currentNM()->mkBoundVar(ssn.str(), tn);
++    // A variable x of type T can unambiguously referred to as (eo::var "x" T).
++    // We convert to this representation here, which will often be letified.
++    std::vector<Node> args;
++    Node nn = nm->mkConst(String(sname));
++    args.push_back(nn);
++    Node tnn = typeAsNode(tn);
++    args.push_back(tnn);
++    return mkInternalApp("eo::var", args, tn);
+   }
+   else if (k == Kind::VARIABLE)
+   {
+@@ -155,15 +156,13 @@ Node AlfNodeConverter::postConvert(Node n)
+   else if (n.isClosure())
+   {
+     Node vl = n[0];
+-    // notice that intentionally we drop annotations here.
++    // Notice that intentionally we drop annotations here.
++    // Additionally, it is important that we convert the closure to a
++    // non-closure operator here, since we will be traversing over it
++    // during letification.
+     std::vector<Node> args;
+-    // We take the *original* bound variable list, since variable names are
+-    // preserved in the translation; using the updated variable `@v.N.x`
+-    // would lead to using a variable named "@v.N.x" instead of "x", where
+-    // `@v.N.x` is a macro for the variable "x".
+-    args.push_back(n[0]);
+     args.insert(args.end(),
+-                n.begin() + 1,
++                n.begin(),
+                 n.begin() + getNumChildrenToProcessForClosure(k));
+     return mkInternalApp(
+         printer::smt2::Smt2Printer::smtKindString(k), args, tn);
+diff --git a/src/proof/alf/alf_node_converter.h b/src/proof/alf/alf_node_converter.h
+index b354f9402..a22c55e12 100644
+--- a/src/proof/alf/alf_node_converter.h
++++ b/src/proof/alf/alf_node_converter.h
+@@ -152,8 +152,6 @@ class AlfNodeConverter : public BaseAlfNodeConverter
+   TypeNode d_sortType;
+   /** Used for getting unique index for uncategorized skolems */
+   std::map<Node, size_t> d_constIndex;
+-  /** Used for getting unique names for bound variables */
+-  std::map<std::string, size_t> d_varIndex;
+   /** Cache for typeAsNode */
+   std::map<TypeNode, Node> d_typeAsNode;
+ };
+diff --git a/src/proof/alf/alf_print_channel.cpp b/src/proof/alf/alf_print_channel.cpp
+index 603fc40d3..8136f6856 100644
+--- a/src/proof/alf/alf_print_channel.cpp
++++ b/src/proof/alf/alf_print_channel.cpp
+@@ -20,6 +20,7 @@
+ #include "expr/node_algorithm.h"
+ #include "expr/skolem_manager.h"
+ #include "printer/printer.h"
++#include "proof/trust_id.h"
+ #include "rewriter/rewrite_db.h"
+ 
+ namespace cvc5::internal {
+@@ -31,8 +32,12 @@ AlfPrintChannel::~AlfPrintChannel() {}
+ 
+ AlfPrintChannelOut::AlfPrintChannelOut(std::ostream& out,
+                                        const LetBinding* lbind,
+-                                       const std::string& tprefix)
+-    : d_out(out), d_lbind(lbind), d_termLetPrefix(tprefix)
++                                       const std::string& tprefix,
++                                       bool trackWarn)
++    : d_out(out),
++      d_lbind(lbind),
++      d_termLetPrefix(tprefix),
++      d_trackWarn(trackWarn)
+ {
+ }
+ 
+@@ -129,10 +134,13 @@ void AlfPrintChannelOut::printTrustStep(ProofRule r,
+                                         TNode nc)
+ {
+   Assert(!nc.isNull());
+-  if (d_warnedRules.find(r) == d_warnedRules.end())
++  if (d_trackWarn)
+   {
+-    d_out << "; WARNING: add trust step for " << r << std::endl;
+-    d_warnedRules.insert(r);
++    if (d_warnedRules.find(r) == d_warnedRules.end())
++    {
++      d_out << "; WARNING: add trust step for " << r << std::endl;
++      d_warnedRules.insert(r);
++    }
+   }
+   d_out << "; trust " << r;
+   if (r == ProofRule::DSL_REWRITE)
+@@ -151,6 +159,14 @@ void AlfPrintChannelOut::printTrustStep(ProofRule r,
+       d_out << " " << di;
+     }
+   }
++  else if (r == ProofRule::TRUST)
++  {
++    TrustId tid;
++    if (getTrustId(args[0], tid))
++    {
++      d_out << " " << tid;
++    }
++  }
+   d_out << std::endl;
+   // trust takes a premise-list which must be specified even if empty
+   printStepInternal("trust", n, i, premises, {nc}, false, true);
+@@ -230,48 +246,6 @@ void AlfPrintChannelPre::processInternal(const Node& n)
+     d_lbind->process(n);
+   }
+   d_keep.insert(n);  // probably not necessary
+-  NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  // traverse and collect all free variables in this term, which includes
+-  // traversing skolem indices.
+-  std::vector<TNode> visit;
+-  TNode cur;
+-  SkolemId sfi;
+-  Node cacheVal;
+-  visit.push_back(n);
+-  do
+-  {
+-    cur = visit.back();
+-    visit.pop_back();
+-    if (d_varsVisited.find(cur) == d_varsVisited.end())
+-    {
+-      d_varsVisited.insert(cur);
+-      Kind ck = cur.getKind();
+-      if (ck == Kind::BOUND_VARIABLE)
+-      {
+-        d_vars.insert(cur);
+-        continue;
+-      }
+-      else if (ck == Kind::SKOLEM)
+-      {
+-        if (sm->isSkolemFunction(cur, sfi, cacheVal) && !cacheVal.isNull())
+-        {
+-          visit.push_back(cacheVal);
+-        }
+-        continue;
+-      }
+-      if (cur.hasOperator())
+-      {
+-        visit.push_back(cur.getOperator());
+-      }
+-      visit.insert(visit.end(), cur.begin(), cur.end());
+-    }
+-  } while (!visit.empty());
+-}
+-
+-const std::unordered_set<Node>& AlfPrintChannelPre::getVariables() const
+-{
+-  return d_vars;
+ }
+ 
+ }  // namespace proof
+diff --git a/src/proof/alf/alf_print_channel.h b/src/proof/alf/alf_print_channel.h
+index aa0ea355f..33af4df15 100644
+--- a/src/proof/alf/alf_print_channel.h
++++ b/src/proof/alf/alf_print_channel.h
+@@ -75,7 +75,8 @@ class AlfPrintChannelOut : public AlfPrintChannel
+  public:
+   AlfPrintChannelOut(std::ostream& out,
+                      const LetBinding* lbind,
+-                     const std::string& tprefix);
++                     const std::string& tprefix,
++                     bool trackWarn);
+   void printNode(TNode n) override;
+   void printTypeNode(TypeNode tn) override;
+   void printAssume(TNode n, size_t i, bool isPush) override;
+@@ -100,6 +101,7 @@ class AlfPrintChannelOut : public AlfPrintChannel
+    * Print type node to stream in the expected format of ALF.
+    */
+   void printTypeNodeInternal(std::ostream& out, TypeNode tn);
++  std::ostream& getOStream() { return d_out; }
+ 
+  private:
+   /**
+@@ -124,6 +126,8 @@ class AlfPrintChannelOut : public AlfPrintChannel
+    * associated with trusted steps.
+    */
+   std::unordered_set<ProofRule> d_warnedRules;
++  /** Are we tracking warned rules? */
++  bool d_trackWarn;
+ };
+ 
+ /**
+@@ -151,18 +155,11 @@ class AlfPrintChannelPre : public AlfPrintChannel
+                       const std::vector<Node>& args,
+                       TNode conc) override;
+ 
+-  /** Get variables we encountered in printing */
+-  const std::unordered_set<Node>& getVariables() const;
+-
+  private:
+   /** The let binding */
+   LetBinding* d_lbind;
+   /** For computing free variables */
+   std::unordered_set<Node> d_keep;
+-  /** The set of variables we have encountered */
+-  std::unordered_set<Node> d_vars;
+-  /** The visited cache for computing variables */
+-  std::unordered_set<TNode> d_varsVisited;
+   /** Process that we will print node n in the final proof */
+   void processInternal(const Node& n);
+ };
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 9741a7dcb..a65410951 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -38,13 +38,24 @@ namespace proof {
+ 
+ AlfPrinter::AlfPrinter(Env& env,
+                        BaseAlfNodeConverter& atp,
+-                       rewriter::RewriteDb* rdb)
++                       rewriter::RewriteDb* rdb,
++                       uint32_t letThresh)
+     : EnvObj(env),
+       d_tproc(atp),
++      d_pfIdCounter(0),
++      d_alreadyPrinted(&d_passumeCtx),
+       d_passumeMap(&d_passumeCtx),
+       d_termLetPrefix("@t"),
+       d_ltproc(nodeManager(), atp),
+-      d_rdb(rdb)
++      d_rdb(rdb),
++      // Use a let binding if proofDagGlobal is true. We can traverse binders
++      // due to the way we print global declare-var, since terms beneath
++      // binders will always have their variables in scope and hence can be
++      // printed in define commands. We additionally traverse skolems with this
++      // utility.
++      d_lbind(d_termLetPrefix, letThresh, true, true),
++      d_lbindUse(options().proof.proofDagGlobal ? &d_lbind : nullptr),
++      d_aletify(d_lbindUse)
+ {
+   d_pfType = nodeManager()->mkSort("proofType");
+   d_false = nodeManager()->mkConst(false);
+@@ -547,6 +558,8 @@ void AlfPrinter::printDslRule(std::ostream& out, ProofRewriteRule r)
+   out << ")" << std::endl;
+ }
+ 
++LetBinding* AlfPrinter::getLetBinding() { return d_lbindUse; }
++
+ void AlfPrinter::printLetList(std::ostream& out, LetBinding& lbind)
+ {
+   std::vector<Node> letList;
+@@ -563,88 +576,85 @@ void AlfPrinter::printLetList(std::ostream& out, LetBinding& lbind)
+   }
+ }
+ 
+-void AlfPrinter::print(std::ostream& out, std::shared_ptr<ProofNode> pfn)
++void AlfPrinter::print(std::ostream& out,
++                       std::shared_ptr<ProofNode> pfn,
++                       ProofScopeMode psm)
+ {
+   // ensures options are set once and for all
+   options::ioutils::applyOutputLanguage(out, Language::LANG_SMTLIB_V2_6);
+   options::ioutils::applyPrintArithLitToken(out, true);
+   options::ioutils::applyPrintSkolemDefinitions(out, true);
+-  d_pfIdCounter = 0;
+-
+-  // Get the definitions and assertions and print the declarations from them
+-  const std::vector<Node>& definitions = pfn->getArguments();
+-  const std::vector<Node>& assertions = pfn->getChildren()[0]->getArguments();
+-  const ProofNode* pnBody = pfn->getChildren()[0]->getChildren()[0].get();
++  // allocate a print channel
++  AlfPrintChannelOut aprint(out, d_lbindUse, d_termLetPrefix, true);
++  print(aprint, pfn, psm);
++}
+ 
+-  // Use a let binding if proofDagGlobal is true.
+-  // We can traverse binders due to the way we print global declare-var, since
+-  // terms beneath binders will always have their variables in scope and hence
+-  // can be printed in define commands.
+-  // We additionally traverse skolems with this utility.
+-  LetBinding lbind(d_termLetPrefix, 2, true, true);
+-  LetBinding* lbindUse = options().proof.proofDagGlobal ? &lbind : nullptr;
+-  AlfPrintChannelPre aletify(lbindUse);
+-  AlfPrintChannelOut aprint(out, lbindUse, d_termLetPrefix);
++void AlfPrinter::print(AlfPrintChannelOut& aout,
++                       std::shared_ptr<ProofNode> pfn,
++                       ProofScopeMode psm)
++{
++  std::ostream& out = aout.getOStream();
++  Assert(d_pletMap.empty());
++  d_pfIdCounter = 0;
+ 
+-  d_pletMap.clear();
++  const ProofNode* ascope = nullptr;
++  const ProofNode* dscope = nullptr;
++  const ProofNode* pnBody = nullptr;
++  if (psm == ProofScopeMode::NONE)
++  {
++    pnBody = pfn.get();
++  }
++  else if (psm == ProofScopeMode::UNIFIED)
++  {
++    ascope = pfn.get();
++    Assert(ascope->getRule() == ProofRule::SCOPE);
++    pnBody = pfn->getChildren()[0].get();
++  }
++  else if (psm == ProofScopeMode::DEFINITIONS_AND_ASSERTIONS)
++  {
++    dscope = pfn.get();
++    Assert(dscope->getRule() == ProofRule::SCOPE);
++    ascope = pfn->getChildren()[0].get();
++    Assert(ascope->getRule() == ProofRule::SCOPE);
++    pnBody = pfn->getChildren()[0]->getChildren()[0].get();
++  }
+ 
++  // Get the definitions and assertions and print the declarations from them
++  const std::vector<Node>& definitions =
++      dscope != nullptr ? dscope->getArguments() : d_emptyVec;
++  const std::vector<Node>& assertions =
++      ascope != nullptr ? ascope->getArguments() : d_emptyVec;
+   bool wasAlloc;
+   for (size_t i = 0; i < 2; i++)
+   {
+-    AlfPrintChannel* aout;
++    AlfPrintChannel* ao;
+     if (i == 0)
+     {
+-      aout = &aletify;
++      ao = &d_aletify;
+     }
+     else
+     {
+-      aout = &aprint;
++      ao = &aout;
+     }
+     if (i == 1)
+     {
+-      std::stringstream outVars;
+-      const std::unordered_set<Node>& vars = aletify.getVariables();
+-      for (const Node& v : vars)
+-      {
+-        if (v.getKind() == Kind::BOUND_VARIABLE)
+-        {
+-          std::string origName = v.getName();
+-          // Strip off "@v.N." from the variable. It may also be an original
+-          // variable appearing in a quantifier, in which case we skip.
+-          if (origName.substr(0, 3) != "@v.")
+-          {
+-            continue;
+-          }
+-          origName = origName.substr(4);
+-          origName = origName.substr(origName.find(".") + 1);
+-          outVars << "(define " << v << " () (eo::var \"" << origName << "\" "
+-                  << v.getType() << "))" << std::endl;
+-        }
+-      }
+       // do not need to print DSL rules
+-      if (options().proof.proofPrintReference)
++      if (!options().proof.proofPrintReference)
+       {
+-        // [2] print only the universal variables
+-        out << outVars.str();
+-        // we do not print the reference command here, since we don't know
+-        // where the proof is stored.
+-      }
+-      else
+-      {
+-        // [2] print the types
++        // [1] print the declarations
+         printer::smt2::Smt2Printer alfp(printer::smt2::Variant::alf_variant);
+         smt::PrintBenchmark pb(&alfp, &d_tproc);
+-        std::stringstream outFuns;
+-        pb.printDeclarationsFrom(out, outFuns, definitions, assertions);
+-        // [3] print the universal variables
+-        out << outVars.str();
+-        // [4] print the declared functions
+-        out << outFuns.str();
++        std::stringstream outDecl;
++        std::stringstream outDef;
++        pb.printDeclarationsFrom(outDecl, outDef, definitions, assertions);
++        out << outDecl.str();
++        // [2] print the definitions
++        out << outDef.str();
+       }
+-      // [5] print proof-level term bindings
+-      printLetList(out, lbind);
++      // [3] print proof-level term bindings
++      printLetList(out, d_lbind);
+     }
+-    // [6] print (unique) assumptions
++    // [4] print (unique) assumptions, including definitions
+     std::unordered_set<Node> processed;
+     for (const Node& n : assertions)
+     {
+@@ -655,7 +665,7 @@ void AlfPrinter::print(std::ostream& out, std::shared_ptr<ProofNode> pfn)
+       processed.insert(n);
+       size_t id = allocateAssumeId(n, wasAlloc);
+       Node nc = d_tproc.convert(n);
+-      aout->printAssume(nc, id, false);
++      ao->printAssume(nc, id, false);
+     }
+     for (const Node& n : definitions)
+     {
+@@ -673,14 +683,31 @@ void AlfPrinter::print(std::ostream& out, std::shared_ptr<ProofNode> pfn)
+       size_t id = allocateAssumeId(n, wasAlloc);
+       Node f = d_tproc.convert(n[0]);
+       Node lam = d_tproc.convert(n[1]);
+-      aout->printStep("refl", f.eqNode(lam), id, {}, {lam});
++      ao->printStep("refl", f.eqNode(lam), id, {}, {lam});
+     }
+-    // [7] print proof body
+-    printProofInternal(aout, pnBody);
++    // [5] print proof body
++    printProofInternal(ao, pnBody, i == 1);
+   }
+ }
+ 
+-void AlfPrinter::printProofInternal(AlfPrintChannel* out, const ProofNode* pn)
++void AlfPrinter::printNext(AlfPrintChannelOut& aout,
++                           std::shared_ptr<ProofNode> pfn)
++{
++  const ProofNode* pnBody = pfn.get();
++  // print with letification
++  printProofInternal(&d_aletify, pnBody, false);
++  // print the new let bindings
++  std::ostream& out = aout.getOStream();
++  // Print new terms from the let binding. note that this should print only
++  // the terms we have yet to see so far.
++  printLetList(out, d_lbind);
++  // print the proof
++  printProofInternal(&aout, pnBody, true);
++}
++
++void AlfPrinter::printProofInternal(AlfPrintChannel* out,
++                                    const ProofNode* pn,
++                                    bool addToCache)
+ {
+   // the stack
+   std::vector<const ProofNode*> visit;
+@@ -695,6 +722,11 @@ void AlfPrinter::printProofInternal(AlfPrintChannel* out, const ProofNode* pn)
+   do
+   {
+     cur = visit.back();
++    if (d_alreadyPrinted.find(cur) != d_alreadyPrinted.end())
++    {
++      visit.pop_back();
++      continue;
++    }
+     pit = processingChildren.find(cur);
+     if (pit == processingChildren.end())
+     {
+@@ -724,6 +756,10 @@ void AlfPrinter::printProofInternal(AlfPrintChannel* out, const ProofNode* pn)
+       processingChildren[cur] = false;
+       // print postorder traversal
+       printStepPost(out, cur);
++      if (addToCache)
++      {
++        d_alreadyPrinted.insert(cur);
++      }
+     }
+   } while (!visit.empty());
+ }
+diff --git a/src/proof/alf/alf_printer.h b/src/proof/alf/alf_printer.h
+index df7a444a4..678edcfcd 100644
+--- a/src/proof/alf/alf_printer.h
++++ b/src/proof/alf/alf_printer.h
+@@ -23,6 +23,7 @@
+ #include <iostream>
+ 
+ #include "context/cdhashmap.h"
++#include "context/cdhashset.h"
+ #include "expr/node_algorithm.h"
+ #include "proof/alf/alf_list_node_converter.h"
+ #include "proof/alf/alf_node_converter.h"
+@@ -31,6 +32,7 @@
+ #include "proof/proof_node.h"
+ #include "rewriter/rewrite_proof_rule.h"
+ #include "smt/env_obj.h"
++#include "smt/proof_manager.h"
+ 
+ namespace cvc5::internal {
+ 
+@@ -39,15 +41,39 @@ namespace proof {
+ class AlfPrinter : protected EnvObj
+ {
+  public:
+-  AlfPrinter(Env& env, BaseAlfNodeConverter& atp, rewriter::RewriteDb* rdb);
++  AlfPrinter(Env& env,
++             BaseAlfNodeConverter& atp,
++             rewriter::RewriteDb* rdb,
++             uint32_t letThresh = 2);
+   ~AlfPrinter() {}
+ 
+   /**
+-   * Print the full proof of assertions => false by pfn.
++   * Print the full proof pfn.
+    * @param out The output stream.
+    * @param pfn The proof node.
++   * @param psm The scope mode, which determines whether there are outermost
++   * scope to process in pfn. If this is the case, we print assume steps.
+    */
+-  void print(std::ostream& out, std::shared_ptr<ProofNode> pfn);
++  void print(std::ostream& out,
++             std::shared_ptr<ProofNode> pfn,
++             ProofScopeMode psm = ProofScopeMode::DEFINITIONS_AND_ASSERTIONS);
++  /**
++   * Same as above, but with an alf print output channel.
++   * @param out The output stream.
++   * @param pfn The proof node.
++   * @param psm The scope mode.
++   */
++  void print(AlfPrintChannelOut& out,
++             std::shared_ptr<ProofNode> pfn,
++             ProofScopeMode psm = ProofScopeMode::DEFINITIONS_AND_ASSERTIONS);
++  /**
++   * Print the proof, assuming that previous proofs have been printed on this
++   * printer that have (partially) given the definition of subterms and
++   * subproofs in pfn.
++   * @param out The output stream.
++   * @param pfn The proof node.
++   */
++  void printNext(AlfPrintChannelOut& out, std::shared_ptr<ProofNode> pfn);
+ 
+   /**
+    * Print proof rewrite rule name r to output stream out
+@@ -56,6 +82,11 @@ class AlfPrinter : protected EnvObj
+    * rules that corresponds to a RARE rewrite.
+    */
+   void printDslRule(std::ostream& out, ProofRewriteRule r);
++  /**
++   * Get the let binding that is computed by calls to printing terms in this
++   * class.
++   */
++  LetBinding* getLetBinding();
+ 
+  private:
+   /** Return true if it is possible to trust the topmost application in pfn */
+@@ -93,8 +124,15 @@ class AlfPrinter : protected EnvObj
+   /**
+    * Helper for print. Prints the proof node using the print channel out. This
+    * may either write the proof to an output stream or preprocess it.
++   *
++   * @param out The output channel to print to.
++   * @param pn The proof node to print.
++   * @param addToCache If true, we add (subproofs) of pn to the cache and do
++   * not print them with this method if they are encounted again.
+    */
+-  void printProofInternal(AlfPrintChannel* out, const ProofNode* pn);
++  void printProofInternal(AlfPrintChannel* out,
++                          const ProofNode* pn,
++                          bool addToCache);
+   /**
+    * Called at preorder traversal of proof node pn. Prints (if necessary) to
+    * out.
+@@ -134,6 +172,11 @@ class AlfPrinter : protected EnvObj
+    * SCOPE proofs.
+    */
+   context::Context d_passumeCtx;
++  /**
++   * The set of proof nodes we have already printed with this class, as
++   * used by printProofInternal.
++   */
++  context::CDHashSet<const ProofNode*> d_alreadyPrinted;
+   /** Mapping assumed formulas to identifiers */
+   context::CDHashMap<Node, size_t> d_passumeMap;
+   /** The (dummy) type used for proof terms */
+@@ -146,6 +189,14 @@ class AlfPrinter : protected EnvObj
+   AlfListNodeConverter d_ltproc;
+   /** Pointer to the rewrite database */
+   rewriter::RewriteDb* d_rdb;
++  /** The empty vector */
++  std::vector<Node> d_emptyVec;
++  /** The let binding */
++  LetBinding d_lbind;
++  /** The let binding we are using (possibly null) */
++  LetBinding* d_lbindUse;
++  /** The letification channel. */
++  AlfPrintChannelPre d_aletify;
+ };
+ 
+ }  // namespace proof
+diff --git a/src/smt/proof_manager.h b/src/smt/proof_manager.h
+index ed137c394..82dcac5b1 100644
+--- a/src/smt/proof_manager.h
++++ b/src/smt/proof_manager.h
+@@ -34,13 +34,6 @@ namespace rewriter {
+ class RewriteDb;
+ }
+ 
+-namespace smt {
+-
+-class Assertions;
+-class SmtSolver;
+-class PreprocessProofGenerator;
+-class ProofPostprocess;
+-
+ /** Modes for global Proof scopes introducing definitions and assertions. */
+ enum class ProofScopeMode
+ {
+@@ -52,6 +45,13 @@ enum class ProofScopeMode
+   DEFINITIONS_AND_ASSERTIONS,
+ };
+ 
++namespace smt {
++
++class Assertions;
++class SmtSolver;
++class PreprocessProofGenerator;
++class ProofPostprocess;
++
+ /**
+  * This class is responsible for managing the proof output of SolverEngine, as
+  * well as setting up the global proof checker and proof node manager.
+-- 
+2.47.1
+

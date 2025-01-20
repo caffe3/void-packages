@@ -1,0 +1,128 @@
+From fb47b96d511e5a4b09b6aff9e5602bcd77765468 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 15 Oct 2024 14:11:02 -0500
+Subject: [PATCH 123/312] Guard more corner cases of safe-options (#11274)
+
+Includes disabling user-facing UF+cardinality constraints and
+codatatypes.
+Also makes it so we give a reasonable error message when trying to use
+traces + safe-options.
+---
+ src/options/datatypes_options.toml        |  8 ++++++++
+ src/options/uf_options.toml               |  8 ++++++++
+ src/smt/set_defaults.cpp                  |  3 +++
+ src/smt/solver_engine.cpp                 |  4 ++++
+ src/theory/datatypes/theory_datatypes.cpp | 10 ++++++++++
+ src/theory/uf/theory_uf.cpp               | 10 ++++++++++
+ 6 files changed, 43 insertions(+)
+
+diff --git a/src/options/datatypes_options.toml b/src/options/datatypes_options.toml
+index b1d38b525..29c32aa5b 100644
+--- a/src/options/datatypes_options.toml
++++ b/src/options/datatypes_options.toml
+@@ -164,3 +164,11 @@ name   = "Datatypes Theory"
+   type       = "int64_t"
+   default    = "-1"
+   help       = "tells enumerative sygus to only consider solutions up to term size N (-1 == no limit, default)"
++
++[[option]]
++  name       = "codatatypesExp"
++  category   = "expert"
++  long       = "co-dt-exp"
++  type       = "bool"
++  default    = "true"
++  help       = "enables reasoning about codatatypes"
+diff --git a/src/options/uf_options.toml b/src/options/uf_options.toml
+index 4b521378a..086edf4f2 100644
+--- a/src/options/uf_options.toml
++++ b/src/options/uf_options.toml
+@@ -98,3 +98,11 @@ name   = "Uninterpreted Functions Theory"
+   type       = "bool"
+   default    = "true"
+   help       = "enables the higher-order logic solver"
++
++[[option]]
++  name       = "cardExp"
++  category   = "expert"
++  long       = "uf-card-exp"
++  type       = "bool"
++  default    = "true"
++  help       = "allows logics with UF+cardinality"
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index 48c2c9d70..0d3b812ac 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -126,10 +126,13 @@ void SetDefaults::setDefaultsPre(Options& opts)
+     // all "experimental" theories that are enabled by default should be
+     // disabled here
+     SET_AND_NOTIFY_IF_NOT_USER(uf, hoExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(uf, cardExp, false, "safe options");
+     SET_AND_NOTIFY_IF_NOT_USER(arith, arithExp, false, "safe options");
+     SET_AND_NOTIFY_IF_NOT_USER(sep, sepExp, false, "safe options");
+     SET_AND_NOTIFY_IF_NOT_USER(bags, bagsExp, false, "safe options");
+     SET_AND_NOTIFY_IF_NOT_USER(ff, ffExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(
++        datatypes, codatatypesExp, false, "safe options");
+     // these are disabled by default but are listed here in case they are
+     // enabled by default later
+     SET_AND_NOTIFY_IF_NOT_USER(fp, fpExp, false, "safe options");
+diff --git a/src/smt/solver_engine.cpp b/src/smt/solver_engine.cpp
+index a226b4c7c..6723e504a 100644
+--- a/src/smt/solver_engine.cpp
++++ b/src/smt/solver_engine.cpp
+@@ -2148,6 +2148,10 @@ void SolverEngine::setOption(const std::string& key,
+ {
+   if (fromUser && options().base.safeOptions)
+   {
++    if (key == "trace")
++    {
++      throw OptionException("cannot use trace messages with safe-options");
++    }
+     // verify its a regular option
+     options::OptionInfo oinfo = options::getInfo(getOptions(), key);
+     if (oinfo.category == options::OptionInfo::Category::EXPERT)
+diff --git a/src/theory/datatypes/theory_datatypes.cpp b/src/theory/datatypes/theory_datatypes.cpp
+index 6eb9d308e..87ab64e56 100644
+--- a/src/theory/datatypes/theory_datatypes.cpp
++++ b/src/theory/datatypes/theory_datatypes.cpp
+@@ -325,6 +325,16 @@ void TheoryDatatypes::preRegisterTerm(TNode n)
+       }
+       Trace("dt-expand") << "...nested recursion ok" << std::endl;
+     }
++    if (!options().datatypes.codatatypesExp)
++    {
++      if (dt.isCodatatype())
++      {
++        std::stringstream ss;
++        ss << "Codatatypes not available in this configuration, try "
++              "--co-dt-exp.";
++        throw LogicException(ss.str());
++      }
++    }
+   }
+   switch (n.getKind()) {
+     case Kind::EQUAL:
+diff --git a/src/theory/uf/theory_uf.cpp b/src/theory/uf/theory_uf.cpp
+index cb2f439e8..0cb7a5d92 100644
+--- a/src/theory/uf/theory_uf.cpp
++++ b/src/theory/uf/theory_uf.cpp
+@@ -91,6 +91,16 @@ void TheoryUF::finishInit() {
+   Assert(d_equalityEngine != nullptr);
+   // combined cardinality constraints are not evaluated in getModelValue
+   d_valuation.setUnevaluatedKind(Kind::COMBINED_CARDINALITY_CONSTRAINT);
++  if (logicInfo().hasCardinalityConstraints())
++  {
++    if (!options().uf.cardExp)
++    {
++      std::stringstream ss;
++      ss << "Logic with cardinality constraints not available in this "
++            "configuration, try --uf-card-exp.";
++      throw LogicException(ss.str());
++    }
++  }
+   // Initialize the cardinality constraints solver if the logic includes UF,
+   // finite model finding is enabled, and it is not disabled by
+   // the ufssMode option.
+-- 
+2.47.1
+

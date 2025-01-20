@@ -1,0 +1,302 @@
+From e6bcb311f0956f8d2ec4b4a99157add471846326 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 10 Oct 2024 12:48:42 -0500
+Subject: [PATCH 118/312] Cleanup and improve instantiation level tracking
+ (#11269)
+
+Minor cleanup to avoid explicit use of attributes.
+
+The simplified implementation is also now robust to doVts.
+---
+ src/theory/quantifiers/equality_query.cpp     |  6 ++-
+ src/theory/quantifiers/instantiate.cpp        | 40 +++++++---------
+ .../quantifiers/quantifiers_attributes.cpp    | 47 +++++++++----------
+ .../quantifiers/quantifiers_attributes.h      | 24 ++++++----
+ src/theory/quantifiers/skolemize.cpp          |  6 +--
+ src/theory/quantifiers/term_database.cpp      | 17 +++++--
+ 6 files changed, 75 insertions(+), 65 deletions(-)
+
+diff --git a/src/theory/quantifiers/equality_query.cpp b/src/theory/quantifiers/equality_query.cpp
+index 0267a6fd2..a075e6072 100644
+--- a/src/theory/quantifiers/equality_query.cpp
++++ b/src/theory/quantifiers/equality_query.cpp
+@@ -179,8 +179,10 @@ int32_t EqualityQuery::getRepScore(Node n, Node q, size_t index, TypeNode v_tn)
+   else if (options().quantifiers.instMaxLevel != -1)
+   {
+     //score prefer lowest instantiation level
+-    if( n.hasAttribute(InstLevelAttribute()) ){
+-      return n.getAttribute(InstLevelAttribute());
++    uint64_t level;
++    if (QuantAttributes::getInstantiationLevel(n, level))
++    {
++      return static_cast<int32_t>(level);
+     }
+     return -1;
+   }
+diff --git a/src/theory/quantifiers/instantiate.cpp b/src/theory/quantifiers/instantiate.cpp
+index 0cb8a9d9a..9265a6e82 100644
+--- a/src/theory/quantifiers/instantiate.cpp
++++ b/src/theory/quantifiers/instantiate.cpp
+@@ -184,7 +184,8 @@ bool Instantiate::addInstantiationInternal(
+     // this assertion is critical to soundness
+     if (bad_inst)
+     {
+-      Trace("inst") << "***& Bad Instantiate " << q << " with " << std::endl;
++      Trace("inst") << "***& Bad Instantiate [" << id << "] " << q << " with "
++                    << std::endl;
+       for (unsigned j = 0; j < terms.size(); j++)
+       {
+         Trace("inst") << "   " << terms[j] << std::endl;
+@@ -194,7 +195,6 @@ bool Instantiate::addInstantiationInternal(
+   }
+ #endif
+ 
+-  EntailmentCheck* ec = d_treg.getEntailmentCheck();
+   // Note we check for entailment before checking for term vector duplication.
+   // Although checking for term vector duplication is a faster check, it is
+   // included automatically with recordInstantiationInternal, hence we prefer
+@@ -210,6 +210,7 @@ bool Instantiate::addInstantiationInternal(
+   // check for positive entailment
+   if (options().quantifiers.instNoEntail)
+   {
++    EntailmentCheck* ec = d_treg.getEntailmentCheck();
+     // should check consistency of equality engine
+     // (if not aborting on utility's reset)
+     std::map<TNode, TNode> subs;
+@@ -355,7 +356,8 @@ bool Instantiate::addInstantiationInternal(
+   d_instDebugTemp[q]++;
+   if (TraceIsOn("inst"))
+   {
+-    Trace("inst") << "*** Instantiate " << q << " with " << std::endl;
++    Trace("inst") << "*** Instantiate [" << id << "] " << q << " with "
++                  << std::endl;
+     for (size_t i = 0, size = terms.size(); i < size; i++)
+     {
+       if (TraceIsOn("inst"))
+@@ -372,29 +374,23 @@ bool Instantiate::addInstantiationInternal(
+   }
+   if (options().quantifiers.instMaxLevel != -1)
+   {
+-    if (doVts)
++    Assert(lem.getKind() == Kind::IMPLIES);
++    uint64_t maxInstLevel = 0;
++    uint64_t clevel;
++    for (const Node& tc : terms)
+     {
+-      // virtual term substitution/instantiation level features are
+-      // incompatible
+-      std::stringstream ss;
+-      ss << "Cannot combine instantiation strategies that require virtual term "
+-            "substitution with those that restrict instantiation levels";
+-      throw LogicException(ss.str());
+-    }
+-    else
+-    {
+-      uint64_t maxInstLevel = 0;
+-      for (const Node& tc : terms)
++      if (!QuantAttributes::getInstantiationLevel(tc, clevel))
+       {
+-        if (tc.hasAttribute(InstLevelAttribute())
+-            && tc.getAttribute(InstLevelAttribute()) > maxInstLevel)
+-        {
+-          maxInstLevel = tc.getAttribute(InstLevelAttribute());
+-        }
++        // ensure it is set to zero.
++        QuantAttributes::setInstantiationLevelAttr(tc, 0);
++        continue;
++      }
++      if (clevel > maxInstLevel)
++      {
++        maxInstLevel = clevel;
+       }
+-      QuantAttributes::setInstantiationLevelAttr(
+-          orig_body, q[1], maxInstLevel + 1);
+     }
++    QuantAttributes::setInstantiationLevelAttr(lem[1], maxInstLevel + 1);
+   }
+   Trace("inst-add-debug") << " --> Success." << std::endl;
+   ++(d_statistics.d_instantiations);
+diff --git a/src/theory/quantifiers/quantifiers_attributes.cpp b/src/theory/quantifiers/quantifiers_attributes.cpp
+index d5b8d6b28..dc78485d8 100644
+--- a/src/theory/quantifiers/quantifiers_attributes.cpp
++++ b/src/theory/quantifiers/quantifiers_attributes.cpp
+@@ -33,6 +33,15 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace quantifiers {
+ 
++/**
++ * Mapping from terms to their "instantiation level", for details see
++ * QuantAttributes::getInstantiationLevel.
++ */
++struct InstLevelAttributeId
++{
++};
++using InstLevelAttribute = expr::Attribute<InstLevelAttributeId, uint64_t>;
++
+ /** Attribute true for quantifiers we are doing quantifier elimination on */
+ struct QuantElimAttributeId
+ {
+@@ -445,34 +454,11 @@ Node QuantAttributes::mkAttrInternal(AttrType at)
+   return nattr;
+ }
+ 
+-void QuantAttributes::setInstantiationLevelAttr(Node n, Node qn, uint64_t level)
+-{
+-  Trace("inst-level-debug2") << "IL : " << n << " " << qn << " " << level
+-                             << std::endl;
+-  // if not from the vector of terms we instantiatied
+-  if (qn.getKind() != Kind::BOUND_VARIABLE && n != qn)
+-  {
+-    // if this is a new term, without an instantiation level
+-    if (!n.hasAttribute(InstLevelAttribute()))
+-    {
+-      InstLevelAttribute ila;
+-      n.setAttribute(ila, level);
+-      Trace("inst-level-debug") << "Set instantiation level " << n << " to "
+-                                << level << std::endl;
+-      Assert(n.getNumChildren() == qn.getNumChildren());
+-      for (unsigned i = 0; i < n.getNumChildren(); i++)
+-      {
+-        setInstantiationLevelAttr(n[i], qn[i], level);
+-      }
+-    }
+-  }
+-}
+-
+ void QuantAttributes::setInstantiationLevelAttr(Node n, uint64_t level)
+ {
+-  if (!n.hasAttribute(InstLevelAttribute()))
++  InstLevelAttribute ila;
++  if (!n.hasAttribute(ila))
+   {
+-    InstLevelAttribute ila;
+     n.setAttribute(ila, level);
+     Trace("inst-level-debug") << "Set instantiation level " << n << " to "
+                               << level << std::endl;
+@@ -483,6 +469,17 @@ void QuantAttributes::setInstantiationLevelAttr(Node n, uint64_t level)
+   }
+ }
+ 
++bool QuantAttributes::getInstantiationLevel(const Node& n, uint64_t& level)
++{
++  InstLevelAttribute ila;
++  if (n.hasAttribute(ila))
++  {
++    level = n.getAttribute(ila);
++    return true;
++  }
++  return false;
++}
++
+ Node mkNamedQuant(Kind k, Node bvl, Node body, const std::string& name)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+diff --git a/src/theory/quantifiers/quantifiers_attributes.h b/src/theory/quantifiers/quantifiers_attributes.h
+index 3ccc86954..65f629e38 100644
+--- a/src/theory/quantifiers/quantifiers_attributes.h
++++ b/src/theory/quantifiers/quantifiers_attributes.h
+@@ -63,11 +63,6 @@ struct QuantNameAttributeId
+ };
+ typedef expr::Attribute<QuantNameAttributeId, bool> QuantNameAttribute;
+ 
+-struct InstLevelAttributeId
+-{
+-};
+-typedef expr::Attribute<InstLevelAttributeId, uint64_t> InstLevelAttribute;
+-
+ /** Attribute for setting printing information for sygus variables
+  *
+  * For variable d of sygus datatype type, if
+@@ -249,10 +244,23 @@ class QuantAttributes
+   static Node mkAttrQuantifierElimination();
+   /** Make the instantiation attribute that marks to perserve its structure */
+   static Node mkAttrPreserveStructure();
+-  /** set instantiation level attr */
++  /**
++   * Set instantiation level attribute for all subterms without an instantiation
++   * level in n to level.
++   */
+   static void setInstantiationLevelAttr(Node n, uint64_t level);
+-  /** set instantiation level attr */
+-  static void setInstantiationLevelAttr(Node n, Node qn, uint64_t level);
++  /**
++   * Get "instantiation level" for term n, if applicable. If n has an
++   * instantiation level, we return true and set level to its instantiation
++   * level.
++   *
++   * The instantiation level is an approximate measure of how many
++   * instantiations were required for generating term n. In particular,
++   * all new terms generated by an instantiation { x1 -> t1 ... xn -> tn } are
++   * assigned an instantiation level that is 1 + max(level(t1)...level(tn)),
++   * where all terms in the input formula have level 0.
++   */
++  static bool getInstantiationLevel(const Node& n, uint64_t& level);
+ 
+  private:
+   /** An identifier for the method below */
+diff --git a/src/theory/quantifiers/skolemize.cpp b/src/theory/quantifiers/skolemize.cpp
+index 976ac3c6c..994c0794f 100644
+--- a/src/theory/quantifiers/skolemize.cpp
++++ b/src/theory/quantifiers/skolemize.cpp
+@@ -324,10 +324,10 @@ Node Skolemize::mkSkolemizedBodyInduction(const Options& opts,
+   Trace("quantifiers-sk-debug") << "mkSkolem body for " << f
+                                 << " returns : " << ret << std::endl;
+   // if it has an instantiation level, set the skolemized body to that level
+-  if (f.hasAttribute(InstLevelAttribute()))
++  uint64_t level;
++  if (QuantAttributes::getInstantiationLevel(f, level))
+   {
+-    QuantAttributes::setInstantiationLevelAttr(
+-        ret, f.getAttribute(InstLevelAttribute()));
++    QuantAttributes::setInstantiationLevelAttr(ret, level);
+   }
+ 
+   Trace("quantifiers-sk") << "Skolemize : " << sk << " for " << std::endl;
+diff --git a/src/theory/quantifiers/term_database.cpp b/src/theory/quantifiers/term_database.cpp
+index cc67cf1ac..e68886890 100644
+--- a/src/theory/quantifiers/term_database.cpp
++++ b/src/theory/quantifiers/term_database.cpp
+@@ -279,10 +279,11 @@ void TermDb::computeArgReps( TNode n ) {
+   if (d_arg_reps.find(n) == d_arg_reps.end())
+   {
+     eq::EqualityEngine* ee = d_qstate.getEqualityEngine();
++    std::vector<TNode>& tars = d_arg_reps[n];
+     for (const TNode& nc : n)
+     {
+       TNode r = ee->hasTerm(nc) ? ee->getRepresentative(nc) : nc;
+-      d_arg_reps[n].push_back( r );
++      tars.emplace_back(r);
+     }
+   }
+ }
+@@ -495,17 +496,23 @@ bool TermDb::isTermEligibleForInstantiation(TNode n, TNode f)
+ {
+   if (options().quantifiers.instMaxLevel != -1)
+   {
+-    if( n.hasAttribute(InstLevelAttribute()) ){
++    uint64_t level;
++    if (QuantAttributes::getInstantiationLevel(n, level))
++    {
+       int64_t fml =
+           f.isNull() ? -1 : d_qreg.getQuantAttributes().getQuantInstLevel(f);
+       unsigned ml = fml >= 0 ? fml : options().quantifiers.instMaxLevel;
+ 
+-      if( n.getAttribute(InstLevelAttribute())>ml ){
+-        Trace("inst-add-debug") << "Term " << n << " has instantiation level " << n.getAttribute(InstLevelAttribute());
++      if (level > ml)
++      {
++        Trace("inst-add-debug")
++            << "Term " << n << " has instantiation level " << level;
+         Trace("inst-add-debug") << ", which is more than maximum allowed level " << ml << " for this quantified formula." << std::endl;
+         return false;
+       }
+-    }else{
++    }
++    else
++    {
+       Trace("inst-add-debug")
+           << "Term " << n << " does not have an instantiation level."
+           << std::endl;
+-- 
+2.47.1
+

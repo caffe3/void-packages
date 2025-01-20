@@ -1,0 +1,27 @@
+From bace760b6a1c273ef028ff7dda732eebecd8ce10 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 22 Nov 2024 14:30:56 -0600
+Subject: [PATCH 195/312] Make `preregister-mode` a regular option (#11383)
+
+This option is needed for use in a few applications. A recent SMT-LIB
+run (for https://github.com/cvc5/cvc5/pull/9503) passed with no errors.
+---
+ src/options/prop_options.toml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/options/prop_options.toml b/src/options/prop_options.toml
+index e59e25dff..cf27e8289 100644
+--- a/src/options/prop_options.toml
++++ b/src/options/prop_options.toml
+@@ -96,7 +96,7 @@ name   = "SAT Layer"
+ 
+ [[option]]
+   name       = "preRegisterMode"
+-  category   = "expert"
++  category   = "regular"
+   long       = "preregister-mode=MODE"
+   type       = "PreRegisterMode"
+   default    = "EAGER"
+-- 
+2.47.1
+

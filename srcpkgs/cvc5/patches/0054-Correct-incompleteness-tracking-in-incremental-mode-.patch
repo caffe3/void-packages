@@ -1,0 +1,249 @@
+From ab0299d40576c6336169481018a2bc1ee454f05d Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 17 Sep 2024 11:13:04 -0500
+Subject: [PATCH 054/312] Correct incompleteness tracking in incremental mode
+ (#11204)
+
+Fixes https://github.com/cvc5/cvc5/issues/11198.
+---
+ src/preprocessing/passes/real_to_int.cpp          | 15 +++++++++------
+ src/smt/smt_driver.cpp                            | 10 ----------
+ src/smt/smt_solver.cpp                            |  9 +++++++++
+ src/theory/incomplete_id.cpp                      |  1 +
+ src/theory/incomplete_id.h                        |  2 ++
+ src/theory/theory_engine.cpp                      | 10 ++++++++++
+ src/theory/theory_engine.h                        |  5 +++++
+ test/regress/cli/CMakeLists.txt                   |  1 +
+ .../cli/regress0/issue11198-real-as-int.smt2      |  9 +++++++++
+ test/unit/api/c/capi_result_black.cpp             |  4 ++--
+ test/unit/api/cpp/api_result_black.cpp            |  4 ++--
+ test/unit/api/java/ResultTest.java                |  4 ++--
+ test/unit/api/python/test_result.py               |  4 ++--
+ 13 files changed, 54 insertions(+), 24 deletions(-)
+ create mode 100644 test/regress/cli/regress0/issue11198-real-as-int.smt2
+
+diff --git a/src/preprocessing/passes/real_to_int.cpp b/src/preprocessing/passes/real_to_int.cpp
+index e438ce5f5..e4b2cbf2f 100644
+--- a/src/preprocessing/passes/real_to_int.cpp
++++ b/src/preprocessing/passes/real_to_int.cpp
+@@ -218,18 +218,21 @@ Node RealToInt::realToIntInternal(TNode n, NodeMap& cache, std::vector<Node>& va
+ PreprocessingPassResult RealToInt::applyInternal(
+     AssertionPipeline* assertionsToPreprocess)
+ {
+-  // this pass is refutation unsound, "unsat" will be "unknown"
+-  assertionsToPreprocess->markRefutationUnsound();
+   std::vector<Node> var_eq;
+   for (unsigned i = 0, size = assertionsToPreprocess->size(); i < size; ++i)
+   {
+     Node a = (*assertionsToPreprocess)[i];
+     Node ac = realToIntInternal(a, d_cache, var_eq);
+-    Trace("real-to-int") << "Converted " << a << " to " << ac << std::endl;
+-    assertionsToPreprocess->replace(i, rewrite(ac));
+-    if (assertionsToPreprocess->isInConflict())
++    if (ac != a)
+     {
+-      return PreprocessingPassResult::CONFLICT;
++      // this pass is refutation unsound, "unsat" will be "unknown"
++      assertionsToPreprocess->markRefutationUnsound();
++      Trace("real-to-int") << "Converted " << a << " to " << ac << std::endl;
++      assertionsToPreprocess->replace(i, rewrite(ac));
++      if (assertionsToPreprocess->isInConflict())
++      {
++        return PreprocessingPassResult::CONFLICT;
++      }
+     }
+   }
+   return PreprocessingPassResult::NO_CONFLICT;
+diff --git a/src/smt/smt_driver.cpp b/src/smt/smt_driver.cpp
+index e55cede81..aa2c1113d 100644
+--- a/src/smt/smt_driver.cpp
++++ b/src/smt/smt_driver.cpp
+@@ -162,16 +162,6 @@ Result SmtDriverSingleCall::checkSatNext(preprocessing::AssertionPipeline& ap)
+   d_smt.assertToInternal(ap);
+   // get result
+   Result result = d_smt.checkSatInternal();
+-
+-  // handle options-specific modifications to result
+-  if (ap.isRefutationUnsound() && result.getStatus() == Result::UNSAT)
+-  {
+-    result = Result(Result::UNKNOWN, UnknownExplanation::UNKNOWN_REASON);
+-  }
+-  else if (ap.isModelUnsound() && result.getStatus() == Result::SAT)
+-  {
+-    result = Result(Result::UNKNOWN, UnknownExplanation::UNKNOWN_REASON);
+-  }
+   // handle preprocessing-specific modifications to result
+   if (ap.isNegated())
+   {
+diff --git a/src/smt/smt_solver.cpp b/src/smt/smt_solver.cpp
+index e8c98f6c5..a065c9e19 100644
+--- a/src/smt/smt_solver.cpp
++++ b/src/smt/smt_solver.cpp
+@@ -133,6 +133,15 @@ void SmtSolver::preprocess(preprocessing::AssertionPipeline& ap)
+ 
+ void SmtSolver::assertToInternal(preprocessing::AssertionPipeline& ap)
+ {
++  // carry information about soundness to the theory engine we are sending to
++  if (ap.isRefutationUnsound())
++  {
++    d_theoryEngine->setRefutationUnsound(theory::IncompleteId::PREPROCESSING);
++  }
++  if (ap.isModelUnsound())
++  {
++    d_theoryEngine->setModelUnsound(theory::IncompleteId::PREPROCESSING);
++  }
+   // get the assertions
+   const std::vector<Node>& assertions = ap.ref();
+   preprocessing::IteSkolemMap& ism = ap.getIteSkolemMap();
+diff --git a/src/theory/incomplete_id.cpp b/src/theory/incomplete_id.cpp
+index 81ced46f4..e81e6abc1 100644
+--- a/src/theory/incomplete_id.cpp
++++ b/src/theory/incomplete_id.cpp
+@@ -57,6 +57,7 @@ const char* toString(IncompleteId i)
+     case IncompleteId::UNPROCESSED_THEORY_CONFLICT:
+       return "UNPROCESSED_THEORY_CONFLICT";
+     case IncompleteId::STOP_SEARCH: return "STOP_SEARCH";
++    case IncompleteId::PREPROCESSING: return "PREPROCESSING";
+     case IncompleteId::UNKNOWN: return "UNKNOWN";
+     default:
+       Assert(false) << "No print for incomplete id " << static_cast<size_t>(i);
+diff --git a/src/theory/incomplete_id.h b/src/theory/incomplete_id.h
+index 3fdf30065..61ef29835 100644
+--- a/src/theory/incomplete_id.h
++++ b/src/theory/incomplete_id.h
+@@ -87,6 +87,8 @@ enum class IncompleteId
+   UNPROCESSED_THEORY_CONFLICT,
+   // the prop layer stopped search
+   STOP_SEARCH,
++  // due to preprocessing
++  PREPROCESSING,
+   //------------------- unknown
+   // the reason for the incompleteness is unknown
+   UNKNOWN
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index 186b55609..32fc9dde0 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -1699,6 +1699,16 @@ void TheoryEngine::conflict(TrustNode tconflict,
+   }
+ }
+ 
++void TheoryEngine::setModelUnsound(theory::IncompleteId id)
++{
++  setModelUnsound(TheoryId::THEORY_NONE, id);
++}
++
++void TheoryEngine::setRefutationUnsound(theory::IncompleteId id)
++{
++  setRefutationUnsound(TheoryId::THEORY_NONE, id);
++}
++
+ void TheoryEngine::setModelUnsound(theory::TheoryId theory,
+                                    theory::IncompleteId id)
+ {
+diff --git a/src/theory/theory_engine.h b/src/theory/theory_engine.h
+index e59a0d241..a7b5d1aa5 100644
+--- a/src/theory/theory_engine.h
++++ b/src/theory/theory_engine.h
+@@ -441,6 +441,11 @@ class TheoryEngine : protected EnvObj
+    */
+   void checkTheoryAssertionsWithModel(bool hardFailure);
+ 
++  /** Called externally to notify that the current branch is incomplete. */
++  void setModelUnsound(theory::IncompleteId id);
++  /** Called externally that we are unsound (user-context). */
++  void setRefutationUnsound(theory::IncompleteId id);
++
+  private:
+   typedef context::
+       CDHashMap<NodeTheoryPair, NodeTheoryPair, NodeTheoryPairHashFunction>
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 321d7d5a4..aa2bb7613 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -969,6 +969,7 @@ set(regress_0_tests
+   regress0/issue1063-overloading-dt-cons.smt2
+   regress0/issue1063-overloading-dt-fun.smt2
+   regress0/issue1063-overloading-dt-sel.smt2
++  regress0/issue11198-real-as-int.smt2
+   regress0/issue2832-qualId.smt2
+   regress0/issue4010-sort-inf-var.smt2
+   regress0/issue4469-unc-no-reuse-var.smt2
+diff --git a/test/regress/cli/regress0/issue11198-real-as-int.smt2 b/test/regress/cli/regress0/issue11198-real-as-int.smt2
+new file mode 100644
+index 000000000..c58c33975
+--- /dev/null
++++ b/test/regress/cli/regress0/issue11198-real-as-int.smt2
+@@ -0,0 +1,9 @@
++; COMMAND-LINE: -i --solve-real-as-int
++; EXPECT: sat
++; EXPECT: unknown
++(set-logic ALL)
++(declare-const a Real) 
++(assert (> a 5.0)) 
++(check-sat) 
++(assert (= a 8.9))
++(check-sat) 
+diff --git a/test/unit/api/c/capi_result_black.cpp b/test/unit/api/c/capi_result_black.cpp
+index 374b9e7be..7344e1656 100644
+--- a/test/unit/api/c/capi_result_black.cpp
++++ b/test/unit/api/c/capi_result_black.cpp
+@@ -127,9 +127,9 @@ TEST_F(TestCApiBlackResult, is_unknown)
+   ASSERT_FALSE(cvc5_result_is_unsat(res));
+   ASSERT_TRUE(cvc5_result_is_unknown(res));
+   Cvc5UnknownExplanation ue = cvc5_result_get_unknown_explanation(res);
+-  ASSERT_EQ(ue, CVC5_UNKNOWN_EXPLANATION_UNKNOWN_REASON);
++  ASSERT_EQ(ue, CVC5_UNKNOWN_EXPLANATION_INCOMPLETE);
+   ASSERT_EQ(cvc5_unknown_explanation_to_string(ue),
+-            std::string("UNKNOWN_REASON"));
++            std::string("INCOMPLETE"));
+ }
+ 
+ TEST_F(TestCApiBlackResult, hash)
+diff --git a/test/unit/api/cpp/api_result_black.cpp b/test/unit/api/cpp/api_result_black.cpp
+index ea9dfec40..9057f80de 100644
+--- a/test/unit/api/cpp/api_result_black.cpp
++++ b/test/unit/api/cpp/api_result_black.cpp
+@@ -97,11 +97,11 @@ TEST_F(TestApiBlackResult, isUnknown)
+   ASSERT_FALSE(res.isUnsat());
+   ASSERT_TRUE(res.isUnknown());
+   cvc5::UnknownExplanation ue = res.getUnknownExplanation();
+-  ASSERT_EQ(ue, cvc5::UnknownExplanation::UNKNOWN_REASON);
++  ASSERT_EQ(ue, cvc5::UnknownExplanation::INCOMPLETE);
+   {
+     std::stringstream ss;
+     ss << ue;
+-    ASSERT_EQ(ss.str(), "UNKNOWN_REASON");
++    ASSERT_EQ(ss.str(), "INCOMPLETE");
+   }
+ }
+ 
+diff --git a/test/unit/api/java/ResultTest.java b/test/unit/api/java/ResultTest.java
+index 8ffc93d8b..1af693a7c 100644
+--- a/test/unit/api/java/ResultTest.java
++++ b/test/unit/api/java/ResultTest.java
+@@ -109,7 +109,7 @@ class ResultTest
+     assertFalse(res.isSat());
+     assertTrue(res.isUnknown());
+     UnknownExplanation ue = res.getUnknownExplanation();
+-    assertEquals(ue, UnknownExplanation.UNKNOWN_REASON);
+-    assertEquals(ue.toString(), "UNKNOWN_REASON");
++    assertEquals(ue, UnknownExplanation.INCOMPLETE);
++    assertEquals(ue.toString(), "INCOMPLETE");
+   }
+ }
+diff --git a/test/unit/api/python/test_result.py b/test/unit/api/python/test_result.py
+index d5f061252..09b1cc817 100644
+--- a/test/unit/api/python/test_result.py
++++ b/test/unit/api/python/test_result.py
+@@ -86,5 +86,5 @@ def test_is_sat_unknown(tm, solver):
+     assert not res.isSat()
+     assert res.isUnknown()
+     ue = res.getUnknownExplanation()
+-    assert ue == UnknownExplanation.UNKNOWN_REASON
+-    assert str(ue) == "UnknownExplanation.UNKNOWN_REASON"
++    assert ue == UnknownExplanation.INCOMPLETE
++    assert str(ue) == "UnknownExplanation.INCOMPLETE"
+-- 
+2.47.1
+

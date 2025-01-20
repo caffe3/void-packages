@@ -1,0 +1,509 @@
+From 5572abe4ff432cd95a643a5968e64d634e0bce17 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 10 Jan 2025 11:33:26 -0600
+Subject: [PATCH 290/312] Setup callbacks to proof logging (#11445)
+
+This is work towards adding support for proof logging in cvc5.
+
+It refactors the prop layer slightly and adds the callbacks from the
+prop layer to the proof logger, which lives in the proof manager.
+
+A followup PR will add the CPC proof logger.
+---
+ src/prop/cadical.cpp            |  9 ++---
+ src/prop/cadical.h              |  5 +--
+ src/prop/minisat/minisat.cpp    | 15 +++-----
+ src/prop/minisat/minisat.h      |  5 +--
+ src/prop/prop_engine.cpp        | 41 ++++++++++++++-------
+ src/prop/prop_proof_manager.cpp | 63 +++++++++++++++++++++++++++++++++
+ src/prop/prop_proof_manager.h   | 10 ++++++
+ src/prop/sat_solver.h           |  4 +--
+ src/prop/theory_proxy.cpp       | 13 +++----
+ src/smt/env.cpp                 |  5 +++
+ src/smt/env.h                   |  7 ++++
+ src/smt/proof_manager.cpp       |  8 +++++
+ src/smt/proof_manager.h         | 12 +++++++
+ 13 files changed, 149 insertions(+), 48 deletions(-)
+
+diff --git a/src/prop/cadical.cpp b/src/prop/cadical.cpp
+index 172b9d2a1..6c681c594 100644
+--- a/src/prop/cadical.cpp
++++ b/src/prop/cadical.cpp
+@@ -1000,7 +1000,7 @@ CadicalSolver::CadicalSolver(Env& env,
+                              const std::string& name)
+     : EnvObj(env),
+       d_solver(new CaDiCaL::Solver()),
+-      d_context(nullptr),
++      d_context(context()),
+       // Note: CaDiCaL variables start with index 1 rather than 0 since negated
+       //       literals are represented as the negation of the index.
+       d_nextVarIdx(1),
+@@ -1234,14 +1234,11 @@ CadicalSolver::Statistics::Statistics(StatisticsRegistry& registry,
+ 
+ /* CDCLTSatSolver Interface ------------------------------------------------- */
+ 
+-void CadicalSolver::initialize(context::Context* context,
+-                               prop::TheoryProxy* theoryProxy,
+-                               context::UserContext* userContext,
++void CadicalSolver::initialize(prop::TheoryProxy* theoryProxy,
+                                PropPfManager* ppm)
+ {
+-  d_context = context;
+   d_proxy = theoryProxy;
+-  d_propagator.reset(new CadicalPropagator(theoryProxy, context, *d_solver));
++  d_propagator.reset(new CadicalPropagator(theoryProxy, d_context, *d_solver));
+   if (!d_env.getPlugins().empty())
+   {
+     d_clause_learner.reset(new ClauseLearner(*theoryProxy, 0));
+diff --git a/src/prop/cadical.h b/src/prop/cadical.h
+index 8b6ebd608..7bd5e8e24 100644
+--- a/src/prop/cadical.h
++++ b/src/prop/cadical.h
+@@ -69,10 +69,7 @@ class CadicalSolver : public CDCLTSatSolver, protected EnvObj
+ 
+   /* CDCLTSatSolver interface --------------------------------------------- */
+ 
+-  void initialize(context::Context* context,
+-                  prop::TheoryProxy* theoryProxy,
+-                  context::UserContext* userContext,
+-                  PropPfManager* ppm) override;
++  void initialize(prop::TheoryProxy* theoryProxy, PropPfManager* ppm) override;
+   void push() override;
+ 
+   void pop() override;
+diff --git a/src/prop/minisat/minisat.cpp b/src/prop/minisat/minisat.cpp
+index 77d8b8056..d00b92ef2 100644
+--- a/src/prop/minisat/minisat.cpp
++++ b/src/prop/minisat/minisat.cpp
+@@ -33,8 +33,8 @@ namespace prop {
+ 
+ MinisatSatSolver::MinisatSatSolver(Env& env, StatisticsRegistry& registry)
+     : EnvObj(env),
+-      d_minisat(NULL),
+-      d_context(NULL),
++      d_minisat(nullptr),
++      d_context(context()),
+       d_assumptions(),
+       d_statistics(registry)
+ {}
+@@ -106,13 +106,8 @@ void MinisatSatSolver::toSatClause(const Minisat::Clause& clause,
+   Assert((unsigned)clause.size() == sat_clause.size());
+ }
+ 
+-void MinisatSatSolver::initialize(context::Context* context,
+-                                  TheoryProxy* theoryProxy,
+-                                  context::UserContext* userContext,
+-                                  PropPfManager* ppm)
++void MinisatSatSolver::initialize(TheoryProxy* theoryProxy, PropPfManager* ppm)
+ {
+-  d_context = context;
+-
+   if (options().decision.decisionMode != options::DecisionMode::INTERNAL)
+   {
+     verbose(1) << "minisat: Incremental solving is forced on (to avoid "
+@@ -124,8 +119,8 @@ void MinisatSatSolver::initialize(context::Context* context,
+   d_minisat =
+       new Minisat::SimpSolver(d_env,
+                               theoryProxy,
+-                              d_context,
+-                              userContext,
++                              context(),
++                              userContext(),
+                               ppm,
+                               options().base.incrementalSolving
+                                   || options().decision.decisionMode
+diff --git a/src/prop/minisat/minisat.h b/src/prop/minisat/minisat.h
+index 699b949a2..cee471f9e 100644
+--- a/src/prop/minisat/minisat.h
++++ b/src/prop/minisat/minisat.h
+@@ -48,10 +48,7 @@ class MinisatSatSolver : public CDCLTSatSolver, protected EnvObj
+ 
+   static void  toMinisatClause(SatClause& clause, Minisat::vec<Minisat::Lit>& minisat_clause);
+   static void  toSatClause    (const Minisat::Clause& clause, SatClause& sat_clause);
+-  void initialize(context::Context* context,
+-                  TheoryProxy* theoryProxy,
+-                  context::UserContext* userContext,
+-                  PropPfManager* ppm) override;
++  void initialize(TheoryProxy* theoryProxy, PropPfManager* ppm) override;
+ 
+   ClauseId addClause(SatClause& clause, bool removable) override;
+   ClauseId addXorClause(SatClause& clause, bool rhs, bool removable) override
+diff --git a/src/prop/prop_engine.cpp b/src/prop/prop_engine.cpp
+index 74b964741..6b7ea2f8c 100644
+--- a/src/prop/prop_engine.cpp
++++ b/src/prop/prop_engine.cpp
+@@ -106,15 +106,14 @@ PropEngine::PropEngine(Env& env, TheoryEngine* te)
+ 
+   // connect theory proxy
+   d_theoryProxy->finishInit(d_satSolver, d_cnfStream);
+-  bool satProofs = d_env.isSatProofProducing();
+-  if (satProofs)
++  // if proof producing at all
++  if (options().smt.produceProofs)
+   {
+     d_ppm.reset(
+         new PropPfManager(env, d_satSolver, *d_cnfStream, d_assumptions));
+   }
+   // connect SAT solver
+-  d_satSolver->initialize(
+-      d_env.getContext(), d_theoryProxy, d_env.getUserContext(), d_ppm.get());
++  d_satSolver->initialize(d_theoryProxy, d_ppm.get());
+ }
+ 
+ void PropEngine::finishInit()
+@@ -235,7 +234,7 @@ void PropEngine::assertTrustedLemmaInternal(theory::InferenceId id,
+   // if we are producing proofs for the SAT solver but not for theory engine,
+   // then we need to prevent the lemma of being added as an assumption (since
+   // the generator will be null). We use the default proof generator for lemmas.
+-  if (isProofEnabled() && !d_env.isTheoryProofProducing()
++  if (d_env.isSatProofProducing() && !d_env.isTheoryProofProducing()
+       && !trn.getGenerator())
+   {
+     Node actualNode = negated ? node.notNode() : node;
+@@ -347,8 +346,10 @@ void PropEngine::assertLemmasInternal(
+ 
+ void PropEngine::notifyExplainedPropagation(TrustNode texp)
+ {
+-  Assert(d_ppm != nullptr);
+-  d_ppm->notifyExplainedPropagation(texp);
++  if (d_ppm != nullptr)
++  {
++    d_ppm->notifyExplainedPropagation(texp);
++  }
+ }
+ 
+ void PropEngine::preferPhase(TNode n, bool phase)
+@@ -441,22 +442,30 @@ Result PropEngine::checkSat() {
+   // Note this currently ignores conflicts (a dangerous practice).
+   d_theoryProxy->presolve();
+ 
++  // add the assumptions
++  std::vector<SatLiteral> assumptions;
++  for (const Node& node : d_assumptions)
++  {
++    assumptions.push_back(d_cnfStream->getLiteral(node));
++  }
++
++  // now presolve with prop proof manager
++  if (d_ppm != nullptr)
++  {
++    d_ppm->presolve();
++  }
++
+   // Reset the interrupted flag
+   d_interrupted = false;
+ 
+   // Check the problem
+   SatValue result;
+-  if (d_assumptions.size() == 0)
++  if (assumptions.empty())
+   {
+     result = d_satSolver->solve();
+   }
+   else
+   {
+-    std::vector<SatLiteral> assumptions;
+-    for (const Node& node : d_assumptions)
+-    {
+-      assumptions.push_back(d_cnfStream->getLiteral(node));
+-    }
+     result = d_satSolver->solve(assumptions);
+   }
+ 
+@@ -497,6 +506,12 @@ Result PropEngine::checkSat() {
+                            d_theoryProxy->getRefutationUnsoundId());
+     return Result(Result::UNKNOWN, UnknownExplanation::INCOMPLETE);
+   }
++
++  if (d_ppm != nullptr)
++  {
++    d_ppm->postsolve(result);
++  }
++
+   return Result(result == SAT_VALUE_TRUE ? Result::SAT : Result::UNSAT);
+ }
+ 
+diff --git a/src/prop/prop_proof_manager.cpp b/src/prop/prop_proof_manager.cpp
+index 5137f2bae..01f8fa590 100644
+--- a/src/prop/prop_proof_manager.cpp
++++ b/src/prop/prop_proof_manager.cpp
+@@ -29,6 +29,7 @@
+ #include "prop/sat_solver_factory.h"
+ #include "smt/env.h"
+ #include "smt/logic_exception.h"
++#include "smt/proof_logger.h"
+ #include "util/resource_manager.h"
+ #include "util/string.h"
+ 
+@@ -60,6 +61,7 @@ PropPfManager::PropPfManager(Env& env,
+           env, nullptr, userContext(), "ProofCnfStream::LazyCDProof", false),
+       d_pfpp(new ProofPostprocess(env, &d_proof)),
+       d_pfCnfStream(env, cnf, this),
++      d_plog(nullptr),
+       d_satSolver(satSolver),
+       d_assertions(userContext()),
+       d_cnfStream(cnf),
+@@ -338,9 +340,70 @@ Node PropPfManager::normalizeAndRegister(TNode clauseNode,
+   {
+     d_satPm->registerSatAssumptions({normClauseNode});
+   }
++  // if proof logging, make the call now
++  if (d_plog != nullptr)
++  {
++    if (!input)
++    {
++      if (d_env.isTheoryProofProducing())
++      {
++        // if theory proof producing, we get the proof to log
++        std::shared_ptr<ProofNode> pfn = d_proof.getProofFor(normClauseNode);
++        d_plog->logTheoryLemmaProof(pfn);
++      }
++      else
++      {
++        // otherwise we just notify the clause
++        d_plog->logTheoryLemma(normClauseNode);
++      }
++    }
++  }
+   return normClauseNode;
+ }
+ 
++void PropPfManager::presolve()
++{
++  // get the proof logger now
++  d_plog = d_env.getProofLogger();
++  Trace("pf-log-debug") << "PropPfManager::presolve, plog="
++                        << (d_plog != nullptr) << std::endl;
++  if (d_plog != nullptr)
++  {
++    // TODO (wishues #157): in incremental mode, only get the new assertions
++    std::vector<std::shared_ptr<ProofNode>> icp = getInputClausesProofs();
++    for (const Node& a : d_assumptions)
++    {
++      icp.emplace_back(d_proof.getProofFor(a));
++    }
++    Trace("pf-log-debug") << "PropPfManager::presolve, we have "
++                          << d_inputClauses.size() << " inputs and "
++                          << d_assumptions.size() << " assumptions"
++                          << std::endl;
++    d_plog->logCnfPreprocessInputProofs(icp);
++  }
++}
++
++void PropPfManager::postsolve(SatValue result)
++{
++  if (d_plog != nullptr)
++  {
++    if (result == SAT_VALUE_FALSE)
++    {
++      if (d_env.isSatProofProducing())
++      {
++        // if SAT proof producing, log the proof
++        std::shared_ptr<ProofNode> satPf = getProof(true);
++        d_plog->logSatRefutationProof(satPf);
++      }
++      else
++      {
++        // otherwise just mark the refutation
++        d_plog->logSatRefutation();
++      }
++    }
++  }
++}
++
+ LazyCDProof* PropPfManager::getCnfProof() { return &d_proof; }
+ 
+ std::vector<Node> PropPfManager::getInputClauses()
+diff --git a/src/prop/prop_proof_manager.h b/src/prop/prop_proof_manager.h
+index b22dc0d3c..a572e4d37 100644
+--- a/src/prop/prop_proof_manager.h
++++ b/src/prop/prop_proof_manager.h
+@@ -30,6 +30,9 @@
+ #include "theory/inference_id.h"
+ 
+ namespace cvc5::internal {
++
++class ProofLogger;
++
+ namespace prop {
+ 
+ class CDCLTSatSolver;
+@@ -58,6 +61,11 @@ class PropPfManager : protected EnvObj
+                 CDCLTSatSolver* satSolver,
+                 CnfStream& cnfProof,
+                 const context::CDList<Node>& assumptions);
++
++  /** Presolve, which initializes proof logging */
++  void presolve();
++  /** Postsolve, which finalizes proof logging */
++  void postsolve(SatValue result);
+   /**
+    * Ensure that the given node will have a designated SAT literal that is
+    * definitionally equal to it.  The result of this function is that the Node
+@@ -207,6 +215,8 @@ class PropPfManager : protected EnvObj
+   std::unique_ptr<prop::ProofPostprocess> d_pfpp;
+   /** Proof-producing CNF converter */
+   ProofCnfStream d_pfCnfStream;
++  /** Pointer to the proof logger of the environment */
++  ProofLogger* d_plog;
+   /**
+    * The SAT solver of this prop engine, which should provide a refutation
+    * proof when requested */
+diff --git a/src/prop/sat_solver.h b/src/prop/sat_solver.h
+index ebc5720eb..bb0e57625 100644
+--- a/src/prop/sat_solver.h
++++ b/src/prop/sat_solver.h
+@@ -122,9 +122,7 @@ class CDCLTSatSolver : public SatSolver
+  public:
+   virtual ~CDCLTSatSolver(){};
+ 
+-  virtual void initialize(context::Context* context,
+-                          prop::TheoryProxy* theoryProxy,
+-                          context::UserContext* userContext,
++  virtual void initialize(prop::TheoryProxy* theoryProxy,
+                           PropPfManager* ppm) = 0;
+ 
+   virtual void push() = 0;
+diff --git a/src/prop/theory_proxy.cpp b/src/prop/theory_proxy.cpp
+index e6dd65ee3..12aef9531 100644
+--- a/src/prop/theory_proxy.cpp
++++ b/src/prop/theory_proxy.cpp
+@@ -292,14 +292,11 @@ void TheoryProxy::explainPropagation(SatLiteral l, SatClause& explanation) {
+ 
+   TrustNode tte = d_theoryEngine->getExplanation(lNode);
+   Node theoryExplanation = tte.getNode();
+-  if (d_env.isSatProofProducing())
+-  {
+-    Assert(!d_env.isTheoryProofProducing() || tte.getGenerator());
+-    // notify the prop engine of the explanation, which is only relevant if
+-    // we are proof producing for the purposes of storing the CNF of the
+-    // explanation.
+-    d_propEngine->notifyExplainedPropagation(tte);
+-  }
++  Assert(!d_env.isTheoryProofProducing() || tte.getGenerator());
++  // notify the prop engine of the explanation, which is only relevant if
++  // we are proof producing for the purposes of storing the CNF of the
++  // explanation.
++  d_propEngine->notifyExplainedPropagation(tte);
+   Trace("prop-explain") << "explainPropagation() => " << theoryExplanation
+                         << std::endl;
+   explanation.push_back(l);
+diff --git a/src/smt/env.cpp b/src/smt/env.cpp
+index a117d00c9..035777e06 100644
+--- a/src/smt/env.cpp
++++ b/src/smt/env.cpp
+@@ -109,6 +109,11 @@ context::UserContext* Env::getUserContext() { return d_userContext.get(); }
+ 
+ smt::PfManager* Env::getProofManager() { return d_pfManager; }
+ 
++ProofLogger* Env::getProofLogger()
++{
++  return d_pfManager ? d_pfManager->getProofLogger() : nullptr;
++}
++
+ ProofNodeManager* Env::getProofNodeManager() { return d_proofNodeManager; }
+ 
+ bool Env::isSatProofProducing() const
+diff --git a/src/smt/env.h b/src/smt/env.h
+index cb8a303a3..f003340af 100644
+--- a/src/smt/env.h
++++ b/src/smt/env.h
+@@ -38,6 +38,7 @@ namespace cvc5::internal {
+ class NodeManager;
+ class StatisticsRegistry;
+ class Plugin;
++class ProofLogger;
+ class ProofNodeManager;
+ class Printer;
+ class ResourceManager;
+@@ -94,6 +95,12 @@ class Env
+    * this environment is initialized, and only non-null if proofs are enabled.
+    */
+   smt::PfManager* getProofManager();
++  /**
++   * Get the underlying proof logger. Note since proofs depend on option
++   * initialization, this is only available after the SolverEngine that owns
++   * this environment is initialized, and only non-null if proofs are enabled.
++   */
++  ProofLogger* getProofLogger();
+   /**
+    * Get the underlying proof node manager. Note since proofs depend on option
+    * initialization, this is only available after the SolverEngine that owns
+diff --git a/src/smt/proof_manager.cpp b/src/smt/proof_manager.cpp
+index 5e1c10664..b52922a3b 100644
+--- a/src/smt/proof_manager.cpp
++++ b/src/smt/proof_manager.cpp
+@@ -33,6 +33,7 @@
+ #include "smt/difficulty_post_processor.h"
+ #include "smt/env.h"
+ #include "smt/preprocess_proof_generator.h"
++#include "smt/proof_logger.h"
+ #include "smt/proof_post_processor.h"
+ #include "smt/smt_solver.h"
+ 
+@@ -163,6 +164,11 @@ constexpr typename std::vector<T, Alloc>::size_type erase_if(
+   return r;
+ }
+ 
++void PfManager::startProofLogging(std::ostream& out, Assertions& as)
++{
++  Unimplemented() << "Not yet implemented" << std::endl;
++}
++
+ std::shared_ptr<ProofNode> PfManager::connectProofToAssertions(
+     std::shared_ptr<ProofNode> pfn, Assertions& as, ProofScopeMode scopeMode)
+ {
+@@ -423,6 +429,8 @@ ProofChecker* PfManager::getProofChecker() const { return d_pchecker.get(); }
+ 
+ ProofNodeManager* PfManager::getProofNodeManager() const { return d_pnm.get(); }
+ 
++ProofLogger* PfManager::getProofLogger() const { return d_plog.get(); }
++
+ rewriter::RewriteDb* PfManager::getRewriteDatabase() const
+ {
+   return d_rewriteDb.get();
+diff --git a/src/smt/proof_manager.h b/src/smt/proof_manager.h
+index f3eda2039..6abf21ed7 100644
+--- a/src/smt/proof_manager.h
++++ b/src/smt/proof_manager.h
+@@ -29,6 +29,7 @@ namespace cvc5::internal {
+ class ProofChecker;
+ class ProofNode;
+ class ProofNodeManager;
++class ProofLogger;
+ class SolverEngine;
+ 
+ namespace rewriter {
+@@ -150,11 +151,20 @@ class PfManager : protected EnvObj
+    * @param pfn The proof to check.
+    */
+   void checkFinalProof(std::shared_ptr<ProofNode> pfn);
++  /**
++   * Start proof logging. This is called when the SMT solver is initialized
++   * and --proof-log is enabled.
++   * @param out The output stream to log proofs on.
++   * @param as Reference to the assertions.
++   */
++  void startProofLogging(std::ostream& out, Assertions& as);
+   //--------------------------- access to utilities
+   /** Get a pointer to the ProofChecker owned by this. */
+   ProofChecker* getProofChecker() const;
+   /** Get a pointer to the ProofNodeManager owned by this. */
+   ProofNodeManager* getProofNodeManager() const;
++  /** Get a pointer to the ProofLogger owned by this. */
++  ProofLogger* getProofLogger() const;
+   /** Get the rewrite database, containing definitions of rewrites from DSL. */
+   rewriter::RewriteDb* getRewriteDatabase() const;
+   /** Get the preprocess proof generator */
+@@ -179,6 +189,8 @@ class PfManager : protected EnvObj
+   std::unique_ptr<ProofChecker> d_pchecker;
+   /** A proof node manager based on the above checker */
+   std::unique_ptr<ProofNodeManager> d_pnm;
++  /** A proof logger, if proofLog is enabled */
++  std::unique_ptr<ProofLogger> d_plog;
+   /** The proof post-processor */
+   std::unique_ptr<smt::ProofPostprocess> d_pfpp;
+   /** The preprocess proof generator. */
+-- 
+2.47.1
+

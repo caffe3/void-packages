@@ -1,0 +1,398 @@
+From 027ea637faea0acdcccd7b0d024ce388f752bfd5 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Fri, 27 Sep 2024 17:48:04 -0500
+Subject: [PATCH 085/312] bounded integers: Refactor to not use
+ NodeManager::currentNM() (#11225)
+
+---
+ src/theory/bags/bag_reduction.cpp             |  9 ++++--
+ src/theory/bags/inference_generator.cpp       |  6 ++--
+ .../quantifiers/fmf/bounded_integers.cpp      | 19 ++++++------
+ src/theory/quantifiers/fmf/bounded_integers.h |  2 +-
+ src/theory/sets/set_reduction.cpp             |  3 +-
+ src/theory/strings/regexp_elim.cpp            |  8 ++---
+ src/theory/strings/regexp_operation.cpp       |  4 +--
+ .../strings/theory_strings_preprocess.cpp     | 30 ++++++++++---------
+ src/theory/strings/theory_strings_utils.cpp   |  4 +--
+ src/theory/strings/theory_strings_utils.h     |  2 +-
+ 10 files changed, 47 insertions(+), 40 deletions(-)
+
+diff --git a/src/theory/bags/bag_reduction.cpp b/src/theory/bags/bag_reduction.cpp
+index 45d7ab5bb..bbccfeb1d 100644
+--- a/src/theory/bags/bag_reduction.cpp
++++ b/src/theory/bags/bag_reduction.cpp
+@@ -105,7 +105,8 @@ Node BagReduction::reduceFoldOperator(Node node, std::vector<Node>& asserts)
+       nm->mkNode(Kind::IMPLIES,
+                  interval_i,
+                  nm->mkNode(Kind::AND, combine_i_equal, unionDisjoint_i_equal));
+-  Node forAll_i = quantifiers::BoundedIntegers::mkBoundedForall(iList, body_i);
++  Node forAll_i =
++      quantifiers::BoundedIntegers::mkBoundedForall(nm, iList, body_i);
+   Node nonNegative = nm->mkNode(Kind::GEQ, n, zero);
+   Node unionDisjoint_n_equal = A.eqNode(unionDisjoint_n);
+   asserts.push_back(forAll_i);
+@@ -174,12 +175,14 @@ Node BagReduction::reduceCardOperator(Node node, std::vector<Node>& asserts)
+       nm->mkNode(Kind::EQUAL, elements_i, elements_j);
+   Node notEqual = nm->mkNode(Kind::EQUAL, elements_i, elements_j).negate();
+   Node body_j = nm->mkNode(Kind::OR, interval_j.negate(), notEqual);
+-  Node forAll_j = quantifiers::BoundedIntegers::mkBoundedForall(jList, body_j);
++  Node forAll_j =
++      quantifiers::BoundedIntegers::mkBoundedForall(nm, jList, body_j);
+   Node body_i = nm->mkNode(
+       Kind::IMPLIES,
+       interval_i,
+       nm->mkNode(Kind::AND, combine_i_equal, unionDisjoint_i_equal, forAll_j));
+-  Node forAll_i = quantifiers::BoundedIntegers::mkBoundedForall(iList, body_i);
++  Node forAll_i =
++      quantifiers::BoundedIntegers::mkBoundedForall(nm, iList, body_i);
+   Node nonNegative = nm->mkNode(Kind::GEQ, n, zero);
+   Node unionDisjoint_n_equal = A.eqNode(unionDisjoint_n);
+   asserts.push_back(forAll_i);
+diff --git a/src/theory/bags/inference_generator.cpp b/src/theory/bags/inference_generator.cpp
+index 7e8d17d94..e0be79f7b 100644
+--- a/src/theory/bags/inference_generator.cpp
++++ b/src/theory/bags/inference_generator.cpp
+@@ -470,13 +470,15 @@ std::tuple<InferInfo, Node, Node> InferenceGenerator::mapDown(Node n, Node e)
+   Node uf_i_equals_uf_j = d_nm->mkNode(Kind::EQUAL, uf_i, uf_j);
+   Node notEqual = d_nm->mkNode(Kind::EQUAL, uf_i, uf_j).negate();
+   Node body_j = d_nm->mkNode(Kind::OR, interval_j.negate(), notEqual);
+-  Node forAll_j = quantifiers::BoundedIntegers::mkBoundedForall(jList, body_j);
++  Node forAll_j =
++      quantifiers::BoundedIntegers::mkBoundedForall(d_nm, jList, body_j);
+   Node disjunct1 = d_nm->mkNode(Kind::AND, {f_iEqualE, addMultiplicity});
+   Node disjunct2 = d_nm->mkNode(Kind::AND, {distinct, previousValue});
+   Node orNode = disjunct1.orNode(disjunct2);
+   Node andNode = d_nm->mkNode(Kind::AND, {forAll_j, geqOne, orNode});
+   Node body_i = d_nm->mkNode(Kind::OR, interval_i.negate(), andNode);
+-  Node forAll_i = quantifiers::BoundedIntegers::mkBoundedForall(iList, body_i);
++  Node forAll_i =
++      quantifiers::BoundedIntegers::mkBoundedForall(d_nm, iList, body_i);
+   Node sizeGTE_zero = d_nm->mkNode(Kind::GEQ, size, d_zero);
+   Node conclusion = d_nm->mkNode(
+       Kind::AND, {baseCase, totalSumEqualCountE, forAll_i, sizeGTE_zero});
+diff --git a/src/theory/quantifiers/fmf/bounded_integers.cpp b/src/theory/quantifiers/fmf/bounded_integers.cpp
+index 2b8359571..84bc7b9c4 100644
+--- a/src/theory/quantifiers/fmf/bounded_integers.cpp
++++ b/src/theory/quantifiers/fmf/bounded_integers.cpp
+@@ -48,7 +48,7 @@ BoundedIntegers::IntRangeDecisionHeuristic::IntRangeDecisionHeuristic(
+ {
+   if (options().quantifiers.fmfBoundLazy)
+   {
+-    SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
++    SkolemManager* sm = nodeManager()->getSkolemManager();
+     d_proxy_range = isProxy ? r : sm->mkDummySkolem("pbir", r.getType());
+   }
+   else
+@@ -61,7 +61,7 @@ BoundedIntegers::IntRangeDecisionHeuristic::IntRangeDecisionHeuristic(
+ }
+ Node BoundedIntegers::IntRangeDecisionHeuristic::mkLiteral(unsigned n)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   Node cn = nm->mkConstInt(Rational(n == 0 ? 0 : n - 1));
+   return nm->mkNode(n == 0 ? Kind::LT : Kind::LEQ, d_proxy_range, cn);
+ }
+@@ -82,7 +82,7 @@ Node BoundedIntegers::IntRangeDecisionHeuristic::proxyCurrentRangeLemma()
+     return Node::null();
+   }
+   d_ranges_proxied[curr] = true;
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   Node currLit = getLiteral(curr);
+   Node lem = nm->mkNode(
+       Kind::EQUAL,
+@@ -249,7 +249,7 @@ void BoundedIntegers::process( Node q, Node n, bool pol,
+       std::map< Node, Node > msum;
+       if (ArithMSum::getMonomialSumLit(n, msum))
+       {
+-        NodeManager* nm = NodeManager::currentNM();
++        NodeManager* nm = nodeManager();
+         Trace("bound-int-debug") << "literal (polarity = " << pol << ") " << n << " is monomial sum : " << std::endl;
+         ArithMSum::debugPrintMonomialSum(msum, "bound-int-debug");
+         for( std::map< Node, Node >::iterator it = msum.begin(); it != msum.end(); ++it ){
+@@ -376,7 +376,7 @@ void BoundedIntegers::checkOwnership(Node f)
+     }
+   }
+ 
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   SkolemManager* sm = nm->getSkolemManager();
+ 
+   bool success;
+@@ -705,7 +705,7 @@ Node BoundedIntegers::getSetRangeValue( Node q, Node v, RepSetIterator * rsi ) {
+   {
+     return sr;
+   }
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   TypeNode srt = sr.getType();
+   TypeNode tne = srt.getSetElementType();
+   Node nsr = nm->mkConst(EmptySet(srt));
+@@ -792,7 +792,7 @@ bool BoundedIntegers::getRsiSubsitution( Node q, Node v, std::vector< Node >& va
+       //must add the lemma
+       Node nn = d_nground_range[q][v];
+       nn = nn.substitute( vars.begin(), vars.end(), subs.begin(), subs.end() );
+-      Node lem = NodeManager::currentNM()->mkNode(Kind::LEQ, nn, d_range[q][v]);
++      Node lem = nodeManager()->mkNode(Kind::LEQ, nn, d_range[q][v]);
+       Trace("bound-int-lemma") << "*** Add lemma to minimize instantiated non-ground term " << lem << std::endl;
+       d_qim.lemma(lem, InferenceId::QUANTIFIERS_BINT_MIN_NG);
+     }
+@@ -848,7 +848,7 @@ bool BoundedIntegers::getBoundElements( RepSetIterator * rsi, bool initial, Node
+         //failed, abort the iterator
+         return false;
+       }else{
+-        NodeManager* nm = NodeManager::currentNM();
++        NodeManager* nm = nodeManager();
+         Trace("bound-int-rsi") << "Can limit bounds of " << v << " to " << l << "..." << u << std::endl;
+         Node range = rewrite(nm->mkNode(Kind::SUB, u, l));
+         if (!range.isConst())
+@@ -980,9 +980,8 @@ struct QInternalVarAttributeId
+ };
+ typedef expr::Attribute<QInternalVarAttributeId, Node> QInternalVarAttribute;
+ 
+-Node BoundedIntegers::mkBoundedForall(Node bvl, Node body)
++Node BoundedIntegers::mkBoundedForall(NodeManager* nm, Node bvl, Node body)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   QInternalVarAttribute qiva;
+   Node qvar;
+   if (bvl.hasAttribute(qiva))
+diff --git a/src/theory/quantifiers/fmf/bounded_integers.h b/src/theory/quantifiers/fmf/bounded_integers.h
+index ba0896f95..42b601a36 100644
+--- a/src/theory/quantifiers/fmf/bounded_integers.h
++++ b/src/theory/quantifiers/fmf/bounded_integers.h
+@@ -225,7 +225,7 @@ private:
+    * applied to the quantified formula, and that this module is the one that
+    * handles it.
+    */
+-  static Node mkBoundedForall(Node bvl, Node body);
++  static Node mkBoundedForall(NodeManager* nm, Node bvl, Node body);
+   /**
+    * Has this node been marked as an annotation for a bounded quantified
+    * formula? This is true for the annotation in the formula returned by the
+diff --git a/src/theory/sets/set_reduction.cpp b/src/theory/sets/set_reduction.cpp
+index f4b472d7d..1ceae4c64 100644
+--- a/src/theory/sets/set_reduction.cpp
++++ b/src/theory/sets/set_reduction.cpp
+@@ -101,7 +101,8 @@ Node SetReduction::reduceFoldOperator(Node node, std::vector<Node>& asserts)
+       nm->mkNode(Kind::IMPLIES,
+                  interval_i,
+                  nm->mkNode(Kind::AND, combine_i_equal, union_i_equal));
+-  Node forAll_i = quantifiers::BoundedIntegers::mkBoundedForall(iList, body_i);
++  Node forAll_i =
++      quantifiers::BoundedIntegers::mkBoundedForall(nm, iList, body_i);
+   Node nonNegative = nm->mkNode(Kind::GEQ, n, zero);
+   Node union_n_equal = A.eqNode(union_n);
+   asserts.push_back(forAll_i);
+diff --git a/src/theory/strings/regexp_elim.cpp b/src/theory/strings/regexp_elim.cpp
+index a0148eb91..c0dc91652 100644
+--- a/src/theory/strings/regexp_elim.cpp
++++ b/src/theory/strings/regexp_elim.cpp
+@@ -376,7 +376,7 @@ Node RegExpElimination::eliminateConcat(Node atom, bool isAgg)
+         children2.push_back(res);
+         Node body = nm->mkNode(Kind::AND, children2);
+         Node bvl = nm->mkNode(Kind::BOUND_VAR_LIST, non_greedy_find_vars);
+-        res = utils::mkForallInternal(bvl, body.negate()).negate();
++        res = utils::mkForallInternal(nm, bvl, body.negate()).negate();
+       }
+       // must also give a minimum length requirement
+       res = nm->mkNode(Kind::AND, res, nm->mkNode(Kind::GEQ, lenx, lenSum));
+@@ -522,7 +522,7 @@ Node RegExpElimination::eliminateConcat(Node atom, bool isAgg)
+       if (k.getKind() == Kind::BOUND_VARIABLE)
+       {
+         Node bvl = nm->mkNode(Kind::BOUND_VAR_LIST, k);
+-        body = utils::mkForallInternal(bvl, body.negate()).negate();
++        body = utils::mkForallInternal(nm, bvl, body.negate()).negate();
+       }
+       // e.g. x in re.++( R1, "AB", R2 ) --->
+       //  exists k.
+@@ -612,7 +612,7 @@ Node RegExpElimination::eliminateStar(Node atom, bool isAgg)
+                     : nm->mkNode(Kind::OR, char_constraints);
+     Node body = nm->mkNode(Kind::OR, bound.negate(), conc);
+     Node bvl = nm->mkNode(Kind::BOUND_VAR_LIST, index);
+-    Node res = utils::mkForallInternal(bvl, body);
++    Node res = utils::mkForallInternal(nm, bvl, body);
+     // e.g.
+     //   x in (re.* (re.union "A" "B" )) --->
+     //   forall k. 0<=k<len(x) => (substr(x,k,1) in "A" OR substr(x,k,1) in "B")
+@@ -644,7 +644,7 @@ Node RegExpElimination::eliminateStar(Node atom, bool isAgg)
+                         .eqNode(s);
+         Node body = nm->mkNode(Kind::OR, bound.negate(), conc);
+         Node bvl = nm->mkNode(Kind::BOUND_VAR_LIST, index);
+-        Node res = utils::mkForallInternal(bvl, body);
++        Node res = utils::mkForallInternal(nm, bvl, body);
+         res = nm->mkNode(
+             Kind::AND,
+             nm->mkNode(Kind::INTS_MODULUS_TOTAL, lenx, lens).eqNode(zero),
+diff --git a/src/theory/strings/regexp_operation.cpp b/src/theory/strings/regexp_operation.cpp
+index cb1a01d7c..28ec2a24d 100644
+--- a/src/theory/strings/regexp_operation.cpp
++++ b/src/theory/strings/regexp_operation.cpp
+@@ -1000,7 +1000,7 @@ Node RegExpOpr::reduceRegExpNeg(NodeManager* nm, Node mem)
+ 
+     conc = nm->mkNode(Kind::OR, {g11n, g12n, s1r1, s2r2});
+     // must mark as an internal quantifier
+-    conc = utils::mkForallInternal(b1v, conc);
++    conc = utils::mkForallInternal(nm, b1v, conc);
+     conc = nm->mkNode(Kind::AND, sne, conc);
+   }
+   else
+@@ -1073,7 +1073,7 @@ Node RegExpOpr::reduceRegExpNegConcatFixed(NodeManager* nm,
+   {
+     conc = nm->mkNode(Kind::OR, {guard1n, guard2n, s1r1, s2r2});
+     // must mark as an internal quantifier
+-    conc = utils::mkForallInternal(b1v, conc);
++    conc = utils::mkForallInternal(nm, b1v, conc);
+   }
+   else
+   {
+diff --git a/src/theory/strings/theory_strings_preprocess.cpp b/src/theory/strings/theory_strings_preprocess.cpp
+index 48e2ef0d0..3e67a9481 100644
+--- a/src/theory/strings/theory_strings_preprocess.cpp
++++ b/src/theory/strings/theory_strings_preprocess.cpp
+@@ -303,7 +303,7 @@ Node StringsPreprocess::reduce(Node t,
+     // forall il.
+     //   n <= i < ite(skk = -1, len(s), skk) ^ 0 < l <= len(s) - i =>
+     //     ~in_re(substr(s, i, l), r)
+-    Node firstMatch = utils::mkForallInternal(bvl, body);
++    Node firstMatch = utils::mkForallInternal(nm, bvl, body);
+     Node bvll = nm->mkNode(Kind::BOUND_VAR_LIST, l);
+     Node validLen =
+         nm->mkNode(Kind::AND,
+@@ -321,9 +321,10 @@ Node StringsPreprocess::reduce(Node t,
+     Node match = nm->mkNode(
+         Kind::OR,
+         retNegOne,
+-        nm->mkNode(Kind::AND,
+-                   nm->mkNode(Kind::GEQ, skk, n),
+-                   utils::mkForallInternal(bvll, matchBody.negate()).negate()));
++        nm->mkNode(
++            Kind::AND,
++            nm->mkNode(Kind::GEQ, skk, n),
++            utils::mkForallInternal(nm, bvll, matchBody.negate()).negate()));
+ 
+     // assert:
+     // IF:   n > len(s) OR 0 > n
+@@ -398,7 +399,7 @@ Node StringsPreprocess::reduce(Node t,
+ 
+     lem =
+         nm->mkNode(Kind::OR, g.negate(), nm->mkNode(Kind::AND, eq, cb, ux1lem));
+-    lem = utils::mkForallInternal(xbv, lem);
++    lem = utils::mkForallInternal(nm, xbv, lem);
+     conc.push_back(lem);
+ 
+     Node nonneg = nm->mkNode(Kind::GEQ, n, zero);
+@@ -492,7 +493,7 @@ Node StringsPreprocess::reduce(Node t,
+ 
+     lem =
+         nm->mkNode(Kind::OR, g.negate(), nm->mkNode(Kind::AND, eq, cb, ux1lem));
+-    lem = utils::mkForallInternal(xbv, lem);
++    lem = utils::mkForallInternal(nm, xbv, lem);
+     conc2.push_back(lem);
+ 
+     Node sneg = nm->mkNode(Kind::LT, stoit, zero);
+@@ -675,7 +676,7 @@ Node StringsPreprocess::reduce(Node t,
+ 
+     Node body =
+         nm->mkNode(Kind::OR, bound.negate(), nm->mkNode(Kind::AND, flem));
+-    Node q = utils::mkForallInternal(bvli, body);
++    Node q = utils::mkForallInternal(nm, bvli, body);
+     lem.push_back(q);
+ 
+     // assert:
+@@ -741,7 +742,7 @@ Node StringsPreprocess::reduce(Node t,
+                               y)
+                        .negate());
+     // forall l. 0 <= l < len(k2) => ~in_re(substr(k2, 0, l), r)
+-    Node shortestMatch = utils::mkForallInternal(bvll, body);
++    Node shortestMatch = utils::mkForallInternal(nm, bvll, body);
+     // in_re(k2, y)
+     Node match = nm->mkNode(Kind::STRING_IN_REGEXP, k2, y);
+     // k = k1 ++ z ++ k3
+@@ -836,7 +837,7 @@ Node StringsPreprocess::reduce(Node t,
+                        .negate());
+     // forall l. 0 < l < Ul(i + 1) =>
+     //   ~in_re(substr(x, Uf(i + 1) - Ul(i + 1), l), y')
+-    flem.push_back(utils::mkForallInternal(bvll, shortestMatchBody));
++    flem.push_back(utils::mkForallInternal(nm, bvll, shortestMatchBody));
+     Node pfxMatch =
+         nm->mkNode(Kind::STRING_SUBSTR, x, ufi, nm->mkNode(Kind::SUB, ii, ufi));
+     // Us(i) = substr(x, Uf(i), ii - Uf(i)) ++ z ++ Us(i + 1)
+@@ -848,7 +849,7 @@ Node StringsPreprocess::reduce(Node t,
+                                nm->mkNode(Kind::APPLY_UF, us, ip1))));
+     Node body =
+         nm->mkNode(Kind::OR, bound.negate(), nm->mkNode(Kind::AND, flem));
+-    Node forall = utils::mkForallInternal(bvli, body);
++    Node forall = utils::mkForallInternal(nm, bvli, body);
+     lemmas.push_back(forall);
+ 
+     // IF indexof(x, y', 0) = -1
+@@ -919,7 +920,7 @@ Node StringsPreprocess::reduce(Node t,
+                             nm->mkNode(Kind::LEQ, zero, i),
+                             nm->mkNode(Kind::LT, i, lenr));
+     Node body = nm->mkNode(Kind::OR, bound.negate(), ri.eqNode(res));
+-    Node rangeA = utils::mkForallInternal(bvi, body);
++    Node rangeA = utils::mkForallInternal(nm, bvi, body);
+ 
+     // upper 65 ... 90
+     // lower 97 ... 122
+@@ -956,7 +957,7 @@ Node StringsPreprocess::reduce(Node t,
+                             nm->mkNode(Kind::LEQ, zero, i),
+                             nm->mkNode(Kind::LT, i, lenr));
+     Node body = nm->mkNode(Kind::OR, bound.negate(), ssr.eqNode(ssx));
+-    Node rangeA = utils::mkForallInternal(bvi, body);
++    Node rangeA = utils::mkForallInternal(nm, bvi, body);
+     // assert:
+     //   len(r) = len(x) ^
+     //   forall i. 0 <= i < len(r) =>
+@@ -987,7 +988,7 @@ Node StringsPreprocess::reduce(Node t,
+             Kind::EQUAL,
+             NodeManager::currentNM()->mkNode(Kind::STRING_SUBSTR, x, b1, lens),
+             s));
+-    retNode = utils::mkForallInternal(b1v, body.negate()).negate();
++    retNode = utils::mkForallInternal(nm, b1v, body.negate()).negate();
+   }
+   else if (t.getKind() == Kind::STRING_LEQ)
+   {
+@@ -1018,7 +1019,8 @@ Node StringsPreprocess::reduce(Node t,
+     }
+     conj.push_back(nm->mkNode(Kind::ITE, ite_ch));
+ 
+-    Node conjn = utils::mkForallInternal(nm->mkNode(Kind::BOUND_VAR_LIST, k),
++    Node conjn = utils::mkForallInternal(nm,
++                                         nm->mkNode(Kind::BOUND_VAR_LIST, k),
+                                          nm->mkNode(Kind::AND, conj).negate())
+                      .negate();
+     // Intuitively, the reduction says either x and y are equal, or they have
+diff --git a/src/theory/strings/theory_strings_utils.cpp b/src/theory/strings/theory_strings_utils.cpp
+index c29093320..dccd784f7 100644
+--- a/src/theory/strings/theory_strings_utils.cpp
++++ b/src/theory/strings/theory_strings_utils.cpp
+@@ -479,9 +479,9 @@ unsigned getLoopMinOccurrences(TNode node)
+   return node.getOperator().getConst<RegExpLoop>().d_loopMinOcc;
+ }
+ 
+-Node mkForallInternal(Node bvl, Node body)
++Node mkForallInternal(NodeManager* nm, Node bvl, Node body)
+ {
+-  return quantifiers::BoundedIntegers::mkBoundedForall(bvl, body);
++  return quantifiers::BoundedIntegers::mkBoundedForall(nm, bvl, body);
+ }
+ 
+ /**
+diff --git a/src/theory/strings/theory_strings_utils.h b/src/theory/strings/theory_strings_utils.h
+index 4375f123a..a681075f7 100644
+--- a/src/theory/strings/theory_strings_utils.h
++++ b/src/theory/strings/theory_strings_utils.h
+@@ -228,7 +228,7 @@ unsigned getLoopMinOccurrences(TNode node);
+  * FORALL returned by this method. This ensures that E-matching is not applied
+  * to the quantified formula.
+  */
+-Node mkForallInternal(Node bvl, Node body);
++Node mkForallInternal(NodeManager* nm, Node bvl, Node body);
+ 
+ /**
+  * Make abstract value for string-like term n whose length is given by len.
+-- 
+2.47.1
+

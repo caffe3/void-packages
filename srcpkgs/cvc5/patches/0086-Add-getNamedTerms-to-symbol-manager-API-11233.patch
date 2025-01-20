@@ -1,0 +1,414 @@
+From 27d6f4b241c2410a9284d6bdc73000264b9ef1cc Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 30 Sep 2024 09:27:49 -0500
+Subject: [PATCH 086/312] Add getNamedTerms to symbol manager API (#11233)
+
+Co-authored-by: mudathirmahgoub <mudathirmahgoub@gmail.com>
+---
+ NEWS.md                                       |  9 +++++
+ include/cvc5/c/cvc5_parser.h                  | 17 +++++++++
+ include/cvc5/cvc5_parser.h                    |  8 +++++
+ src/api/c/cvc5_parser.cpp                     | 28 +++++++++++++++
+ src/api/cpp/cvc5_parser.cpp                   |  9 +++++
+ .../java/io/github/cvc5/SymbolManager.java    | 25 +++++++++++++
+ src/api/java/jni/symbol_manager.cpp           | 36 +++++++++++++++++++
+ src/api/python/cvc5.pxd                       |  1 +
+ src/api/python/cvc5.pxi                       | 16 +++++++++
+ test/unit/api/c/capi_symbol_manager_black.cpp | 22 ++++++++++--
+ .../unit/api/cpp/api_symbol_manager_black.cpp | 14 ++++++++
+ test/unit/api/java/SymbolManagerTest.java     | 14 +++++++-
+ test/unit/api/python/test_symbol_manager.py   | 15 ++++++--
+ 13 files changed, 209 insertions(+), 5 deletions(-)
+
+diff --git a/NEWS.md b/NEWS.md
+index 440c19892..f17d4c8ca 100644
+--- a/NEWS.md
++++ b/NEWS.md
+@@ -1,5 +1,14 @@
+ This file contains a summary of important user-visible changes.
+ 
++cvc5 1.2.1 prerelease
++=====================
++
++## New Features
++
++- Added support for `SymbolManager::getNamedTerms()` to retrieve the set of
++  terms that have been given names by the SMT-LIB attribute `:named`.
++
++## Changes
+ - The option `--safe-options` now disables experimental theories and their
+   extensions in cvc5. This includes the theory of bags, the theory of finite
+   fields, the theory of separation logic, higher-order extensions to the theory
+diff --git a/include/cvc5/c/cvc5_parser.h b/include/cvc5/c/cvc5_parser.h
+index 0bf626386..8808b35a8 100644
+--- a/include/cvc5/c/cvc5_parser.h
++++ b/include/cvc5/c/cvc5_parser.h
+@@ -134,6 +134,23 @@ CVC5_EXPORT const Cvc5Sort* cvc5_sm_get_declared_sorts(Cvc5SymbolManager* sm,
+ CVC5_EXPORT const Cvc5Term* cvc5_sm_get_declared_terms(Cvc5SymbolManager* sm,
+                                                        size_t* size);
+ 
++
++/**
++ * Get the named terms that have been given to them via the :named attribute.
++ *
++ * @param sm    The symbol manager instance.
++ * @param size  The resulting size of `terms` and `names`.
++ * @param terms The resulting term that are mapped to the resulting `names`.
++ * @param names The resulting names.
++ *
++ * @note The resulting `terms` and `names` array pointers are only valid
++ *       until the next call to this function.
++ */
++CVC5_EXPORT void cvc5_sm_get_named_terms(Cvc5SymbolManager* sm,
++                                         size_t* size,
++                                         Cvc5Term* terms[],
++                                         const char** names[]);
++
+ /** @} */
+ 
+ /* -------------------------------------------------------------------------- */
+diff --git a/include/cvc5/cvc5_parser.h b/include/cvc5/cvc5_parser.h
+index 1f7b9b069..7595f47de 100644
+--- a/include/cvc5/cvc5_parser.h
++++ b/include/cvc5/cvc5_parser.h
+@@ -113,6 +113,14 @@ class CVC5_EXPORT SymbolManager
+    */
+   std::vector<Term> getDeclaredTerms() const;
+ 
++  /**
++   * Get a mapping from terms to names that have been given to them via the
++   * :named attribute.
++   *
++   * @return A map of the named terms to their names.
++   */
++  std::map<Term, std::string> getNamedTerms() const;
++
+  private:
+   /** Get the underlying implementation */
+   SymManager* toSymManager();
+diff --git a/src/api/c/cvc5_parser.cpp b/src/api/c/cvc5_parser.cpp
+index bba66c0b0..a0548cc53 100644
+--- a/src/api/c/cvc5_parser.cpp
++++ b/src/api/c/cvc5_parser.cpp
+@@ -206,6 +206,34 @@ const Cvc5Term* cvc5_sm_get_declared_terms(Cvc5SymbolManager* sm, size_t* size)
+   return *size > 0 ? res.data() : nullptr;
+ }
+ 
++
++void cvc5_sm_get_named_terms(Cvc5SymbolManager* sm,
++                             size_t* size,
++                             Cvc5Term* terms[],
++                             const char** names[])
++{
++  static thread_local std::vector<Cvc5Term> rterms;
++  static thread_local std::vector<const char*> rnames;
++  CVC5_CAPI_TRY_CATCH_BEGIN;
++  CVC5_CAPI_CHECK_NOT_NULL(sm);
++  CVC5_CAPI_CHECK_NOT_NULL(size);
++  CVC5_CAPI_CHECK_NOT_NULL(terms);
++  CVC5_CAPI_CHECK_NOT_NULL(names);
++  rterms.clear();
++  rnames.clear();
++  auto res = sm->d_sm.getNamedTerms();
++  auto tm = sm->d_tm;
++  for (auto& t : res)
++  {
++    rterms.push_back(tm->export_term(t.first));
++    rnames.push_back(t.second.c_str());
++  }
++  *size = rterms.size();
++  *terms = rterms.data();
++  *names = rnames.data();
++  CVC5_CAPI_TRY_CATCH_END;
++}
++
+ /* -------------------------------------------------------------------------- */
+ 
+ const char* cvc5_cmd_invoke(Cvc5Command cmd, Cvc5* cvc5, Cvc5SymbolManager* sm)
+diff --git a/src/api/cpp/cvc5_parser.cpp b/src/api/cpp/cvc5_parser.cpp
+index 637b34832..a7f188362 100644
+--- a/src/api/cpp/cvc5_parser.cpp
++++ b/src/api/cpp/cvc5_parser.cpp
+@@ -111,6 +111,15 @@ std::vector<Term> SymbolManager::getDeclaredTerms() const
+   CVC5_API_TRY_CATCH_END;
+ }
+ 
++std::map<Term, std::string> SymbolManager::getNamedTerms() const
++{
++  CVC5_API_TRY_CATCH_BEGIN;
++  //////// all checks before this line
++  return d_sm->getExpressionNames();
++  ////////
++  CVC5_API_TRY_CATCH_END;
++}
++
+ SymManager* SymbolManager::toSymManager() { return d_sm.get(); }
+ 
+ /* -------------------------------------------------------------------------- */
+diff --git a/src/api/java/io/github/cvc5/SymbolManager.java b/src/api/java/io/github/cvc5/SymbolManager.java
+index bf80c1672..561e46474 100644
+--- a/src/api/java/io/github/cvc5/SymbolManager.java
++++ b/src/api/java/io/github/cvc5/SymbolManager.java
+@@ -15,6 +15,8 @@
+ 
+ package io.github.cvc5;
+ 
++import java.util.*;
++
+ public class SymbolManager extends AbstractPointer
+ {
+   /**
+@@ -129,4 +131,27 @@ public class SymbolManager extends AbstractPointer
+   }
+ 
+   private native long[] getDeclaredTerms(long pointer);
++
++
++
++  /**
++   * Get a mapping from terms to names that have been given to them via the
++   * :named attribute.
++   *
++   * @return A map of the named terms to their names.
++   */
++  public Map<Term, String> getNamedTerms()
++  {
++    Map<Long, String> map = getNamedTerms(pointer);
++    Map<Term, String> ret = new HashMap<>();
++    for (Map.Entry<Long, String> entry : map.entrySet())
++    {
++      Term key = new Term(entry.getKey());
++      String value = entry.getValue();
++      ret.put(key, value);
++    }
++    return ret;
++  }
++
++  private native Map<Long, String> getNamedTerms(long pointer);
+ }
+diff --git a/src/api/java/jni/symbol_manager.cpp b/src/api/java/jni/symbol_manager.cpp
+index 33e4ac3db..427da84c2 100644
+--- a/src/api/java/jni/symbol_manager.cpp
++++ b/src/api/java/jni/symbol_manager.cpp
+@@ -107,3 +107,39 @@ JNIEXPORT jlongArray JNICALL Java_io_github_cvc5_SymbolManager_getDeclaredTerms(
+   return ret;
+   CVC5_JAVA_API_TRY_CATCH_END_RETURN(env, nullptr);
+ }
++
++/*
++ * Class:     io_github_cvc5_SymbolManager
++ * Method:    getNamedTerms
++ * Signature: (J)Ljava/util/Map;
++ */
++JNIEXPORT jobject JNICALL Java_io_github_cvc5_SymbolManager_getNamedTerms(
++    JNIEnv* env, jobject, jlong pointer)
++{
++  CVC5_JAVA_API_TRY_CATCH_BEGIN;
++  SymbolManager* symbolManager = reinterpret_cast<SymbolManager*>(pointer);
++  std::map<Term, std::string> map = symbolManager->getNamedTerms();
++  // HashMap hashMap = new HashMap();
++  jclass hashMapClass = env->FindClass("Ljava/util/HashMap;");
++  jmethodID constructor = env->GetMethodID(hashMapClass, "<init>", "()V");
++  jobject hashMap = env->NewObject(hashMapClass, constructor);
++  jmethodID putMethod = env->GetMethodID(
++      hashMapClass,
++      "put",
++      "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
++
++  jclass longClass = env->FindClass("Ljava/lang/Long;");
++  jmethodID longConstructor = env->GetMethodID(longClass, "<init>", "(J)V");
++
++  for (const auto& [k, v] : map)
++  {
++    // hashmap.put(key, value);
++    Term* termKey = new Term(k);
++    jobject key = env->NewObject(
++        longClass, longConstructor, reinterpret_cast<jlong>(termKey));
++    jstring value = env->NewStringUTF(v.c_str());
++    env->CallObjectMethod(hashMap, putMethod, key, value);
++  }
++  return hashMap;
++  CVC5_JAVA_API_TRY_CATCH_END_RETURN(env, nullptr);
++}
+diff --git a/src/api/python/cvc5.pxd b/src/api/python/cvc5.pxd
+index aed3b8650..3f9267dd4 100644
+--- a/src/api/python/cvc5.pxd
++++ b/src/api/python/cvc5.pxd
+@@ -718,6 +718,7 @@ cdef extern from "<cvc5/cvc5_parser.h>" namespace "cvc5::parser":
+         string getLogic() except +
+         vector[Sort] getDeclaredSorts() except +
+         vector[Term] getDeclaredTerms() except +
++        map[Term, string] getNamedTerms() except +
+ 
+     cdef cppclass Command:
+         Command() except +
+diff --git a/src/api/python/cvc5.pxi b/src/api/python/cvc5.pxi
+index 4da547ca7..f16412f80 100644
+--- a/src/api/python/cvc5.pxi
++++ b/src/api/python/cvc5.pxi
+@@ -243,6 +243,22 @@ cdef class SymbolManager:
+         """
+         return [_term(self.tm, c) for c in self.csm.getDeclaredTerms()]
+ 
++    def getNamedTerms(self):
++        """
++            Get a mapping from terms to names that have been given to them via
++            the :named attribute.
++
++            :return: A map of the named terms to their names.
++        """
++        namedi = {}
++        for p in self.csm.getNamedTerms():
++            k = p.first
++            v = p.second
++            termk = _term(self.tm, k)
++            termv = v.decode()
++            namedi[termk] = termv
++        return namedi
++
+ # ----------------------------------------------------------------------------
+ # Command
+ # ----------------------------------------------------------------------------
+diff --git a/test/unit/api/c/capi_symbol_manager_black.cpp b/test/unit/api/c/capi_symbol_manager_black.cpp
+index 9891aa4df..e5d5e7c39 100644
+--- a/test/unit/api/c/capi_symbol_manager_black.cpp
++++ b/test/unit/api/c/capi_symbol_manager_black.cpp
+@@ -41,10 +41,14 @@ class TestCApiBlackSymbolManager : public ::testing::Test
+ 
+   void parse_and_set_logic(const char* logic)
+   {
+-    const char* error_msg;
+     std::stringstream ss;
+     ss << "(set-logic " << logic << ")" << std::endl;
+-    std::string str = ss.str();
++    parse_command(ss.str().c_str());
++  }
++  void parse_command(const char* cmds)
++  {
++    const char* error_msg;
++    std::string str(cmds);
+     Cvc5InputParser* parser = cvc5_parser_new(d_solver, d_sm);
+     cvc5_parser_set_str_input(
+         parser, CVC5_INPUT_LANGUAGE_SMT_LIB_2_6, str.c_str(), "parser_black");
+@@ -94,4 +98,18 @@ TEST_F(TestCApiBlackSymbolManager, get_declared_terms)
+                "unexpected NULL argument");
+   ASSERT_DEATH(cvc5_sm_get_declared_terms(d_sm, nullptr), "NULL argument");
+ }
++
++TEST_F(TestCApiBlackSymbolManager, getNamedTerms)
++{
++  parse_and_set_logic("QF_LIA");
++  size_t size;
++  Cvc5Term *terms;
++  const char** names;
++  (void)cvc5_sm_get_named_terms(d_sm, &size, &terms, &names);
++  ASSERT_EQ(size, 0);
++  parse_command("(assert (! false :named a0))");
++  (void)cvc5_sm_get_named_terms(d_sm, &size, &terms, &names);
++  ASSERT_EQ(size, 1);
++}
++
+ }  // namespace cvc5::internal::test
+diff --git a/test/unit/api/cpp/api_symbol_manager_black.cpp b/test/unit/api/cpp/api_symbol_manager_black.cpp
+index 526fed22c..cabd76881 100644
+--- a/test/unit/api/cpp/api_symbol_manager_black.cpp
++++ b/test/unit/api/cpp/api_symbol_manager_black.cpp
+@@ -39,6 +39,12 @@ class TestApiBlackSymbolManager : public TestParser
+   {
+     std::stringstream ss;
+     ss << "(set-logic " << logic << ")" << std::endl;
++    parseCommand(ss.str());
++  }
++  void parseCommand(const std::string& cmds)
++  {
++    std::stringstream ss;
++    ss << cmds << std::endl;
+     InputParser parser(d_solver.get(), d_symman.get());
+     parser.setStreamInput(
+         modes::InputLanguage::SMT_LIB_2_6, ss, "parser_black");
+@@ -69,5 +75,13 @@ TEST_F(TestApiBlackSymbolManager, getDeclaredTermsAndSorts)
+   ASSERT_EQ(d_symman->getDeclaredTerms().size(), 0);
+ }
+ 
++TEST_F(TestApiBlackSymbolManager, getNamedTerms)
++{
++  parseAndSetLogic("QF_LIA");
++  ASSERT_EQ(d_symman->getNamedTerms().size(), 0);
++  parseCommand("(assert (! false :named a0))");
++  ASSERT_EQ(d_symman->getNamedTerms().size(), 1);
++}
++
+ }  // namespace test
+ }  // namespace cvc5::internal
+diff --git a/test/unit/api/java/SymbolManagerTest.java b/test/unit/api/java/SymbolManagerTest.java
+index 5e50eb60c..cb253bbc4 100644
+--- a/test/unit/api/java/SymbolManagerTest.java
++++ b/test/unit/api/java/SymbolManagerTest.java
+@@ -26,10 +26,14 @@ import org.junit.jupiter.api.Test;
+ class SymbolManagerTest extends ParserTest
+ {
+   void parseAndSetLogic(String logic)
++  {
++    parseCommand("(set-logic " + logic + ")\n");
++  }
++  void parseCommand(String cmds)
+   {
+     InputParser parser = new InputParser(d_solver, d_symman);
+     parser.setIncrementalStringInput(InputLanguage.SMT_LIB_2_6, "symbol_manager_test");
+-    parser.appendIncrementalStringInput("(set-logic " + logic + ")\n");
++    parser.appendIncrementalStringInput(cmds);
+     Command cmd = parser.nextCommand();
+     assertNotEquals(cmd.isNull(), true);
+     cmd.invoke(d_solver, d_symman);
+@@ -56,4 +60,12 @@ class SymbolManagerTest extends ParserTest
+     assertEquals(d_symman.getDeclaredSorts().length, 0);
+     assertEquals(d_symman.getDeclaredTerms().length, 0);
+   }
++  @Test
++  void getNamedTerms()
++  {
++    parseAndSetLogic("QF_LIA");
++    assertEquals(d_symman.getNamedTerms().size(), 0);
++    parseCommand("(assert (! false :named a0))");
++    assertEquals(d_symman.getNamedTerms().size(), 1);
++  }
+ }
+diff --git a/test/unit/api/python/test_symbol_manager.py b/test/unit/api/python/test_symbol_manager.py
+index f6bce7d90..1b79fc4cf 100644
+--- a/test/unit/api/python/test_symbol_manager.py
++++ b/test/unit/api/python/test_symbol_manager.py
+@@ -27,14 +27,17 @@ def test_constructor(tm, solver):
+     SymbolManager(tm)
+     SymbolManager(solver) # deprecated
+ 
+-def parse_and_set_logic(solver, sm, logic):
++def parse_command(solver, sm, cmd):
+     parser = InputParser(solver, sm)
+     parser.setIncrementalStringInput(
+             cvc5.InputLanguage.SMT_LIB_2_6, "test_symbol_manager_parser")
+-    parser.appendIncrementalStringInput("(set-logic " + logic + ")" + '\n')
++    parser.appendIncrementalStringInput(cmd)
+     cmd = parser.nextCommand()
+     assert cmd.isNull() is not True
+     cmd.invoke(solver, sm)
++    
++def parse_and_set_logic(solver, sm, logic):
++    parse_command(solver, sm, "(set-logic " + logic + ")" + '\n')
+ 
+ def test_is_logic_set(tm, solver):
+     sm = SymbolManager(tm)
+@@ -53,3 +56,11 @@ def test_get_declared_terms_and_sorts(tm, solver):
+     sm = SymbolManager(tm)
+     assert len(sm.getDeclaredSorts()) == 0
+     assert len(sm.getDeclaredTerms()) == 0
++
++def test_get_named_terms(tm, solver):
++    sm = SymbolManager(tm)
++    parse_and_set_logic(solver, sm, "QF_LIA")
++    assert len(sm.getNamedTerms()) == 0
++    parse_command(solver, sm, "(assert (! false :named a0))")
++    assert len(sm.getNamedTerms()) == 1
++
+-- 
+2.47.1
+

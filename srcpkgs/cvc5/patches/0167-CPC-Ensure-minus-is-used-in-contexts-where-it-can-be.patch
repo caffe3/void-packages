@@ -1,0 +1,123 @@
+From 77c64f33b9883f7983966e2d16099418fa833b67 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 8 Nov 2024 11:20:52 -0600
+Subject: [PATCH 167/312] [CPC] Ensure minus is used in contexts where it can
+ be typed (#11333)
+
+This is in preparation for updating to an ethos version that warns about
+when overloading fails (in side condition bodies).
+
+This PR should wait on an update to Ethos.
+---
+ contrib/get-ethos-checker         |  2 +-
+ proofs/eo/cpc/programs/Arith.eo   |  9 +++++++++
+ proofs/eo/cpc/rules/Arith.eo      | 22 +++++++++++-----------
+ proofs/eo/cpc/rules/Strings.eo    |  2 +-
+ proofs/eo/cpc/theories/Strings.eo |  6 +++---
+ 5 files changed, 25 insertions(+), 16 deletions(-)
+
+diff --git a/contrib/get-ethos-checker b/contrib/get-ethos-checker
+index f6991b7b2..01a41261a 100755
+--- a/contrib/get-ethos-checker
++++ b/contrib/get-ethos-checker
+@@ -24,7 +24,7 @@ EO_DIR="$BASE_DIR/ethos-checker"
+ mkdir -p $EO_DIR
+ 
+ # download and unpack ethos
+-ETHOS_VERSION="bd8bad943799396c0e5ddca4318f715b6aad5501"
++ETHOS_VERSION="ffd697b162e556883ed26958b052a5b8ad7bdc77"
+ download "https://github.com/cvc5/ethos/archive/$ETHOS_VERSION.tar.gz" $BASE_DIR/tmp/ethos.tgz
+ tar --strip 1 -xzf $BASE_DIR/tmp/ethos.tgz -C $EO_DIR
+ 
+diff --git a/proofs/eo/cpc/programs/Arith.eo b/proofs/eo/cpc/programs/Arith.eo
+index 490bf675d..e5ff184d2 100644
+--- a/proofs/eo/cpc/programs/Arith.eo
++++ b/proofs/eo/cpc/programs/Arith.eo
+@@ -59,6 +59,15 @@
+ (define $arith_eval_qsub ((U Type :implicit) (T Type :implicit) (x U) (y T))
+   (eo::add (eo::to_q x) (eo::neg (eo::to_q y)))
+ )
++; define: $arith_mk_binary_minus
++; args:
++; - x T: the first term
++; - y U: the second term
++; return: The subtraction of x and y.
++; note: >
++;   This macro is necessary to use in contexts where the types of the
++;   arguments cannot be statically computed.
++(define $arith_mk_binary_minus ((T Type :implicit) (U Type :implicit) (x T) (y U)) (- x y))
+ 
+ ; program: $arith_eval_int_log_2_rec
+ ; args:
+diff --git a/proofs/eo/cpc/rules/Arith.eo b/proofs/eo/cpc/rules/Arith.eo
+index 8a33eaecf..e6e44fdf5 100644
+--- a/proofs/eo/cpc/rules/Arith.eo
++++ b/proofs/eo/cpc/rules/Arith.eo
+@@ -318,22 +318,22 @@
+ ; - t T: The term we are considering, which is expected to be an application of an extended arithmetic operator.
+ ; return: the reduction predicate for term t.
+ (define $arith_reduction_pred ((T Type :implicit) (t T))
+-  (eo::match ((r Real) (U Type) (u U) (V Type) (v V))
++  (eo::match ((r Real) (a Int) (b Int) (U Type) (u U) (V Type) (v V))
+     t
+     (
+-    ((is_int r)       (eo::define ((k (@purify (to_int r))))
+-                        (and (= t (= (- r k) 0/1)) ($arith_to_int_reduction r))))
+-    ((to_int r)       (eo::define ((k (@purify (to_int r))))
+-                        (and (= t k) ($arith_to_int_reduction r))))
++    ((is_int u)       (eo::define ((k (@purify (to_int u))))
++                        (and (= t (= (- u k) 0/1)) ($arith_to_int_reduction u))))
++    ((to_int u)       (eo::define ((k (@purify (to_int u))))
++                        (and (= t k) ($arith_to_int_reduction u))))
+     ((/ u v)          (= t (ite (= v ($arith_mk_zero (eo::typeof v))) (@div_by_zero u) (/_total u v))))
+-    ((div u v)        (= t (ite (= v 0) (@int_div_by_zero u) (div_total u v))))
+-    ((mod u v)        (= t (ite (= v 0) (@mod_by_zero u) (mod_total u v))))
++    ((div a b)        (= t (ite (= b 0) (@int_div_by_zero a) (div_total a b))))
++    ((mod a b)        (= t (ite (= b 0) (@mod_by_zero a) (mod_total a b))))
+     ((/_total u v)    (eo::define ((k (@purify (/_total u v))))
+                         (and (= t k) (=> (not (= v ($arith_mk_zero (eo::typeof v)))) (= (* v k) u)))))
+-    ((div_total u v)  (eo::define ((k (@purify (div_total u v))))
+-                        (and (= t k) ($arith_int_div_total_reduction u v))))
+-    ((mod_total u v)  (eo::define ((k (@purify (div_total u v))))
+-                        (and (= t (- u (* v k))) ($arith_int_div_total_reduction u v))))
++    ((div_total a b)  (eo::define ((k (@purify (div_total a b))))
++                        (and (= t k) ($arith_int_div_total_reduction a b))))
++    ((mod_total a b)  (eo::define ((k (@purify (div_total a b))))
++                        (and (= t (- a (* b k))) ($arith_int_div_total_reduction a b))))
+     ((abs u)          (= t (ite (< u ($arith_mk_zero (eo::typeof u))) (- u) u)))
+     )
+   )
+diff --git a/proofs/eo/cpc/rules/Strings.eo b/proofs/eo/cpc/rules/Strings.eo
+index 33ff694c9..38087220f 100644
+--- a/proofs/eo/cpc/rules/Strings.eo
++++ b/proofs/eo/cpc/rules/Strings.eo
+@@ -195,7 +195,7 @@
+                   (= tc
+                     (eo::ite rev
+                       (eo::define ((oc ($str_suffix s1 v)))
+-                      (str.++ (@purify ($str_prefix tc (- (str.len tc) (str.len oc)))) oc))
++                      (str.++ (@purify ($str_prefix tc ($arith_mk_binary_minus (str.len tc) (str.len oc)))) oc))
+                       (eo::define ((oc ($str_prefix s1 v)))
+                       (str.++ oc (@purify ($str_suffix_rem tc (str.len oc)))))))
+                 )))))))))
+diff --git a/proofs/eo/cpc/theories/Strings.eo b/proofs/eo/cpc/theories/Strings.eo
+index 3bab5b900..444e5e6bb 100644
+--- a/proofs/eo/cpc/theories/Strings.eo
++++ b/proofs/eo/cpc/theories/Strings.eo
+@@ -37,10 +37,10 @@
+ 
+ ; program: $mk_emptystr
+ ; args:
+-; - U Type: The string-like type.
+-; return: The empty string of the given string-like sort U.
++; - T Type: The string-like type.
++; return: The empty string of the given string-like type T.
+ (program $mk_emptystr ((U Type))
+-  (Type) U
++  (Type) (Seq U)
+   (
+     (($mk_emptystr String)  "")
+     (($mk_emptystr (Seq U)) (seq.empty (Seq U)))
+-- 
+2.47.1
+

@@ -1,0 +1,190 @@
+From cd90d140270c1ee44ee7cd9087b74c6c6a9cdbae Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 10 Dec 2024 18:53:11 -0600
+Subject: [PATCH 235/312] Update arith poly norm to handle division by constant
+ (#11433)
+
+The rule `ARITH_DIV_BY_CONST_ELIM` is now subsumed.
+---
+ include/cvc5/cvc5_proof_rule.h           | 12 -------
+ proofs/eo/cpc/programs/PolyNorm.eo       | 45 ++++++++++++++++--------
+ src/api/cpp/cvc5_proof_rule_template.cpp |  2 --
+ src/theory/arith/arith_poly_norm.cpp     | 22 ++++++++++++
+ src/theory/arith/arith_rewriter.cpp      | 16 ---------
+ 5 files changed, 53 insertions(+), 44 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 47bd82198..88ed9b86a 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2399,18 +2399,6 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(MACRO_BOOL_NNF_NORM),
+-  /**
+-   * \verbatim embed:rst:leading-asterisk
+-   * **Arith -- Division by constant elimination**
+-   *
+-   * .. math::
+-   *   t / c = t * 1/c
+-   *
+-   * where :math:`c` is a constant.
+-   *
+-   * \endverbatim
+-   */
+-  EVALUE(ARITH_DIV_BY_CONST_ELIM),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Arithmetic -- strings predicate entailment**
+diff --git a/proofs/eo/cpc/programs/PolyNorm.eo b/proofs/eo/cpc/programs/PolyNorm.eo
+index 216a79430..b02e17ee2 100644
+--- a/proofs/eo/cpc/programs/PolyNorm.eo
++++ b/proofs/eo/cpc/programs/PolyNorm.eo
+@@ -125,26 +125,43 @@
+   )
+ )
+ 
+-; program: $get_poly_norm
++; program: $get_arith_poly_norm_div
++; args:
++; - a1 T: The numerator to process of type Int or Real.
++; - a1p @Polynomial: The normalization of a1.
++; - a2 T: The denominator to process of type Int or Real.
++; return: >
++;   The polynomial corresponding to the (normalized) form of (/ a1 a2).
++(define $get_arith_poly_norm_div ((U Type :implicit) (V Type :implicit) (a1 U) (a1p @Polynomial) (a2 V))
++  (eo::define ((a2q (eo::to_q a2)))
++  (eo::ite (eo::and (eo::is_q a2q) (eo::not (eo::is_eq a2q 0/1)))
++    ; if division by non-zero constant, we normalize
++    ($poly_mul_mon (@mon 1 (eo::qdiv 1/1 a2q)) a1p)
++    ; otherwise it is treated as a variable
++    (@poly (@mon (* (/ a1 a2)) 1/1)))))
++
++; program: $get_arith_poly_norm
+ ; args:
+ ; - a T: The arithmetic term to process of type Int or Real.
+ ; return: the polynomial corresponding to the (normalized) form of a.
+ (program $get_arith_poly_norm ((T Type) (U Type) (V Type) (a T) (a1 U) (a2 V :list))
+   (T) @Polynomial
+   (
+-    (($get_arith_poly_norm (- a1))        ($poly_neg ($get_arith_poly_norm a1)))
+-    (($get_arith_poly_norm (+ a1 a2))     ($poly_add ($get_arith_poly_norm a1) ($get_arith_poly_norm a2)))
+-    (($get_arith_poly_norm (- a1 a2))     ($poly_add ($get_arith_poly_norm a1) ($poly_neg ($get_arith_poly_norm a2))))
+-    (($get_arith_poly_norm (* a1 a2))     ($poly_mul ($get_arith_poly_norm a1) ($get_arith_poly_norm a2)))
+-    (($get_arith_poly_norm (to_real a1))  ($get_arith_poly_norm a1))
+-    (($get_arith_poly_norm a)             (eo::define ((aq (eo::to_q a)))
+-                                          ; check if a is a constant (Int or Real)
+-                                          (eo::ite (eo::is_q aq)
+-                                            ; if it is zero, it cancels, otherwise it is 1 with itself as coefficient
+-                                            (eo::ite (eo::is_eq aq 0/1)
+-                                              @poly.zero
+-                                              (@poly (@mon 1 aq)))
+-                                          (@poly (@mon (* a) 1/1)))))    ; introduces list
++    (($get_arith_poly_norm (- a1))          ($poly_neg ($get_arith_poly_norm a1)))
++    (($get_arith_poly_norm (+ a1 a2))       ($poly_add ($get_arith_poly_norm a1) ($get_arith_poly_norm a2)))
++    (($get_arith_poly_norm (- a1 a2))       ($poly_add ($get_arith_poly_norm a1) ($poly_neg ($get_arith_poly_norm a2))))
++    (($get_arith_poly_norm (* a1 a2))       ($poly_mul ($get_arith_poly_norm a1) ($get_arith_poly_norm a2)))
++    (($get_arith_poly_norm (/ a1 a2))       ($get_arith_poly_norm_div a1 ($get_arith_poly_norm a1) a2))
++    (($get_arith_poly_norm (/_total a1 a2)) ($get_arith_poly_norm_div a1 ($get_arith_poly_norm a1) a2))
++    (($get_arith_poly_norm (to_real a1))    ($get_arith_poly_norm a1))
++    (($get_arith_poly_norm a)               (eo::define ((aq (eo::to_q a)))
++                                            ; check if a is a constant (Int or Real)
++                                            (eo::ite (eo::is_q aq)
++                                              ; if it is zero, it cancels, otherwise it is 1 with itself as coefficient
++                                              (eo::ite (eo::is_eq aq 0/1)
++                                                @poly.zero
++                                                (@poly (@mon 1 aq)))
++                                            (@poly (@mon (* a) 1/1)))))    ; introduces list
+   )
+ )
+ 
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index 8f304f29d..405f62ef3 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -227,8 +227,6 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::BV_TO_NAT_ELIM: return "bv-to-nat-elim";
+     case ProofRewriteRule::INT_TO_BV_ELIM: return "int-to-bv-elim";
+     case ProofRewriteRule::MACRO_BOOL_NNF_NORM: return "macro-bool-nnf-norm";
+-    case ProofRewriteRule::ARITH_DIV_BY_CONST_ELIM:
+-      return "arith-div-by-const-elim";
+     case ProofRewriteRule::ARITH_STRING_PRED_ENTAIL:
+       return "arith-string-pred-entail";
+     case ProofRewriteRule::ARITH_STRING_PRED_SAFE_APPROX:
+diff --git a/src/theory/arith/arith_poly_norm.cpp b/src/theory/arith/arith_poly_norm.cpp
+index 08ca6816f..98324b203 100644
+--- a/src/theory/arith/arith_poly_norm.cpp
++++ b/src/theory/arith/arith_poly_norm.cpp
+@@ -381,6 +381,16 @@ PolyNorm PolyNorm::mkPolyNorm(TNode n)
+         }
+         continue;
+       }
++      else if (k == Kind::DIVISION || k == Kind::DIVISION_TOTAL)
++      {
++        // only division by non-zero constant is supported
++        if (cur[1].isConst() && cur[1].getConst<Rational>().sgn() != 0)
++        {
++          visited[cur] = PolyNorm();
++          visit.push_back(cur[0]);
++          continue;
++        }
++      }
+       // it is a leaf
+       visited[cur].addMonomial(cur, one);
+       visit.pop_back();
+@@ -423,6 +433,18 @@ PolyNorm PolyNorm::mkPolyNorm(TNode n)
+             }
+           }
+           break;
++        case Kind::DIVISION:
++        case Kind::DIVISION_TOTAL:
++        {
++          it = visited.find(cur[0]);
++          Assert(it != visited.end());
++          ret.add(it->second);
++          Assert(cur[1].isConst());
++          // multiply by inverse
++          Rational invc = cur[1].getConst<Rational>().inverse();
++          ret.multiplyMonomial(TNode::null(), invc);
++        }
++        break;
+         case Kind::CONST_RATIONAL:
+         case Kind::CONST_INTEGER:
+         case Kind::CONST_BITVECTOR:
+diff --git a/src/theory/arith/arith_rewriter.cpp b/src/theory/arith/arith_rewriter.cpp
+index 4cd7e9ea1..b8a792e4c 100644
+--- a/src/theory/arith/arith_rewriter.cpp
++++ b/src/theory/arith/arith_rewriter.cpp
+@@ -53,8 +53,6 @@ ArithRewriter::ArithRewriter(NodeManager* nm, OperatorElim& oe)
+ {
+   registerProofRewriteRule(ProofRewriteRule::ARITH_POW_ELIM,
+                            TheoryRewriteCtx::PRE_DSL);
+-  registerProofRewriteRule(ProofRewriteRule::ARITH_DIV_BY_CONST_ELIM,
+-                           TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::MACRO_ARITH_STRING_PRED_ENTAIL,
+                            TheoryRewriteCtx::DSL_SUBCALL);
+   // we don't register ARITH_STRING_PRED_ENTAIL or
+@@ -78,20 +76,6 @@ Node ArithRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
+-    case ProofRewriteRule::ARITH_DIV_BY_CONST_ELIM:
+-    {
+-      if (n.getKind() == Kind::DIVISION && n[1].isConst())
+-      {
+-        Rational r = n[1].getConst<Rational>();
+-        if (r.sgn() != 0)
+-        {
+-          Rational rinv = Rational(1) / r;
+-          NodeManager* nm = nodeManager();
+-          return nm->mkNode(Kind::MULT, n[0], nm->mkConstReal(rinv));
+-        }
+-      }
+-    }
+-    break;
+     case ProofRewriteRule::MACRO_ARITH_STRING_PRED_ENTAIL:
+     {
+       // only matters if n contains strings
+-- 
+2.47.1
+

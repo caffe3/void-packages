@@ -1,0 +1,123 @@
+From 0afac52956c6e3d75ac8694bbddcb6317de720f2 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 20 Nov 2024 18:34:25 -0600
+Subject: [PATCH 189/312] Add three new BV RARE rules for handling
+ TheoryBv::ppAssert (#11374)
+
+Work towards having proofs for TheoryBv::ppAssert (see
+https://github.com/cvc5/cvc5/blob/main/src/theory/bv/theory_bv.cpp#L195).
+
+This adds 3 new RARE rewrites which can justify these steps.
+
+A followup PR will add proof support for that portion, which will
+require some additional steps to verify the use of purification skolems.
+---
+ include/cvc5/cvc5_proof_rule.h         |  6 ++++++
+ proofs/eo/cpc/rules/Rewrites.eo        | 15 +++++++++++++++
+ src/rewriter/rewrite_db_proof_cons.cpp |  9 ++++++++-
+ src/theory/bv/rewrites                 | 19 +++++++++++++++++++
+ 4 files changed, 48 insertions(+), 1 deletion(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 059e9c3c4..e83734128 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -3166,6 +3166,12 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(BV_EXTRACT_CONCAT_3),
+   /** Auto-generated from RARE rule bv-extract-concat-4 */
+   EVALUE(BV_EXTRACT_CONCAT_4),
++  /** Auto-generated from RARE rule bv-eq-extract-elim1 */
++  EVALUE(BV_EQ_EXTRACT_ELIM1),
++  /** Auto-generated from RARE rule bv-eq-extract-elim2 */
++  EVALUE(BV_EQ_EXTRACT_ELIM2),
++  /** Auto-generated from RARE rule bv-eq-extract-elim3 */
++  EVALUE(BV_EQ_EXTRACT_ELIM3),
+   /** Auto-generated from RARE rule bv-extract-bitwise-and */
+   EVALUE(BV_EXTRACT_BITWISE_AND),
+   /** Auto-generated from RARE rule bv-extract-bitwise-or */
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index fd5cdc8e4..865f5efaf 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -458,6 +458,21 @@
+   :args (x1 y1 xs1 i1 j1)
+   :conclusion (= (extract j1 i1 (concat x1 xs1 y1)) (extract j1 i1 ($singleton_elim (concat xs1 y1))))
+ )
++(declare-rule bv-eq-extract-elim1 ((@n0 Int) (@n1 Int) (x1 (BitVec @n0)) (y1 (BitVec @n1)) (i1 Int) (j1 Int) (wm1 Int) (jp1 Int) (im1 Int))
++  :premises ((= wm1 (- (@bvsize x1) 1)) (= jp1 (+ j1 1)) (= im1 (- i1 1)) (= (> wm1 j1) true) (= (> i1 0) true))
++  :args (x1 y1 i1 j1 wm1 jp1 im1)
++  :conclusion (= (= (extract j1 i1 x1) y1) (= x1 (concat (extract wm1 jp1 x1) y1 (extract im1 0 x1))))
++)
++(declare-rule bv-eq-extract-elim2 ((@n0 Int) (@n1 Int) (x1 (BitVec @n0)) (y1 (BitVec @n1)) (j1 Int) (wm1 Int) (jp1 Int))
++  :premises ((= wm1 (- (@bvsize x1) 1)) (= jp1 (+ j1 1)) (= (> wm1 j1) true))
++  :args (x1 y1 j1 wm1 jp1)
++  :conclusion (= (= (extract j1 0 x1) y1) (= x1 (concat (extract wm1 jp1 x1) y1)))
++)
++(declare-rule bv-eq-extract-elim3 ((@n0 Int) (@n1 Int) (x1 (BitVec @n0)) (y1 (BitVec @n1)) (i1 Int) (j1 Int) (im1 Int))
++  :premises ((= j1 (- (@bvsize x1) 1)) (= im1 (- i1 1)) (= (> i1 0) true))
++  :args (x1 y1 i1 j1 im1)
++  :conclusion (= (= (extract j1 i1 x1) y1) (= x1 (concat y1 (extract im1 0 x1))))
++)
+ (declare-rule bv-extract-bitwise-and ((@n0 Int) (@n1 Int) (x1 (BitVec @n0)) (y1 (BitVec @n1)) (i1 Int) (j1 Int))
+   :args (x1 y1 i1 j1)
+   :conclusion (= (extract j1 i1 (bvand x1 y1)) (bvand (extract j1 i1 x1) (extract j1 i1 y1)))
+diff --git a/src/rewriter/rewrite_db_proof_cons.cpp b/src/rewriter/rewrite_db_proof_cons.cpp
+index 32c11bc29..cdb6f454d 100644
+--- a/src/rewriter/rewrite_db_proof_cons.cpp
++++ b/src/rewriter/rewrite_db_proof_cons.cpp
+@@ -713,7 +713,6 @@ bool RewriteDbProofCons::proveWithRule(RewriteProofStatus id,
+       }
+       // the missing transitivity link is a subgoal to prove
+       transEq = stgt.eqNode(target[1]);
+-      vcs.push_back(transEq);
+       Trace("rpc-debug2") << "  Try transitive with " << transEq << std::endl;
+     }
+     // do its conditions hold?
+@@ -738,6 +737,14 @@ bool RewriteDbProofCons::proveWithRule(RewriteProofStatus id,
+       Trace("rpc-debug2") << "...fail (obligations)" << std::endl;
+       return false;
+     }
++    // Prove transitive equality last. We choose this order since the
++    // transitive equality is expected to be the hardest to prove. Also, the
++    // conditions may guard instances where the RHS is not well typed (e.g.
++    // bv-eq-extract-elim1,2,3).
++    if (!transEq.isNull())
++    {
++      vcs.push_back(transEq);
++    }
+   }
+   // First, check which premises are non-trivial, and if there is a trivial
+   // failure. Those that are non-trivial are added to condToProve.
+diff --git a/src/theory/bv/rewrites b/src/theory/bv/rewrites
+index bd8b8b6b9..163d44ec0 100644
+--- a/src/theory/bv/rewrites
++++ b/src/theory/bv/rewrites
+@@ -58,6 +58,25 @@
+   (extract j i (concat x xs y))
+   (extract j i (concat xs y)))
+ 
++; Motivated by TheoryBv::ppAssert, which turns an equality involving
++; extract into a solved form for the variable we are extracting from.
++(define-cond-rule bv-eq-extract-elim1
++  ((x ?BitVec) (y ?BitVec) (i Int) (j Int) (wm1 Int) (jp1 Int) (im1 Int))
++  (and (= wm1 (- (@bvsize x) 1)) (= jp1 (+ j 1)) (= im1 (- i 1)) (> wm1 j) (> i 0))
++  (= (extract j i x) y)
++  (= x (concat (extract wm1 jp1 x) y (extract im1 0 x))))
++
++(define-cond-rule bv-eq-extract-elim2
++  ((x ?BitVec) (y ?BitVec) (j Int) (wm1 Int) (jp1 Int))
++  (and (= wm1 (- (@bvsize x) 1)) (= jp1 (+ j 1)) (> wm1 j))
++  (= (extract j 0 x) y)
++  (= x (concat (extract wm1 jp1 x) y)))
++
++(define-cond-rule bv-eq-extract-elim3
++  ((x ?BitVec) (y ?BitVec) (i Int) (j Int) (im1 Int))
++  (and (= j (- (@bvsize x) 1)) (= im1 (- i 1)) (> i 0))
++  (= (extract j i x) y)
++  (= x (concat y (extract im1 0 x))))
+ 
+ ; -- Normalization Rules --
+ (define-rule bv-extract-bitwise-and
+-- 
+2.47.1
+

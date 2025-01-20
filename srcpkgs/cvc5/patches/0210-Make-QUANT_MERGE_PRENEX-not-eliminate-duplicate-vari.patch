@@ -1,0 +1,443 @@
+From 4b1a47f309019b27274237196b43830a02baf407 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 3 Dec 2024 15:12:59 -0600
+Subject: [PATCH 210/312] Make QUANT_MERGE_PRENEX not eliminate duplicate
+ variables, update QUANT_UNUSED_VARS (#11400)
+
+Currently, the Eunoia definition of quant_merge_prenex is inaccurate
+since it does not handle duplicate variables.
+
+Introduces a new macro for the current behavior and reconstruction to
+the version that does not eliminate duplicates, making the Eunoia
+definition accurate.
+
+This also updates the Eunoia definition of quant_unused_vars to handle
+duplicates.
+
+This should be merged before https://github.com/cvc5/cvc5/pull/11391, as
+that PR had an alternative fix which will be subsumed by this approach.
+---
+ include/cvc5/cvc5_proof_rule.h                | 16 +++++-
+ proofs/eo/cpc/rules/Quantifiers.eo            | 51 +++++++++++------
+ src/api/cpp/cvc5_proof_rule_template.cpp      |  2 +
+ src/rewriter/basic_rewrite_rcons.cpp          | 57 +++++++++++++++++++
+ src/rewriter/basic_rewrite_rcons.h            | 10 ++++
+ src/rewriter/rewrite_db_proof_cons.cpp        |  7 +++
+ .../quantifiers/quantifiers_rewriter.cpp      | 53 +++++++++++------
+ src/theory/quantifiers/quantifiers_rewriter.h |  3 +-
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../regress0/quantifiers/merge-shadow.smt2    |  6 ++
+ 10 files changed, 169 insertions(+), 37 deletions(-)
+ create mode 100644 test/regress/cli/regress0/quantifiers/merge-shadow.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 7a3b1df94..6897a2316 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2518,11 +2518,25 @@ enum ENUM(ProofRewriteRule)
+    * .. math::
+    *   \forall X.\> F = \forall X_1.\> F
+    *
+-   * where :math:`X_1` is the subset of :math:`X` that appear free in :math:`F`.
++   * where :math:`X_1` is the subset of :math:`X` that appear free in :math:`F`
++   * and :math:`X_1` does not contain duplicate variables.
+    *
+    * \endverbatim
+    */
+   EVALUE(QUANT_UNUSED_VARS),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Quantifiers -- Macro merge prenex**
++   *
++   * .. math::
++   *   \forall X_1.\> \ldots \forall X_n.\> F = \forall X.\> F
++   *
++   * where :math:`X_1 \ldots X_n` are lists of variables and :math:`X` is the
++   * result of removing duplicates from :math:`X_1 \ldots X_n`.
++   *
++   * \endverbatim
++   */
++  EVALUE(MACRO_QUANT_MERGE_PRENEX),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Quantifiers -- Merge prenex**
+diff --git a/proofs/eo/cpc/rules/Quantifiers.eo b/proofs/eo/cpc/rules/Quantifiers.eo
+index 816276ff7..004a69e55 100644
+--- a/proofs/eo/cpc/rules/Quantifiers.eo
++++ b/proofs/eo/cpc/rules/Quantifiers.eo
+@@ -116,19 +116,36 @@
+ 
+ ;;;;; ProofRewriteRule::QUANT_UNUSED_VARS
+ 
+-; program: $is_quant_unused_vars
++; program: $mk_quant_unused_vars_rec
+ ; args:
+-; - F Bool: The first formula in question.
+-; - G Bool: The second formula in question.
+-; return: true iff G is the result of removing unused variables from F.
+-(program $is_quant_unused_vars ((x @List) (y @List) (F Bool) (Q (-> @List Bool Bool)))
+-  (Bool Bool) Bool
++; - x @List: The list of variables of the quantified formula.
++; - F Bool: The body of the quantified formula.
++; return: the sublist of variables in x that should be quantified for F.
++(program $mk_quant_unused_vars_rec ((T Type) (xs @List :list) (x T) (F Bool))
++  (@List Bool) Bool
+   (
+-  (($is_quant_unused_vars (Q x F) (Q y F)) (eo::not ($contains_subterm_list F ($nary_diff @list @list.nil x y))))
+-  (($is_quant_unused_vars (Q x F) F)       (eo::not ($contains_subterm_list F x)))
++  (($mk_quant_unused_vars_rec @list.nil F)    @list.nil)
++  (($mk_quant_unused_vars_rec (@list x xs) F) (eo::define ((r ($mk_quant_unused_vars_rec xs F)))
++                                              (eo::ite ($contains_subterm F x)
++                                                (eo::ite ($contains_subterm r x) r (eo::cons @list x r))
++                                                r)))
+   )
+ )
+ 
++; program: $mk_quant_unused_vars
++; args:
++; - Q (-> @List Bool Bool): The quantifier, expected to be forall or exists.
++; - x @List: The list of variables of the quantified formula.
++; - F Bool: The body of the quantified formula.
++; return: the result of removing duplicate and unused variables from x.
++(define $mk_quant_unused_vars ((Q (-> @List Bool Bool)) (x @List) (F Bool))
++  (eo::match ((y @List))
++    ($mk_quant_unused_vars_rec x F)
++    (
++      (@list.nil F)
++      (y (Q y F))
++    )))
++
+ ; rule: quant-unused-vars
+ ; implements: ProofRewriteRule::QUANT_UNUSED_VARS
+ ; args:
+@@ -136,23 +153,23 @@
+ ; requires: >
+ ;   The variables removed from the left hand side do not occur in its body.
+ ; conclusion: The given equality.
+-(declare-rule quant-unused-vars ((F Bool) (G Bool))
+-  :args ((= F G))
+-  :requires ((($is_quant_unused_vars F G) true))
+-  :conclusion (= F G)
++(declare-rule quant-unused-vars ((Q (-> @List Bool Bool)) (x @List) (F Bool) (G Bool))
++  :args ((= (Q x F) G))
++  :requires ((($mk_quant_unused_vars Q x F) G))
++  :conclusion (= (Q x F) G)
+ )
+ 
+ ;;;;; ProofRewriteRule::QUANT_MERGE_PRENEX
+ 
+ ; program: $mk_quant_merge_prenex
+ ; args:
+-; - Q (-> @List Bool): The binding operator (forall or exists).
++; - Q (-> @List Bool Bool): The binding operator (forall or exists).
+ ; - F Bool: The formula for which we are merging prenexes.
+ ; return: the result of merging all bound variables bound by Q in F.
+-(program $mk_quant_merge_prenex ((Q (-> @List Bool)) (x @List) (F Bool))
+-  ((-> @List Bool) Bool) Bool
++(program $mk_quant_merge_prenex ((Q (-> @List Bool Bool)) (x @List) (F Bool))
++  ((-> @List Bool Bool) Bool) Bool
+   (
+-  (($mk_quant_merge_prenex Q (Q x F))  (eo::match ((R (-> @List Bool)) (y @List) (G Bool))
++  (($mk_quant_merge_prenex Q (Q x F))  (eo::match ((R (-> @List Bool Bool)) (y @List) (G Bool))
+                                          ($mk_quant_merge_prenex Q F)
+                                          ; note that since this method returns Q terms only, R is Q
+                                          (((R y G) (Q (eo::list_concat @list x y) G)))))
+@@ -168,7 +185,7 @@
+ ;   The right hand side of the equality is the result of merging quantifier
+ ;   prenexes in its left hand side.
+ ; conclusion: The given equality.
+-(declare-rule quant-merge-prenex ((Q (-> @List Bool)) (x @List) (F Bool) (G Bool))
++(declare-rule quant-merge-prenex ((Q (-> @List Bool Bool)) (x @List) (F Bool) (G Bool))
+   :args ((= (Q x F) G))
+   :requires (((eo::or (eo::is_eq Q forall) (eo::is_eq Q exists)) true)
+              (($mk_quant_merge_prenex Q (Q x F)) G))
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index 177463811..9f9235795 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -241,6 +241,8 @@ const char* toString(cvc5::ProofRewriteRule rule)
+       return "arrays-eq-range-expand";
+     case ProofRewriteRule::EXISTS_ELIM: return "exists-elim";
+     case ProofRewriteRule::QUANT_UNUSED_VARS: return "quant-unused-vars";
++    case ProofRewriteRule::MACRO_QUANT_MERGE_PRENEX:
++      return "macro-quant-merge-prenex";
+     case ProofRewriteRule::QUANT_MERGE_PRENEX: return "quant-merge-prenex";
+     case ProofRewriteRule::MACRO_QUANT_MINISCOPE:
+       return "macro-quant-miniscope";
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index d861ccfec..466996c34 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -194,6 +194,12 @@ void BasicRewriteRCons::ensureProofForTheoryRewrite(
+         handledMacro = true;
+       }
+       break;
++    case ProofRewriteRule::MACRO_QUANT_MERGE_PRENEX:
++      if (ensureProofMacroQuantMergePrenex(cdp, eq))
++      {
++        handledMacro = true;
++      }
++      break;
+     case ProofRewriteRule::MACRO_QUANT_PARTITION_CONNECTED_FV:
+       if (ensureProofMacroQuantPartitionConnectedFv(cdp, eq))
+       {
+@@ -535,6 +541,57 @@ bool BasicRewriteRCons::ensureProofMacroSubstrStripSymLength(CDProof* cdp,
+   return true;
+ }
+ 
++bool BasicRewriteRCons::ensureProofMacroQuantMergePrenex(CDProof* cdp,
++                                                         const Node& eq)
++{
++  Trace("brc-macro") << "Expand macro quant merge prenex for " << eq
++                     << std::endl;
++  theory::Rewriter* rr = d_env.getRewriter();
++  Node qm = rr->rewriteViaRule(ProofRewriteRule::QUANT_MERGE_PRENEX, eq[0]);
++  Trace("brc-macro") << "...non-macro to " << qm << std::endl;
++  if (qm.isNull())
++  {
++    Assert(false);
++    return false;
++  }
++  Node equiv = eq[0].eqNode(qm);
++  cdp->addTheoryRewriteStep(equiv, ProofRewriteRule::QUANT_MERGE_PRENEX);
++  if (qm == eq[1])
++  {
++    return true;
++  }
++  // if variables were duplicated, remove them with QUANT_UNUSED_VARS
++  Node qmu = rr->rewriteViaRule(ProofRewriteRule::QUANT_UNUSED_VARS, qm);
++  if (qmu.isNull())
++  {
++    Assert(false);
++    return false;
++  }
++  Node equiv2 = qm.eqNode(qmu);
++  cdp->addTheoryRewriteStep(equiv2, ProofRewriteRule::QUANT_UNUSED_VARS);
++  std::vector<Node> transEq;
++  transEq.push_back(equiv);
++  transEq.push_back(equiv2);
++  if (qmu != eq[1])
++  {
++    // May be we removed too many variables, in this case we do the same
++    // removal for the opposite side, which should give the same result.
++    Node qmu2 = rr->rewriteViaRule(ProofRewriteRule::QUANT_UNUSED_VARS, eq[1]);
++    if (qmu2 != qmu)
++    {
++      Assert(false);
++      return false;
++    }
++    Node equiv3 = eq[1].eqNode(qmu2);
++    cdp->addTheoryRewriteStep(equiv3, ProofRewriteRule::QUANT_UNUSED_VARS);
++    Node equiv3s = qmu2.eqNode(eq[1]);
++    cdp->addStep(equiv3s, ProofRule::SYMM, {equiv3}, {});
++    transEq.push_back(equiv3s);
++  }
++  cdp->addStep(eq, ProofRule::TRANS, transEq, {});
++  return true;
++}
++
+ bool BasicRewriteRCons::ensureProofMacroQuantPartitionConnectedFv(
+     CDProof* cdp, const Node& eq)
+ {
+diff --git a/src/rewriter/basic_rewrite_rcons.h b/src/rewriter/basic_rewrite_rcons.h
+index 9a2843911..93c0ff979 100644
+--- a/src/rewriter/basic_rewrite_rcons.h
++++ b/src/rewriter/basic_rewrite_rcons.h
+@@ -170,6 +170,16 @@ class BasicRewriteRCons : protected EnvObj
+    * @return true if added a closed proof of eq to cdp.
+    */
+   bool ensureProofMacroSubstrStripSymLength(CDProof* cdp, const Node& eq);
++  /**
++   * Elaborate a rewrite eq that was proven by
++   * ProofRewriteRule::MACRO_QUANT_MERGE_PRENEX.
++   *
++   * @param cdp The proof to add to.
++   * @param eq The rewrite proven by
++   * ProofRewriteRule::MACRO_QUANT_MERGE_PRENEX.
++   * @return true if added a closed proof of eq to cdp.
++   */
++  bool ensureProofMacroQuantMergePrenex(CDProof* cdp, const Node& eq);
+   /**
+    * Elaborate a rewrite eq that was proven by
+    * ProofRewriteRule::MACRO_QUANT_PARTITION_CONNECTED_FV.
+diff --git a/src/rewriter/rewrite_db_proof_cons.cpp b/src/rewriter/rewrite_db_proof_cons.cpp
+index cdb6f454d..4b09a5554 100644
+--- a/src/rewriter/rewrite_db_proof_cons.cpp
++++ b/src/rewriter/rewrite_db_proof_cons.cpp
+@@ -178,6 +178,13 @@ Node RewriteDbProofCons::preprocessClosureEq(CDProof* cdp,
+   Node eqConv = ai.eqNode(bi);
+   if (ai[0] == bi[0])
+   {
++    ProofRewriteRule prid = d_env.getRewriter()->findRule(
++        ai, bi, theory::TheoryRewriteCtx::PRE_DSL);
++    if (prid != ProofRewriteRule::NONE)
++    {
++      // a simple theory rewrite happens to solve it, do not continue
++      return Node::null();
++    }
+     std::vector<Node> cargs;
+     ProofRule cr = expr::getCongRule(ai, cargs);
+     // remains to prove their bodies are equal
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index 9abd599c9..459402d49 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -103,12 +103,13 @@ QuantifiersRewriter::QuantifiersRewriter(NodeManager* nm,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::QUANT_UNUSED_VARS,
+                            TheoryRewriteCtx::PRE_DSL);
+-  registerProofRewriteRule(ProofRewriteRule::QUANT_MERGE_PRENEX,
++  // QUANT_MERGE_PRENEX is part of the reconstruction for
++  // MACRO_QUANT_MERGE_PRENEX
++  registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_MERGE_PRENEX,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_MINISCOPE,
+                            TheoryRewriteCtx::PRE_DSL);
+-  // QUANT_MINISCOPE is handled as part of the reconstruction for
+-  // MACRO_QUANT_MINISCOPE
++  // QUANT_MINISCOPE is part of the reconstruction for MACRO_QUANT_MINISCOPE
+   registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_PARTITION_CONNECTED_FV,
+                            TheoryRewriteCtx::PRE_DSL);
+   // note ProofRewriteRule::QUANT_DT_SPLIT is done by a module dynamically with
+@@ -158,6 +159,7 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
++    case ProofRewriteRule::MACRO_QUANT_MERGE_PRENEX:
+     case ProofRewriteRule::QUANT_MERGE_PRENEX:
+     {
+       if (!n.isClosure())
+@@ -166,7 +168,9 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+       // Don't check standard here, which can't be replicated in a proof checker
+       // without modelling the patterns.
+-      Node q = mergePrenex(n, false);
++      // We remove duplicates if the macro version.
++      Node q = mergePrenex(
++          n, false, id == ProofRewriteRule::MACRO_QUANT_MERGE_PRENEX);
+       if (q != n)
+       {
+         return q;
+@@ -418,9 +422,15 @@ void QuantifiersRewriter::computeArgVec(const std::vector<Node>& args,
+   std::map< Node, bool > visited;
+   computeArgs( args, activeMap, n, visited );
+   if( !activeMap.empty() ){
+-    for( unsigned i=0; i<args.size(); i++ ){
+-      if( activeMap.find( args[i] )!=activeMap.end() ){
+-        activeArgs.push_back( args[i] );
++    std::map<Node, bool>::iterator it;
++    for (const Node& v : args)
++    {
++      it = activeMap.find(v);
++      if (it != activeMap.end())
++      {
++        activeArgs.emplace_back(v);
++        // no longer active, which accounts for deleting duplicates
++        activeMap.erase(it);
+       }
+     }
+   }
+@@ -479,7 +489,7 @@ RewriteResponse QuantifiersRewriter::preRewrite(TNode q)
+     // eagerly here, where after we would drop y to obtain:
+     //   (forall ((x Int)) (! (P x) :pattern ((f x))))
+     // See issue #10303.
+-    Node qm = mergePrenex(q, true);
++    Node qm = mergePrenex(q, true, true);
+     if (q != qm)
+     {
+       return RewriteResponse(REWRITE_AGAIN_FULL, qm);
+@@ -511,7 +521,7 @@ RewriteResponse QuantifiersRewriter::postRewrite(TNode in)
+   else if (in.getKind() == Kind::FORALL)
+   {
+     // do prenex merging
+-    ret = mergePrenex(in, true);
++    ret = mergePrenex(in, true, true);
+     if (ret != in)
+     {
+       status = REWRITE_AGAIN_FULL;
+@@ -548,7 +558,7 @@ RewriteResponse QuantifiersRewriter::postRewrite(TNode in)
+   return RewriteResponse( status, ret );
+ }
+ 
+-Node QuantifiersRewriter::mergePrenex(const Node& q, bool checkStd)
++Node QuantifiersRewriter::mergePrenex(const Node& q, bool checkStd, bool rmDup)
+ {
+   Assert(q.getKind() == Kind::FORALL || q.getKind() == Kind::EXISTS);
+   Kind k = q.getKind();
+@@ -558,18 +568,25 @@ Node QuantifiersRewriter::mergePrenex(const Node& q, bool checkStd)
+   bool continueCombine = false;
+   do
+   {
+-    for (const Node& v : body[0])
++    if (rmDup)
+     {
+-      if (std::find(boundVars.begin(), boundVars.end(), v) == boundVars.end())
+-      {
+-        boundVars.push_back(v);
+-      }
+-      else
++      for (const Node& v : body[0])
+       {
+-        // if duplicate variable due to shadowing, we must rewrite
+-        combineQuantifiers = true;
++        if (std::find(boundVars.begin(), boundVars.end(), v) == boundVars.end())
++        {
++          boundVars.push_back(v);
++        }
++        else
++        {
++          // if duplicate variable due to shadowing, we must rewrite
++          combineQuantifiers = true;
++        }
+       }
+     }
++    else
++    {
++      boundVars.insert(boundVars.end(), body[0].begin(), body[0].end());
++    }
+     continueCombine = false;
+     if (body.getNumChildren() == 2 && body[1].getKind() == k)
+     {
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.h b/src/theory/quantifiers/quantifiers_rewriter.h
+index 01e3ca16e..c71b58a06 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.h
++++ b/src/theory/quantifiers/quantifiers_rewriter.h
+@@ -237,9 +237,10 @@ class QuantifiersRewriter : public TheoryRewriter
+    * @param q The quantified formula to prenex.
+    * @param checkStd If true, we do not merge prenex for any non-standard
+    * quantified formula
++   * @param rmDup If true, we remove duplicate variables.
+    * @return The result of merging prenex in q.
+    */
+-  Node mergePrenex(const Node& q, bool checkStd);
++  Node mergePrenex(const Node& q, bool checkStd, bool rmDup);
+   /**
+    * Helper method for getVarElim, called when n has polarity pol in body.
+    */
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 142132863..a9f785cec 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1495,6 +1495,7 @@ set(regress_0_tests
+   regress0/quantifiers/macros-real-arg.smt2
+   regress0/quantifiers/matching-lia-1arg.smt2
+   regress0/quantifiers/mbqi-simple.smt2
++  regress0/quantifiers/merge-shadow.smt2
+   regress0/quantifiers/mix-complete-strat.smt2
+   regress0/quantifiers/mix-match.smt2
+   regress0/quantifiers/mix-simp.smt2
+diff --git a/test/regress/cli/regress0/quantifiers/merge-shadow.smt2 b/test/regress/cli/regress0/quantifiers/merge-shadow.smt2
+new file mode 100644
+index 000000000..900fff499
+--- /dev/null
++++ b/test/regress/cli/regress0/quantifiers/merge-shadow.smt2
+@@ -0,0 +1,6 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun P (Int) Bool)
++(assert (forall ((x Int)) (forall ((x Int)) (P x))))
++(assert (not (P 100)))
++(check-sat)
+-- 
+2.47.1
+

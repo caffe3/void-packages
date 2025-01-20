@@ -1,0 +1,24 @@
+From 0368f0271f5070925ace1630e13ebe4271789ab9 Mon Sep 17 00:00:00 2001
+From: Aina Niemetz <aina.niemetz@gmail.com>
+Date: Thu, 8 Aug 2024 09:21:07 -0700
+Subject: [PATCH 001/312] Start post-release for 1.2.0
+
+---
+ cmake/version-base.cmake | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/cmake/version-base.cmake b/cmake/version-base.cmake
+index be5a2ef14..89833eb9d 100644
+--- a/cmake/version-base.cmake
++++ b/cmake/version-base.cmake
+@@ -1,6 +1,6 @@
+ # These are updated when making a release
+ set(CVC5_LAST_RELEASE "1.2.0")
+-set(CVC5_IS_RELEASE "true")
++set(CVC5_IS_RELEASE "false")
+ 
+ # These are used in other places in cmake
+ # If possible, they are updated by version.cmake
+-- 
+2.47.1
+

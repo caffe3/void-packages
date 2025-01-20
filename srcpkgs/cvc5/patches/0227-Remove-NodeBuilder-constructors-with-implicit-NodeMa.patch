@@ -1,0 +1,1905 @@
+From 2a1d74a0a99a5c7b76d982856a86cc0a71d9697f Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Mon, 9 Dec 2024 15:22:44 -0600
+Subject: [PATCH 227/312] Remove NodeBuilder constructors with implicit
+ NodeManager (#11392)
+
+This change introduces some calls to `NodeManager::currentNM()`, which
+will be removed in a follow-up PR.
+---
+ src/api/cpp/cvc5.cpp                          |  8 ++--
+ src/expr/dtype_cons.cpp                       |  2 +-
+ src/expr/node.h                               |  6 +--
+ src/expr/node_builder.cpp                     | 27 ------------
+ src/expr/node_builder.h                       |  2 -
+ src/expr/node_converter.cpp                   |  2 +-
+ src/expr/sygus_grammar.cpp                    |  2 +-
+ src/expr/type_node.cpp                        |  4 +-
+ src/expr/type_node.h                          |  2 +-
+ src/preprocessing/passes/bool_to_bv.cpp       |  2 +-
+ src/preprocessing/passes/bv_to_bool.cpp       |  4 +-
+ src/preprocessing/passes/ff_bitsum.cpp        |  2 +-
+ .../passes/foreign_theory_rewrite.cpp         |  2 +-
+ src/preprocessing/passes/int_to_bv.cpp        |  4 +-
+ src/preprocessing/passes/miplib_trick.cpp     |  4 +-
+ .../util/boolean_simplification.h             |  7 +--
+ src/preprocessing/util/ite_utilities.cpp      | 18 ++++----
+ src/smt/expand_definitions.cpp                |  2 +-
+ src/theory/arith/arith_ite_utils.cpp          |  4 +-
+ src/theory/arith/arith_rewriter.cpp           |  2 +-
+ src/theory/arith/arith_utilities.cpp          |  2 +-
+ src/theory/arith/arith_utilities.h            |  5 ++-
+ .../arith/linear/arith_static_learner.cpp     | 10 +++--
+ .../arith/linear/congruence_manager.cpp       | 12 ++---
+ src/theory/arith/linear/constraint.cpp        | 24 +++++-----
+ src/theory/arith/linear/dio_solver.cpp        |  2 +-
+ src/theory/arith/linear/normal_form.h         |  2 +-
+ .../arith/linear/theory_arith_private.cpp     |  6 +--
+ src/theory/arith/pp_rewrite_eq.cpp            |  4 +-
+ src/theory/arith/proof_checker.cpp            |  8 ++--
+ src/theory/arith/rewriter/addition.cpp        |  4 +-
+ src/theory/arrays/theory_arrays.cpp           |  8 ++--
+ src/theory/booleans/theory_bool_rewriter.cpp  |  2 +-
+ src/theory/bv/int_blaster.cpp                 |  2 +-
+ src/theory/bv/theory_bv.cpp                   |  2 +-
+ src/theory/bv/theory_bv_rewrite_rules.h       |  2 +-
+ src/theory/bv/theory_bv_rewrite_rules_core.h  |  2 +-
+ .../theory_bv_rewrite_rules_normalization.h   | 12 ++---
+ ...ry_bv_rewrite_rules_operator_elimination.h |  2 +-
+ .../theory_bv_rewrite_rules_simplification.h  | 14 +++---
+ src/theory/bv/theory_bv_utils.cpp             |  2 +-
+ src/theory/bv/theory_bv_utils.h               |  4 +-
+ src/theory/datatypes/datatypes_rewriter.cpp   |  2 +-
+ src/theory/datatypes/theory_datatypes.cpp     |  4 +-
+ src/theory/datatypes/type_enumerator.cpp      |  2 +-
+ src/theory/fp/fp_word_blaster.cpp             |  8 ++--
+ src/theory/fp/theory_fp.cpp                   |  2 +-
+ src/theory/fp/theory_fp_rewriter.cpp          |  2 +-
+ src/theory/quantifiers/bv_inverter.cpp        |  4 +-
+ src/theory/quantifiers/bv_inverter_utils.cpp  |  9 ++--
+ .../cegqi/ceg_bv_instantiator_utils.cpp       | 12 +++--
+ .../quantifiers/quantifiers_rewriter.cpp      |  2 +-
+ src/theory/quantifiers/skolemize.cpp          |  2 +-
+ src/theory/rewriter.cpp                       |  3 +-
+ src/theory/strings/sequences_rewriter.cpp     | 12 ++---
+ src/theory/strings/strings_entail.cpp         |  4 +-
+ src/theory/strings/strings_rewriter.cpp       |  2 +-
+ src/theory/subs_minimize.cpp                  |  2 +-
+ src/theory/substitutions.cpp                  |  2 +-
+ src/theory/theory_engine.cpp                  |  2 +-
+ src/theory/uf/equality_engine.cpp             |  2 +-
+ src/theory/uf/symmetry_breaker.cpp            |  9 ++--
+ test/unit/node/node_black.cpp                 | 18 ++++----
+ test/unit/node/node_builder_black.cpp         | 44 +++++++++----------
+ test/unit/node/node_manager_white.cpp         |  2 +-
+ test/unit/node/node_white.cpp                 |  2 +-
+ .../preprocessing/pass_bv_gauss_white.cpp     | 20 ++++-----
+ .../util/boolean_simplification_black.cpp     | 17 ++++---
+ 68 files changed, 201 insertions(+), 226 deletions(-)
+
+diff --git a/src/api/cpp/cvc5.cpp b/src/api/cpp/cvc5.cpp
+index 7216253d4..d078d336a 100644
+--- a/src/api/cpp/cvc5.cpp
++++ b/src/api/cpp/cvc5.cpp
+@@ -5640,7 +5640,7 @@ Term TermManager::mkTermHelper(const Op& op, const std::vector<Term>& children)
+   const internal::Kind int_kind = extToIntKind(op.d_kind);
+   std::vector<internal::Node> echildren = Term::termVectorToNodes(children);
+ 
+-  internal::NodeBuilder nb(int_kind);
++  internal::NodeBuilder nb(d_nm, int_kind);
+   nb << *op.d_node;
+   nb.append(echildren);
+   internal::Node res = nb.constructNode();
+@@ -6640,7 +6640,7 @@ Term TermManager::mkTuple(const std::vector<Term>& terms)
+   }
+   internal::TypeNode tn = d_nm->mkTupleType(typeNodes);
+   const internal::DType& dt = tn.getDType();
+-  internal::NodeBuilder nb(extToIntKind(Kind::APPLY_CONSTRUCTOR));
++  internal::NodeBuilder nb(d_nm, extToIntKind(Kind::APPLY_CONSTRUCTOR));
+   nb << dt[0].getConstructor();
+   nb.append(args);
+   internal::Node res = nb.constructNode();
+@@ -6659,7 +6659,7 @@ Term TermManager::mkNullableSome(const Term& term)
+   internal::TypeNode typeNode = arg.getType();
+   internal::TypeNode tn = d_nm->mkNullableType(typeNode);
+   const internal::DType& dt = tn.getDType();
+-  internal::NodeBuilder nb(extToIntKind(Kind::APPLY_CONSTRUCTOR));
++  internal::NodeBuilder nb(d_nm, extToIntKind(Kind::APPLY_CONSTRUCTOR));
+   nb << dt[1].getConstructor();
+   nb.append(arg);
+   internal::Node res = nb.constructNode();
+@@ -6677,7 +6677,7 @@ Term TermManager::mkNullableNull(const Sort& sort)
+   //////// all checks before this line
+   internal::TypeNode tn = sort.getTypeNode();
+   const internal::DType& dt = tn.getDType();
+-  internal::NodeBuilder nb(extToIntKind(Kind::APPLY_CONSTRUCTOR));
++  internal::NodeBuilder nb(d_nm, extToIntKind(Kind::APPLY_CONSTRUCTOR));
+   nb << dt[0].getConstructor();
+   internal::Node res = nb.constructNode();
+   (void)res.getType(true); /* kick off type checking */
+diff --git a/src/expr/dtype_cons.cpp b/src/expr/dtype_cons.cpp
+index b318baf30..24c7b0563 100644
+--- a/src/expr/dtype_cons.cpp
++++ b/src/expr/dtype_cons.cpp
+@@ -694,7 +694,7 @@ TypeNode DTypeConstructor::doParametricSubstitution(
+       }
+     }
+   }
+-  NodeBuilder nb(range.getKind());
++  NodeBuilder nb(NodeManager::currentNM(), range.getKind());
+   for (size_t i = 0, csize = children.size(); i < csize; ++i)
+   {
+     nb << children[i];
+diff --git a/src/expr/node.h b/src/expr/node.h
+index a15ab3ce5..b07dfdf3d 100644
+--- a/src/expr/node.h
++++ b/src/expr/node.h
+@@ -1315,7 +1315,7 @@ Node NodeTemplate<ref_count>::substitute(
+   }
+ 
+   // otherwise compute
+-  NodeBuilder nb(getKind());
++  NodeBuilder nb(NodeManager::currentNM(), getKind());
+   if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+     // push the operator
+     if(getOperator() == node) {
+@@ -1385,7 +1385,7 @@ Node NodeTemplate<ref_count>::substitute(
+     cache[*this] = *this;
+     return *this;
+   } else {
+-    NodeBuilder nb(getKind());
++    NodeBuilder nb(NodeManager::currentNM(), getKind());
+     if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+       // push the operator
+       nb << getOperator().substitute(nodesBegin, nodesEnd,
+@@ -1449,7 +1449,7 @@ Node NodeTemplate<ref_count>::substitute(
+     cache[*this] = *this;
+     return *this;
+   } else {
+-    NodeBuilder nb(getKind());
++    NodeBuilder nb(NodeManager::currentNM(), getKind());
+     if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+       // push the operator
+       nb << getOperator().substitute(substitutionsBegin, substitutionsEnd, cache);
+diff --git a/src/expr/node_builder.cpp b/src/expr/node_builder.cpp
+index 4345db512..2d31d120a 100644
+--- a/src/expr/node_builder.cpp
++++ b/src/expr/node_builder.cpp
+@@ -19,33 +19,6 @@
+ 
+ namespace cvc5::internal {
+ 
+-NodeBuilder::NodeBuilder()
+-    : d_nv(&d_inlineNv),
+-      d_nm(NodeManager::currentNM()),
+-      d_nvMaxChildren(default_nchild_thresh)
+-{
+-  d_inlineNv.d_id = 0;
+-  d_inlineNv.d_rc = 0;
+-  d_inlineNv.d_kind = expr::NodeValue::kindToDKind(Kind::UNDEFINED_KIND);
+-  d_inlineNv.d_nm = d_nm;
+-  d_inlineNv.d_nchildren = 0;
+-}
+-
+-NodeBuilder::NodeBuilder(Kind k)
+-    : d_nv(&d_inlineNv),
+-      d_nm(NodeManager::currentNM()),
+-      d_nvMaxChildren(default_nchild_thresh)
+-{
+-  Assert(k != Kind::NULL_EXPR && k != Kind::UNDEFINED_KIND)
+-      << "illegal Node-building kind";
+-
+-  d_inlineNv.d_id = 1;  // have a kind already
+-  d_inlineNv.d_rc = 0;
+-  d_inlineNv.d_kind = expr::NodeValue::kindToDKind(k);
+-  d_inlineNv.d_nm = d_nm;
+-  d_inlineNv.d_nchildren = 0;
+-}
+-
+ NodeBuilder::NodeBuilder(NodeManager* nm)
+     : d_nv(&d_inlineNv), d_nm(nm), d_nvMaxChildren(default_nchild_thresh)
+ {
+diff --git a/src/expr/node_builder.h b/src/expr/node_builder.h
+index 216faad9f..1fdd26674 100644
+--- a/src/expr/node_builder.h
++++ b/src/expr/node_builder.h
+@@ -161,8 +161,6 @@ class NodeBuilder {
+   constexpr static size_t default_nchild_thresh = 10;
+ 
+  public:
+-  NodeBuilder();
+-  NodeBuilder(Kind k);
+   NodeBuilder(NodeManager* nm);
+   NodeBuilder(NodeManager* nm, Kind k);
+   NodeBuilder(const NodeBuilder& nb);
+diff --git a/src/expr/node_converter.cpp b/src/expr/node_converter.cpp
+index b1429f789..b36ae8be2 100644
+--- a/src/expr/node_converter.cpp
++++ b/src/expr/node_converter.cpp
+@@ -211,7 +211,7 @@ TypeNode NodeConverter::convertType(TypeNode tn)
+         TypeNode ret = cur;
+         // reconstruct using a node builder, which seems to be required for
+         // type nodes.
+-        NodeBuilder nb(ret.getKind());
++        NodeBuilder nb(d_nm, ret.getKind());
+         // there are no parameterized types
+         Assert (ret.getMetaKind() != kind::metakind::PARAMETERIZED);
+         for (TypeNode::const_iterator j = ret.begin(), iend = ret.end();
+diff --git a/src/expr/sygus_grammar.cpp b/src/expr/sygus_grammar.cpp
+index d81c39749..a60ccd30b 100644
+--- a/src/expr/sygus_grammar.cpp
++++ b/src/expr/sygus_grammar.cpp
+@@ -203,7 +203,7 @@ Node purifySygusGNode(const Node& n,
+   if (n.getMetaKind() == kind::metakind::PARAMETERIZED)
+   {
+     // it's an indexed operator so we should provide the op
+-    internal::NodeBuilder nb(n.getKind());
++    internal::NodeBuilder nb(NodeManager::currentNM(), n.getKind());
+     nb << n.getOperator();
+     nb.append(pchildren);
+     nret = nb.constructNode();
+diff --git a/src/expr/type_node.cpp b/src/expr/type_node.cpp
+index f6e2b9553..3d8de2229 100644
+--- a/src/expr/type_node.cpp
++++ b/src/expr/type_node.cpp
+@@ -57,7 +57,7 @@ TypeNode TypeNode::substitute(
+   }
+ 
+   // otherwise compute
+-  NodeBuilder nb(getKind());
++  NodeBuilder nb(NodeManager::currentNM(), getKind());
+   if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+     // push the operator
+     nb << TypeNode(d_nv->d_children[0]);
+@@ -399,7 +399,7 @@ TypeNode TypeNode::unifyInternal(const TypeNode& t, bool isLub) const
+     // different arities
+     return TypeNode::null();
+   }
+-  NodeBuilder nb(k);
++  NodeBuilder nb(NodeManager::currentNM(), k);
+   for (size_t i = 0; i < nchild; i++)
+   {
+     TypeNode c = (*this)[i];
+diff --git a/src/expr/type_node.h b/src/expr/type_node.h
+index 48a77ca97..5c9cf464e 100644
+--- a/src/expr/type_node.h
++++ b/src/expr/type_node.h
+@@ -847,7 +847,7 @@ TypeNode TypeNode::substitute(
+     cache[*this] = *this;
+     return *this;
+   } else {
+-    NodeBuilder nb(getKind());
++    NodeBuilder nb(NodeManager::currentNM(), getKind());
+     if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+       // push the operator
+       nb << TypeNode(d_nv->d_children[0]);
+diff --git a/src/preprocessing/passes/bool_to_bv.cpp b/src/preprocessing/passes/bool_to_bv.cpp
+index 6121e5a83..5b60c635e 100644
+--- a/src/preprocessing/passes/bool_to_bv.cpp
++++ b/src/preprocessing/passes/bool_to_bv.cpp
+@@ -366,7 +366,7 @@ void BoolToBV::rebuildNode(const TNode& n, Kind new_kind)
+ {
+   Kind k = n.getKind();
+   NodeManager* nm = nodeManager();
+-  NodeBuilder builder(new_kind);
++  NodeBuilder builder(nm, new_kind);
+ 
+   Trace("bool-to-bv") << "BoolToBV::rebuildNode with " << n
+                       << " and new_kind = " << kindToString(new_kind)
+diff --git a/src/preprocessing/passes/bv_to_bool.cpp b/src/preprocessing/passes/bv_to_bool.cpp
+index 95ae0ecbd..eaba5a1d4 100644
+--- a/src/preprocessing/passes/bv_to_bool.cpp
++++ b/src/preprocessing/passes/bv_to_bool.cpp
+@@ -223,7 +223,7 @@ Node BVToBool::convertBvTerm(TNode node)
+     default: Unhandled();
+   }
+ 
+-  NodeBuilder builder(new_kind);
++  NodeBuilder builder(nm, new_kind);
+   for (unsigned i = 0; i < node.getNumChildren(); ++i)
+   {
+     builder << convertBvTerm(node[i]);
+@@ -257,7 +257,7 @@ Node BVToBool::liftNode(TNode current)
+     }
+     else
+     {
+-      NodeBuilder builder(current.getKind());
++      NodeBuilder builder(nodeManager(), current.getKind());
+       if (current.getMetaKind() == kind::metakind::PARAMETERIZED)
+       {
+         builder << current.getOperator();
+diff --git a/src/preprocessing/passes/ff_bitsum.cpp b/src/preprocessing/passes/ff_bitsum.cpp
+index 3c72101f6..7131b1eae 100644
+--- a/src/preprocessing/passes/ff_bitsum.cpp
++++ b/src/preprocessing/passes/ff_bitsum.cpp
+@@ -85,7 +85,7 @@ PreprocessingPassResult FfBitsum::applyInternal(
+       else
+       {
+         Kind oldKind = current.getKind();
+-        NodeBuilder builder(oldKind);
++        NodeBuilder builder(nm, oldKind);
+         if (current.getMetaKind() == kind::MetaKind::PARAMETERIZED)
+         {
+           builder << current.getOperator();
+diff --git a/src/preprocessing/passes/foreign_theory_rewrite.cpp b/src/preprocessing/passes/foreign_theory_rewrite.cpp
+index af35e9fde..0821e8f1b 100644
+--- a/src/preprocessing/passes/foreign_theory_rewrite.cpp
++++ b/src/preprocessing/passes/foreign_theory_rewrite.cpp
+@@ -121,7 +121,7 @@ Node ForeignTheoryRewriter::reconstructNode(Node originalNode,
+   }
+   // re-build the node with the same kind and new children
+   Kind k = originalNode.getKind();
+-  NodeBuilder builder(k);
++  NodeBuilder builder(originalNode.getNodeManager(), k);
+   // special case for parameterized nodes
+   if (originalNode.getMetaKind() == kind::metakind::PARAMETERIZED)
+   {
+diff --git a/src/preprocessing/passes/int_to_bv.cpp b/src/preprocessing/passes/int_to_bv.cpp
+index 1350df0ac..db3c7fb5d 100644
+--- a/src/preprocessing/passes/int_to_bv.cpp
++++ b/src/preprocessing/passes/int_to_bv.cpp
+@@ -85,7 +85,7 @@ Node intToBVMakeBinary(NodeManager* nm, TNode n, NodeMap& cache)
+     }
+     else
+     {
+-      NodeBuilder builder(current.getKind());
++      NodeBuilder builder(nm, current.getKind());
+       if (current.getMetaKind() == kind::metakind::PARAMETERIZED) {
+         builder << current.getOperator();
+       }
+@@ -217,7 +217,7 @@ Node IntToBV::intToBV(TNode n, NodeMap& cache)
+            << " to a bit-vector operator. Remove option `--solve-int-as-bv`.";
+         throw LogicException(ss.str());
+       }
+-      NodeBuilder builder(newKind);
++      NodeBuilder builder(nm, newKind);
+       if (current.getMetaKind() == kind::metakind::PARAMETERIZED) {
+         builder << current.getOperator();
+       }
+diff --git a/src/preprocessing/passes/miplib_trick.cpp b/src/preprocessing/passes/miplib_trick.cpp
+index d3ea181f6..66af5994b 100644
+--- a/src/preprocessing/passes/miplib_trick.cpp
++++ b/src/preprocessing/passes/miplib_trick.cpp
+@@ -100,7 +100,7 @@ size_t MipLibTrick::removeFromConjunction(
+         || (sub.getKind() == Kind::AND
+             && (subremovals = removeFromConjunction(sub, toRemove)) > 0))
+     {
+-      NodeBuilder b(Kind::AND);
++      NodeBuilder b(nodeManager(), Kind::AND);
+       b.append(n.begin(), j);
+       if (subremovals > 0)
+       {
+@@ -559,7 +559,7 @@ PreprocessingPassResult MipLibTrick::applyInternal(
+           Node sum;
+           if (pos.getKind() == Kind::AND)
+           {
+-            NodeBuilder sumb(Kind::ADD);
++            NodeBuilder sumb(nodeManager(), Kind::ADD);
+             for (size_t jj = 0; jj < pos.getNumChildren(); ++jj)
+             {
+               sumb << nm->mkNode(
+diff --git a/src/preprocessing/util/boolean_simplification.h b/src/preprocessing/util/boolean_simplification.h
+index 6b5d03e36..9f2c42a4a 100644
+--- a/src/preprocessing/util/boolean_simplification.h
++++ b/src/preprocessing/util/boolean_simplification.h
+@@ -84,7 +84,7 @@ class BooleanSimplification
+       return buffer[0];
+     }
+ 
+-    NodeBuilder nb(Kind::AND);
++    NodeBuilder nb(andNode.getNodeManager(), Kind::AND);
+     nb.append(buffer);
+     return nb;
+   }
+@@ -111,7 +111,7 @@ class BooleanSimplification
+       return buffer[0];
+     }
+ 
+-    NodeBuilder nb(Kind::OR);
++    NodeBuilder nb(orNode.getNodeManager(), Kind::OR);
+     nb.append(buffer);
+     return nb;
+   }
+@@ -131,7 +131,8 @@ class BooleanSimplification
+     TNode right = implication[1];
+ 
+     Node notLeft = negate(left);
+-    Node clause = NodeBuilder(Kind::OR) << notLeft << right;
++    Node clause = NodeBuilder(implication.getNodeManager(), Kind::OR)
++                  << notLeft << right;
+ 
+     return simplifyClause(clause);
+   }
+diff --git a/src/preprocessing/util/ite_utilities.cpp b/src/preprocessing/util/ite_utilities.cpp
+index 0c66dc835..6be35a3b0 100644
+--- a/src/preprocessing/util/ite_utilities.cpp
++++ b/src/preprocessing/util/ite_utilities.cpp
+@@ -395,7 +395,7 @@ Node ITECompressor::compressBooleanITEs(Node toCompress)
+     }
+   }
+ 
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(nodeManager(), Kind::AND);
+   Node curr = toCompress;
+   while (curr.getKind() == Kind::ITE
+          && (curr[1] == d_false || curr[2] == d_false)
+@@ -459,7 +459,7 @@ Node ITECompressor::compressTerm(Node toCompress)
+     }
+   }
+ 
+-  NodeBuilder nb(toCompress.getKind());
++  NodeBuilder nb(nodeManager(), toCompress.getKind());
+ 
+   if (toCompress.getMetaKind() == kind::metakind::PARAMETERIZED)
+   {
+@@ -496,7 +496,7 @@ Node ITECompressor::compressBoolean(Node toCompress)
+   else
+   {
+     bool ta = ite::isTheoryAtom(toCompress);
+-    NodeBuilder nb(toCompress.getKind());
++    NodeBuilder nb(nodeManager(), toCompress.getKind());
+     if (toCompress.getMetaKind() == kind::metakind::PARAMETERIZED)
+     {
+       nb << (toCompress.getOperator());
+@@ -885,7 +885,7 @@ Node ITESimplifier::replaceOver(Node n, Node replaceWith, Node simpVar)
+     return d_replaceOverCache[p];
+   }
+ 
+-  NodeBuilder builder(n.getKind());
++  NodeBuilder builder(nodeManager(), n.getKind());
+   if (n.getMetaKind() == kind::metakind::PARAMETERIZED)
+   {
+     builder << n.getOperator();
+@@ -1184,7 +1184,7 @@ Node ITESimplifier::intersectConstantIte(TNode lcite, TNode rcite)
+   }
+   else
+   {
+-    NodeBuilder nb(Kind::OR);
++    NodeBuilder nb(nodeManager(), Kind::OR);
+     NodeVec::const_iterator it = intersection.begin(), end = intersection.end();
+     for (; it != end; ++it)
+     {
+@@ -1309,7 +1309,7 @@ Node ITESimplifier::simpConstants(TNode simpContext,
+ 
+   if (iteNode.getKind() == Kind::ITE)
+   {
+-    NodeBuilder builder(Kind::ITE);
++    NodeBuilder builder(nodeManager(), Kind::ITE);
+     builder << iteNode[0];
+     unsigned i = 1;
+     for (; i < iteNode.getNumChildren(); ++i)
+@@ -1402,7 +1402,7 @@ Node ITESimplifier::createSimpContext(TNode c, Node& iteNode, Node& simpVar)
+     return simpVar;
+   }
+ 
+-  NodeBuilder builder(c.getKind());
++  NodeBuilder builder(nodeManager(), c.getKind());
+   if (c.getMetaKind() == kind::metakind::PARAMETERIZED)
+   {
+     builder << c.getOperator();
+@@ -1553,7 +1553,7 @@ Node ITESimplifier::simpITE(TNode assertion)
+     if (stackHead.d_children_added)
+     {
+       // Children have been processed, so substitute
+-      NodeBuilder builder(current.getKind());
++      NodeBuilder builder(nodeManager(), current.getKind());
+       if (current.getMetaKind() == kind::metakind::PARAMETERIZED)
+       {
+         builder << current.getOperator();
+@@ -1700,7 +1700,7 @@ Node ITECareSimplifier::substitute(TNode e,
+     return e;
+   }
+ 
+-  NodeBuilder builder(e.getKind());
++  NodeBuilder builder(e.getNodeManager(), e.getKind());
+   if (e.getMetaKind() == kind::metakind::PARAMETERIZED)
+   {
+     builder << e.getOperator();
+diff --git a/src/smt/expand_definitions.cpp b/src/smt/expand_definitions.cpp
+index 690f15e1b..d3e824915 100644
+--- a/src/smt/expand_definitions.cpp
++++ b/src/smt/expand_definitions.cpp
+@@ -107,7 +107,7 @@ Node ExpandDefs::expandDefinitions(TNode n,
+       if (node.getNumChildren() > 0)
+       {
+         // cout << "cons : " << node << std::endl;
+-        NodeBuilder nb(node.getKind());
++        NodeBuilder nb(nodeManager(), node.getKind());
+         if (node.getMetaKind() == metakind::PARAMETERIZED)
+         {
+           Trace("expand") << "op   : " << node.getOperator() << std::endl;
+diff --git a/src/theory/arith/arith_ite_utils.cpp b/src/theory/arith/arith_ite_utils.cpp
+index 22a5f445d..23d8214a3 100644
+--- a/src/theory/arith/arith_ite_utils.cpp
++++ b/src/theory/arith/arith_ite_utils.cpp
+@@ -38,7 +38,7 @@ namespace theory {
+ namespace arith {
+ 
+ Node ArithIteUtils::applyReduceVariablesInItes(Node n){
+-  NodeBuilder nb(n.getKind());
++  NodeBuilder nb(nodeManager(), n.getKind());
+   if(n.getMetaKind() == kind::metakind::PARAMETERIZED) {
+     nb << (n.getOperator());
+   }
+@@ -277,7 +277,7 @@ Node ArithIteUtils::reduceConstantIteByGCD(Node n){
+   }
+ 
+   if(n.getNumChildren() > 0){
+-    NodeBuilder nb(n.getKind());
++    NodeBuilder nb(nodeManager(), n.getKind());
+     if(n.getMetaKind() == kind::metakind::PARAMETERIZED) {
+       nb << (n.getOperator());
+     }
+diff --git a/src/theory/arith/arith_rewriter.cpp b/src/theory/arith/arith_rewriter.cpp
+index 18d9dc1ec..e0c24841f 100644
+--- a/src/theory/arith/arith_rewriter.cpp
++++ b/src/theory/arith/arith_rewriter.cpp
+@@ -1387,7 +1387,7 @@ Node ArithRewriter::expandPowConst(NodeManager* nm, const Node& t)
+         }
+         else
+         {
+-          NodeBuilder nb(Kind::MULT);
++          NodeBuilder nb(nm, Kind::MULT);
+           for (unsigned i = 0; i < num; ++i)
+           {
+             nb << base;
+diff --git a/src/theory/arith/arith_utilities.cpp b/src/theory/arith/arith_utilities.cpp
+index d3460da7e..c4e74f3c6 100644
+--- a/src/theory/arith/arith_utilities.cpp
++++ b/src/theory/arith/arith_utilities.cpp
+@@ -358,7 +358,7 @@ Node eliminateInt2Bv(TNode node)
+   {
+     return v[0];
+   }
+-  NodeBuilder result(Kind::BITVECTOR_CONCAT);
++  NodeBuilder result(NodeManager::currentNM(), Kind::BITVECTOR_CONCAT);
+   result.append(v.rbegin(), v.rend());
+   return Node(result);
+ }
+diff --git a/src/theory/arith/arith_utilities.h b/src/theory/arith/arith_utilities.h
+index 532f65653..524fd83fd 100644
+--- a/src/theory/arith/arith_utilities.h
++++ b/src/theory/arith/arith_utilities.h
+@@ -165,11 +165,12 @@ inline Kind negateKind(Kind k){
+ 
+ inline Node negateConjunctionAsClause(TNode conjunction){
+   Assert(conjunction.getKind() == Kind::AND);
+-  NodeBuilder orBuilder(Kind::OR);
++  NodeBuilder orBuilder(conjunction.getNodeManager(), Kind::OR);
+ 
+   for(TNode::iterator i = conjunction.begin(), end=conjunction.end(); i != end; ++i){
+     TNode child = *i;
+-    Node negatedChild = NodeBuilder(Kind::NOT) << (child);
++    Node negatedChild = NodeBuilder(conjunction.getNodeManager(), Kind::NOT)
++                        << (child);
+     orBuilder << negatedChild;
+   }
+   return orBuilder;
+diff --git a/src/theory/arith/linear/arith_static_learner.cpp b/src/theory/arith/linear/arith_static_learner.cpp
+index 30e6b7625..150c3bd13 100644
+--- a/src/theory/arith/linear/arith_static_learner.cpp
++++ b/src/theory/arith/linear/arith_static_learner.cpp
+@@ -142,6 +142,8 @@ void ArithStaticLearner::iteMinMax(TNode n, std::vector<TrustNode>& learned)
+   Assert(n[0].getKind() != Kind::EQUAL);
+   Assert(isRelationOperator(n[0].getKind()));
+ 
++  NodeManager* nm = n.getNodeManager();
++
+   TNode c = n[0];
+   Kind k = oldSimplifiedKind(c);
+   TNode t = n[1];
+@@ -169,8 +171,8 @@ void ArithStaticLearner::iteMinMax(TNode n, std::vector<TrustNode>& learned)
+       case Kind::LT:  // (ite (< x y) x y)
+       case Kind::LEQ:
+       {  // (ite (<= x y) x y)
+-        Node nLeqX = NodeBuilder(Kind::LEQ) << n << t;
+-        Node nLeqY = NodeBuilder(Kind::LEQ) << n << e;
++        Node nLeqX = NodeBuilder(nm, Kind::LEQ) << n << t;
++        Node nLeqY = NodeBuilder(nm, Kind::LEQ) << n << e;
+         Trace("arith::static") << n << "is a min =>" << nLeqX << nLeqY << endl;
+         addLearnedLemma(nLeqX, learned);
+         addLearnedLemma(nLeqY, learned);
+@@ -180,8 +182,8 @@ void ArithStaticLearner::iteMinMax(TNode n, std::vector<TrustNode>& learned)
+       case Kind::GT:  // (ite (> x y) x y)
+       case Kind::GEQ:
+       {  // (ite (>= x y) x y)
+-        Node nGeqX = NodeBuilder(Kind::GEQ) << n << t;
+-        Node nGeqY = NodeBuilder(Kind::GEQ) << n << e;
++        Node nGeqX = NodeBuilder(nm, Kind::GEQ) << n << t;
++        Node nGeqY = NodeBuilder(nm, Kind::GEQ) << n << e;
+         Trace("arith::static") << n << "is a max =>" << nGeqX << nGeqY << endl;
+         addLearnedLemma(nGeqX, learned);
+         addLearnedLemma(nGeqY, learned);
+diff --git a/src/theory/arith/linear/congruence_manager.cpp b/src/theory/arith/linear/congruence_manager.cpp
+index 719495402..1e6aaaff1 100644
+--- a/src/theory/arith/linear/congruence_manager.cpp
++++ b/src/theory/arith/linear/congruence_manager.cpp
+@@ -181,7 +181,7 @@ void ArithCongruenceManager::watchedVariableIsZero(ConstraintCP lb, ConstraintCP
+   TNode eq = d_watchedEqualities[s];
+   ConstraintCP eqC = d_constraintDatabase.getConstraint(
+       s, ConstraintType::Equality, lb->getValue());
+-  NodeBuilder reasonBuilder(Kind::AND);
++  NodeBuilder reasonBuilder(nodeManager(), Kind::AND);
+   auto pfLb = lb->externalExplainByAssertions(reasonBuilder);
+   auto pfUb = ub->externalExplainByAssertions(reasonBuilder);
+   Node reason = mkAndFromBuilder(reasonBuilder);
+@@ -214,7 +214,7 @@ void ArithCongruenceManager::watchedVariableIsZero(ConstraintCP eq){
+   //Explain for conflict is correct as these proofs are generated
+   //and stored eagerly
+   //These will be safe for propagation later as well
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(nodeManager(), Kind::AND);
+   // An open proof of eq from literals now in reason.
+   if (TraceIsOn("arith::cong"))
+   {
+@@ -242,7 +242,7 @@ void ArithCongruenceManager::watchedVariableCannotBeZero(ConstraintCP c){
+ 
+   //Explain for conflict is correct as these proofs are generated and stored eagerly
+   //These will be safe for propagation later as well
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(nodeManager(), Kind::AND);
+   // An open proof of eq from literals now in reason.
+   auto pf = c->externalExplainByAssertions(nb);
+   if (TraceIsOn("arith::cong::notzero"))
+@@ -633,7 +633,7 @@ void ArithCongruenceManager::equalsConstant(ConstraintCP c){
+   Node eq = xAsNode.eqNode(asRational);
+   d_keepAlive.push_back(eq);
+ 
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(nodeManager(), Kind::AND);
+   auto pf = c->externalExplainByAssertions(nb);
+   Node reason = mkAndFromBuilder(nb);
+   d_keepAlive.push_back(reason);
+@@ -652,13 +652,13 @@ void ArithCongruenceManager::equalsConstant(ConstraintCP lb, ConstraintCP ub){
+                           << ub << std::endl;
+ 
+   ArithVar x = lb->getVariable();
+-  NodeBuilder nb(Kind::AND);
++  NodeManager* nm = nodeManager();
++  NodeBuilder nb(nm, Kind::AND);
+   auto pfLb = lb->externalExplainByAssertions(nb);
+   auto pfUb = ub->externalExplainByAssertions(nb);
+   Node reason = mkAndFromBuilder(nb);
+ 
+   Node xAsNode = d_avariables.asNode(x);
+-  NodeManager* nm = nodeManager();
+   Node asRational = nm->mkConstRealOrInt(
+       xAsNode.getType(), lb->getValue().getNoninfinitesimalPart());
+ 
+diff --git a/src/theory/arith/linear/constraint.cpp b/src/theory/arith/linear/constraint.cpp
+index 283dc1147..8285372a3 100644
+--- a/src/theory/arith/linear/constraint.cpp
++++ b/src/theory/arith/linear/constraint.cpp
+@@ -515,7 +515,7 @@ bool Constraint::isInternalAssumption() const {
+ 
+ TrustNode Constraint::externalExplainByAssertions() const
+ {
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(NodeManager::currentNM(), Kind::AND);
+   auto pfFromAssumptions = externalExplain(nb, AssertionOrderSentinel);
+   Node exp = mkAndFromBuilder(nb);
+   if (d_database->isProofEnabled())
+@@ -1106,19 +1106,19 @@ TrustNode Constraint::split()
+   TNode lhs = eqNode[0];
+   TNode rhs = eqNode[1];
+ 
+-  Node leqNode = NodeBuilder(Kind::LEQ) << lhs << rhs;
+-  Node ltNode = NodeBuilder(Kind::LT) << lhs << rhs;
+-  Node gtNode = NodeBuilder(Kind::GT) << lhs << rhs;
+-  Node geqNode = NodeBuilder(Kind::GEQ) << lhs << rhs;
++  NodeManager* nm = NodeManager::currentNM();
++  Node leqNode = NodeBuilder(nm, Kind::LEQ) << lhs << rhs;
++  Node ltNode = NodeBuilder(nm, Kind::LT) << lhs << rhs;
++  Node gtNode = NodeBuilder(nm, Kind::GT) << lhs << rhs;
++  Node geqNode = NodeBuilder(nm, Kind::GEQ) << lhs << rhs;
+ 
+-  Node lemma = NodeBuilder(Kind::OR) << leqNode << geqNode;
++  Node lemma = NodeBuilder(nm, Kind::OR) << leqNode << geqNode;
+ 
+   TrustNode trustedLemma;
+   if (d_database->isProofEnabled())
+   {
+     TypeNode type = lhs.getType();
+     // Farkas proof that this works.
+-    auto nm = NodeManager::currentNM();
+     auto nLeqPf = d_database->d_pnm->mkAssume(leqNode.negate());
+     auto gtPf = d_database->d_pnm->mkNode(
+         ProofRule::MACRO_SR_PRED_TRANSFORM, {nLeqPf}, {gtNode});
+@@ -1549,7 +1549,7 @@ TrustNode Constraint::externalExplainForPropagation(TNode lit) const
+   Assert(hasProof());
+   Assert(!isAssumption());
+   Assert(!isInternalAssumption());
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(NodeManager::currentNM(), Kind::AND);
+   auto pfFromAssumptions = externalExplain(nb, d_assertionOrder);
+   Node n = mkAndFromBuilder(nb);
+   if (d_database->isProofEnabled())
+@@ -1582,7 +1582,7 @@ TrustNode Constraint::externalExplainConflict() const
+ {
+   Trace("pf::arith::explain") << this << std::endl;
+   Assert(inConflict());
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(NodeManager::currentNM(), Kind::AND);
+   auto pf1 = externalExplainByAssertions(nb);
+   auto not2 = getNegation()->getProofLiteral().negate();
+   auto pf2 = getNegation()->externalExplainByAssertions(nb);
+@@ -1679,7 +1679,7 @@ void Constraint::assertionFringe(ConstraintCPVec& o, const ConstraintCPVec& i){
+ }
+ 
+ Node Constraint::externalExplain(const ConstraintCPVec& v, AssertionOrder order){
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(NodeManager::currentNM(), Kind::AND);
+   ConstraintCPVec::const_iterator i, end;
+   for(i = v.begin(), end = v.end(); i != end; ++i){
+     ConstraintCP v_i = *i;
+@@ -1871,14 +1871,14 @@ std::shared_ptr<ProofNode> Constraint::externalExplain(
+ }
+ 
+ Node Constraint::externalExplainByAssertions(ConstraintCP a, ConstraintCP b){
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(NodeManager::currentNM(), Kind::AND);
+   a->externalExplainByAssertions(nb);
+   b->externalExplainByAssertions(nb);
+   return nb;
+ }
+ 
+ Node Constraint::externalExplainByAssertions(ConstraintCP a, ConstraintCP b, ConstraintCP c){
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(NodeManager::currentNM(), Kind::AND);
+   a->externalExplainByAssertions(nb);
+   b->externalExplainByAssertions(nb);
+   c->externalExplainByAssertions(nb);
+diff --git a/src/theory/arith/linear/dio_solver.cpp b/src/theory/arith/linear/dio_solver.cpp
+index d1f510242..f1cf0308f 100644
+--- a/src/theory/arith/linear/dio_solver.cpp
++++ b/src/theory/arith/linear/dio_solver.cpp
+@@ -187,7 +187,7 @@ Node DioSolver::proveIndex(TrailIndex i){
+   const Polynomial& proof = d_trail[i].d_proof;
+   Assert(!proof.isConstant());
+ 
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(nodeManager(), Kind::AND);
+   for(Polynomial::iterator iter = proof.begin(), end = proof.end(); iter!= end; ++iter){
+     Monomial m = (*iter);
+     Assert(!m.isConstant());
+diff --git a/src/theory/arith/linear/normal_form.h b/src/theory/arith/linear/normal_form.h
+index f972f644d..10cca5c79 100644
+--- a/src/theory/arith/linear/normal_form.h
++++ b/src/theory/arith/linear/normal_form.h
+@@ -436,7 +436,7 @@ public:
+ 
+ template <class GetNodeIterator>
+ inline Node makeNode(Kind k, GetNodeIterator start, GetNodeIterator end) {
+-  NodeBuilder nb(k);
++  NodeBuilder nb(NodeManager::currentNM(), k);
+ 
+   while(start != end) {
+     nb << (*start).getNode();
+diff --git a/src/theory/arith/linear/theory_arith_private.cpp b/src/theory/arith/linear/theory_arith_private.cpp
+index 98a5e1bf4..04de2797a 100644
+--- a/src/theory/arith/linear/theory_arith_private.cpp
++++ b/src/theory/arith/linear/theory_arith_private.cpp
+@@ -4457,7 +4457,7 @@ bool TheoryArithPrivate::tryToPropagate(RowIndex ridx, bool rowUp, ArithVar v, b
+ }
+ 
+ Node flattenImplication(Node imp){
+-  NodeBuilder nb(Kind::OR);
++  NodeBuilder nb(imp.getNodeManager(), Kind::OR);
+   std::unordered_set<Node> included;
+   Node left = imp[0];
+   Node right = imp[1];
+@@ -4559,7 +4559,7 @@ bool TheoryArithPrivate::rowImplicationCanBeApplied(RowIndex ridx, bool rowUp, C
+         // Add the explaination proofs.
+         for (const auto constraint : explain)
+         {
+-          NodeBuilder nb;
++          NodeBuilder nb(nodeManager());
+           conflictPfs.push_back(constraint->externalExplainByAssertions(nb));
+         }
+         // Collect the farkas coefficients, as nodes.
+@@ -5079,7 +5079,7 @@ void TheoryArithPrivate::entailmentCheckRowSum(std::pair<Node, DeltaRational>& t
+   Assert(Polynomial::isMember(tp));
+ 
+   tmp.second = DeltaRational(0);
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(nodeManager(), Kind::AND);
+ 
+   Polynomial p = Polynomial::parsePolynomial(tp);
+   for(Polynomial::iterator i = p.begin(), iend = p.end(); i != iend; ++i) {
+diff --git a/src/theory/arith/pp_rewrite_eq.cpp b/src/theory/arith/pp_rewrite_eq.cpp
+index 313b403a9..d3d312090 100644
+--- a/src/theory/arith/pp_rewrite_eq.cpp
++++ b/src/theory/arith/pp_rewrite_eq.cpp
+@@ -37,8 +37,8 @@ TrustNode PreprocessRewriteEq::ppRewriteEq(TNode atom)
+     return TrustNode::null();
+   }
+   Assert(atom[0].getType().isRealOrInt());
+-  Node leq = NodeBuilder(Kind::LEQ) << atom[0] << atom[1];
+-  Node geq = NodeBuilder(Kind::GEQ) << atom[0] << atom[1];
++  Node leq = NodeBuilder(nodeManager(), Kind::LEQ) << atom[0] << atom[1];
++  Node geq = NodeBuilder(nodeManager(), Kind::GEQ) << atom[0] << atom[1];
+   Node rewritten = rewrite(leq.andNode(geq));
+   Trace("arith::preprocess")
+       << "arith::preprocess() : returning " << rewritten << std::endl;
+diff --git a/src/theory/arith/proof_checker.cpp b/src/theory/arith/proof_checker.cpp
+index be8828627..1ba612941 100644
+--- a/src/theory/arith/proof_checker.cpp
++++ b/src/theory/arith/proof_checker.cpp
+@@ -129,8 +129,8 @@ Node ArithProofRuleChecker::checkInternal(ProofRule id,
+ 
+       // Whether a strict inequality is in the sum.
+       bool strict = false;
+-      NodeBuilder leftSum(Kind::ADD);
+-      NodeBuilder rightSum(Kind::ADD);
++      NodeBuilder leftSum(nm, Kind::ADD);
++      NodeBuilder rightSum(nm, Kind::ADD);
+       for (size_t i = 0; i < children.size(); ++i)
+       {
+         // Adjust strictness
+@@ -193,8 +193,8 @@ Node ArithProofRuleChecker::checkInternal(ProofRule id,
+ 
+       // Whether a strict inequality is in the sum.
+       bool strict = false;
+-      NodeBuilder leftSum(Kind::ADD);
+-      NodeBuilder rightSum(Kind::ADD);
++      NodeBuilder leftSum(nm, Kind::ADD);
++      NodeBuilder rightSum(nm, Kind::ADD);
+       for (size_t i = 0; i < children.size(); ++i)
+       {
+         Rational scalar = args[i].getConst<Rational>();
+diff --git a/src/theory/arith/rewriter/addition.cpp b/src/theory/arith/rewriter/addition.cpp
+index f40d96d4d..78c8020d5 100644
+--- a/src/theory/arith/rewriter/addition.cpp
++++ b/src/theory/arith/rewriter/addition.cpp
+@@ -122,7 +122,7 @@ Node collectSumWithBase(const Sum& sum,
+ {
+   if (sum.empty()) return mkConst(Rational(0));
+   // construct the sum as nodes.
+-  NodeBuilder nb(Kind::ADD);
++  NodeBuilder nb(NodeManager::currentNM(), Kind::ADD);
+   for (const auto& summand : sum)
+   {
+     Assert(!summand.second.isZero());
+@@ -193,7 +193,7 @@ Node collectSum(const Sum& sum)
+   if (sum.empty()) return mkConst(Rational(0));
+   Trace("arith-rewriter") << "Collecting sum " << sum << std::endl;
+   // construct the sum as nodes.
+-  NodeBuilder nb(Kind::ADD);
++  NodeBuilder nb(NodeManager::currentNM(), Kind::ADD);
+   for (const auto& s : sum)
+   {
+     nb << mkMultTerm(s.second, s.first);
+diff --git a/src/theory/arrays/theory_arrays.cpp b/src/theory/arrays/theory_arrays.cpp
+index b372600f2..31bce8dda 100644
+--- a/src/theory/arrays/theory_arrays.cpp
++++ b/src/theory/arrays/theory_arrays.cpp
+@@ -226,7 +226,7 @@ Node TheoryArrays::solveWrite(TNode term, bool solve1, bool solve2, bool ppCheck
+     // (index_0 != index_1 & index_0 != index_2 & ... & index_0 != index_n) -> read(store, index_0) = v_0
+     TNode write_i, write_j, index_i, index_j;
+     Node conc;
+-    NodeBuilder result(Kind::AND);
++    NodeBuilder result(nm, Kind::AND);
+     int i, j;
+     write_i = left;
+     for (i = leftWrites-1; i >= 0; --i) {
+@@ -236,7 +236,7 @@ Node TheoryArrays::solveWrite(TNode term, bool solve1, bool solve2, bool ppCheck
+       //         ... && index_i /= index_(i+1)] -> read(store, index_i) = v_i
+       write_j = left;
+       {
+-        NodeBuilder hyp(Kind::AND);
++        NodeBuilder hyp(nm, Kind::AND);
+         for (j = leftWrites - 1; j > i; --j) {
+           index_j = write_j[1];
+           if (!ppCheck || !ppDisequal(index_i, index_j)) {
+@@ -279,7 +279,7 @@ Node TheoryArrays::solveWrite(TNode term, bool solve1, bool solve2, bool ppCheck
+     // store(store(...),i,select(a,i)) = a && select(store(...),i)=v
+     Node l = left;
+     Node tmp;
+-    NodeBuilder nb(Kind::AND);
++    NodeBuilder nb(nm, Kind::AND);
+     while (right.getKind() == Kind::STORE)
+     {
+       tmp = nm->mkNode(Kind::SELECT, l, right[1]);
+@@ -1440,7 +1440,7 @@ Node TheoryArrays::mkAnd(std::vector<TNode>& conjunctions, bool invert, unsigned
+     }
+   }
+ 
+-  NodeBuilder conjunction(invert ? Kind::OR : Kind::AND);
++  NodeBuilder conjunction(nodeManager(), invert ? Kind::OR : Kind::AND);
+   std::set<TNode>::const_iterator it = all.begin();
+   std::set<TNode>::const_iterator it_end = all.end();
+   while (it != it_end) {
+diff --git a/src/theory/booleans/theory_bool_rewriter.cpp b/src/theory/booleans/theory_bool_rewriter.cpp
+index b93d988cd..410b3a073 100644
+--- a/src/theory/booleans/theory_bool_rewriter.cpp
++++ b/src/theory/booleans/theory_bool_rewriter.cpp
+@@ -345,7 +345,7 @@ RewriteResponse TheoryBoolRewriter::flattenNode(TNode n,
+     Assert(childList.size()
+            < static_cast<size_t>(expr::NodeValue::MAX_CHILDREN)
+                  * static_cast<size_t>(expr::NodeValue::MAX_CHILDREN));
+-    NodeBuilder nb(k);
++    NodeBuilder nb(nodeManager(), k);
+     ChildList::iterator cur = childList.begin(), next, en = childList.end();
+     while (cur != en)
+     {
+diff --git a/src/theory/bv/int_blaster.cpp b/src/theory/bv/int_blaster.cpp
+index 65d1db51c..27dafacdc 100644
+--- a/src/theory/bv/int_blaster.cpp
++++ b/src/theory/bv/int_blaster.cpp
+@@ -947,7 +947,7 @@ Node IntBlaster::reconstructNode(Node originalNode,
+   // first, we adjust the children of the node as needed.
+   // re-construct the term with the adjusted children.
+   Kind oldKind = originalNode.getKind();
+-  NodeBuilder builder(oldKind);
++  NodeBuilder builder(nodeManager(), oldKind);
+   if (originalNode.getMetaKind() == kind::metakind::PARAMETERIZED)
+   {
+     builder << originalNode.getOperator();
+diff --git a/src/theory/bv/theory_bv.cpp b/src/theory/bv/theory_bv.cpp
+index 082b1af21..bf7afbe20 100644
+--- a/src/theory/bv/theory_bv.cpp
++++ b/src/theory/bv/theory_bv.cpp
+@@ -440,7 +440,7 @@ Node TheoryBV::getValue(TNode node)
+     }
+     else if (it->second.isNull())
+     {
+-      NodeBuilder nb(cur.getKind());
++      NodeBuilder nb(nodeManager(), cur.getKind());
+       if (cur.getMetaKind() == kind::metakind::PARAMETERIZED)
+       {
+         nb << cur.getOperator();
+diff --git a/src/theory/bv/theory_bv_rewrite_rules.h b/src/theory/bv/theory_bv_rewrite_rules.h
+index 8060dba28..d9f14282c 100644
+--- a/src/theory/bv/theory_bv_rewrite_rules.h
++++ b/src/theory/bv/theory_bv_rewrite_rules.h
+@@ -651,7 +651,7 @@ struct ApplyRuleToChildren {
+     if (node.getKind() != kind) {
+       return RewriteRule<rule>::template run<true>(node);
+     }
+-    NodeBuilder result(kind);
++    NodeBuilder result(node.getNodeManager(), kind);
+     for (unsigned i = 0, end = node.getNumChildren(); i < end; ++ i) {
+       result << RewriteRule<rule>::template run<true>(node[i]);
+     }
+diff --git a/src/theory/bv/theory_bv_rewrite_rules_core.h b/src/theory/bv/theory_bv_rewrite_rules_core.h
+index aa640fe8d..60c66e858 100644
+--- a/src/theory/bv/theory_bv_rewrite_rules_core.h
++++ b/src/theory/bv/theory_bv_rewrite_rules_core.h
+@@ -35,7 +35,7 @@ bool RewriteRule<ConcatFlatten>::applies(TNode node) {
+ template<> inline
+ Node RewriteRule<ConcatFlatten>::apply(TNode node) {
+   Trace("bv-rewrite") << "RewriteRule<ConcatFlatten>(" << node << ")" << std::endl;
+-  NodeBuilder result(Kind::BITVECTOR_CONCAT);
++  NodeBuilder result(node.getNodeManager(), Kind::BITVECTOR_CONCAT);
+   std::vector<Node> processing_stack;
+   processing_stack.push_back(node);
+   while (!processing_stack.empty()) {
+diff --git a/src/theory/bv/theory_bv_rewrite_rules_normalization.h b/src/theory/bv/theory_bv_rewrite_rules_normalization.h
+index bd63f0bb0..0a03ea5d2 100644
+--- a/src/theory/bv/theory_bv_rewrite_rules_normalization.h
++++ b/src/theory/bv/theory_bv_rewrite_rules_normalization.h
+@@ -285,7 +285,7 @@ static inline void updateCoefMap(TNode current, unsigned size,
+         }
+       }
+       else if (current[current.getNumChildren()-1].isConst()) {
+-        NodeBuilder nb(Kind::BITVECTOR_MULT);
++        NodeBuilder nb(current.getNodeManager(), Kind::BITVECTOR_MULT);
+         TNode::iterator child_it = current.begin();
+         for(; (child_it+1) != current.end(); ++child_it) {
+           Assert(!(*child_it).isConst());
+@@ -357,7 +357,7 @@ static inline void addToChildren(TNode term,
+   }
+   else if (term.getKind() == Kind::BITVECTOR_MULT)
+   {
+-    NodeBuilder nb(Kind::BITVECTOR_MULT);
++    NodeBuilder nb(nm, Kind::BITVECTOR_MULT);
+     TNode::iterator child_it = term.begin();
+     for (; child_it != term.end(); ++child_it)
+     {
+@@ -895,7 +895,7 @@ bool RewriteRule<BitwiseEq>::applies(TNode node) {
+ static inline Node mkNodeKind(Kind k, TNode node, TNode c) {
+   unsigned i = 0;
+   unsigned nc = node.getNumChildren();
+-  NodeBuilder nb(k);
++  NodeBuilder nb(node.getNodeManager(), k);
+   for(; i < nc; ++i) {
+     nb << node[i].eqNode(c);
+   }
+@@ -991,7 +991,7 @@ template<> inline
+ Node RewriteRule<NegMult>::apply(TNode node) {
+   Trace("bv-rewrite") << "RewriteRule<NegMult>(" << node << ")" << std::endl;
+   TNode mult = node[0];
+-  NodeBuilder nb(Kind::BITVECTOR_MULT);
++  NodeBuilder nb(node.getNodeManager(), Kind::BITVECTOR_MULT);
+   BitVector bv(utils::getSize(node), (unsigned)1);
+   TNode::iterator child_it = mult.begin();
+   for(; (child_it+1) != mult.end(); ++child_it) {
+@@ -1492,9 +1492,9 @@ inline Node RewriteRule<NormalizeEqAddNeg>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<NormalizeEqAddNeg>(" << node << ")"
+                       << std::endl;
+ 
+-  NodeBuilder nb_lhs(Kind::BITVECTOR_ADD);
+-  NodeBuilder nb_rhs(Kind::BITVECTOR_ADD);
+   NodeManager *nm = NodeManager::currentNM();
++  NodeBuilder nb_lhs(nm, Kind::BITVECTOR_ADD);
++  NodeBuilder nb_rhs(nm, Kind::BITVECTOR_ADD);
+ 
+   if (node[0].getKind() == Kind::BITVECTOR_ADD)
+   {
+diff --git a/src/theory/bv/theory_bv_rewrite_rules_operator_elimination.h b/src/theory/bv/theory_bv_rewrite_rules_operator_elimination.h
+index ec511b95a..f8233f901 100644
+--- a/src/theory/bv/theory_bv_rewrite_rules_operator_elimination.h
++++ b/src/theory/bv/theory_bv_rewrite_rules_operator_elimination.h
+@@ -225,7 +225,7 @@ inline Node RewriteRule<RepeatEliminate>::apply(TNode node)
+   if(amount == 1) {
+     return a; 
+   }
+-  NodeBuilder result(Kind::BITVECTOR_CONCAT);
++  NodeBuilder result(node.getNodeManager(), Kind::BITVECTOR_CONCAT);
+   for(unsigned i = 0; i < amount; ++i) {
+     result << node[0]; 
+   }
+diff --git a/src/theory/bv/theory_bv_rewrite_rules_simplification.h b/src/theory/bv/theory_bv_rewrite_rules_simplification.h
+index 689f22508..231463b4e 100644
+--- a/src/theory/bv/theory_bv_rewrite_rules_simplification.h
++++ b/src/theory/bv/theory_bv_rewrite_rules_simplification.h
+@@ -548,11 +548,11 @@ inline Node RewriteRule<AndOrXorConcatPullUp>::apply(TNode node)
+   Kind kind = node.getKind();
+   TNode concat;
+   Node x, y, z, c;
+-  NodeBuilder xb(kind);
+-  NodeBuilder yb(Kind::BITVECTOR_CONCAT);
+-  NodeBuilder zb(Kind::BITVECTOR_CONCAT);
+-  NodeBuilder res(Kind::BITVECTOR_CONCAT);
+   NodeManager* nm = NodeManager::currentNM();
++  NodeBuilder xb(nm, kind);
++  NodeBuilder yb(nm, Kind::BITVECTOR_CONCAT);
++  NodeBuilder zb(nm, Kind::BITVECTOR_CONCAT);
++  NodeBuilder res(nm, Kind::BITVECTOR_CONCAT);
+ 
+   for (const TNode& child : node)
+   {
+@@ -1719,13 +1719,13 @@ Node RewriteRule<MergeSignExtend>::apply(TNode node) {
+                            .d_zeroExtendAmount;
+     if (amount2 == 0)
+     {
+-      NodeBuilder nb(Kind::BITVECTOR_SIGN_EXTEND);
++      NodeBuilder nb(nm, Kind::BITVECTOR_SIGN_EXTEND);
+       Node op = nm->mkConst<BitVectorSignExtend>(BitVectorSignExtend(amount1));
+       nb << op << node[0][0];
+       Node res = nb;
+       return res;
+     }
+-    NodeBuilder nb(Kind::BITVECTOR_ZERO_EXTEND);
++    NodeBuilder nb(nm, Kind::BITVECTOR_ZERO_EXTEND);
+     Node op = nm->mkConst<BitVectorZeroExtend>(
+         BitVectorZeroExtend(amount1 + amount2));
+     nb << op << node[0][0];
+@@ -2303,7 +2303,7 @@ Node RewriteRule<MultSltMult>::apply(TNode node)
+   Node zero_t = utils::mkZero(utils::getSize(t));
+   Node zero_a = utils::mkZero(utils::getSize(a));
+ 
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(nm, Kind::AND);
+   Kind k = is_sext ? Kind::BITVECTOR_SLT : Kind::BITVECTOR_ULT;
+   nb << t.eqNode(zero_t).notNode();
+   nb << a.eqNode(zero_a).notNode();
+diff --git a/src/theory/bv/theory_bv_utils.cpp b/src/theory/bv/theory_bv_utils.cpp
+index 3025a8c0d..815b3e3ea 100644
+--- a/src/theory/bv/theory_bv_utils.cpp
++++ b/src/theory/bv/theory_bv_utils.cpp
+@@ -382,7 +382,7 @@ Node mkConcat(TNode node, unsigned repeat)
+   {
+     return node;
+   }
+-  NodeBuilder result(Kind::BITVECTOR_CONCAT);
++  NodeBuilder result(node.getNodeManager(), Kind::BITVECTOR_CONCAT);
+   for (unsigned i = 0; i < repeat; ++i)
+   {
+     result << node;
+diff --git a/src/theory/bv/theory_bv_utils.h b/src/theory/bv/theory_bv_utils.h
+index 8d035cfb9..92c758aca 100644
+--- a/src/theory/bv/theory_bv_utils.h
++++ b/src/theory/bv/theory_bv_utils.h
+@@ -141,7 +141,7 @@ Node mkAnd(const std::vector<NodeTemplate<ref_count>>& conjunctions)
+   /* All the same, or just one  */
+   if (all.size() == 1) { return conjunctions[0]; }
+ 
+-  NodeBuilder conjunction(Kind::AND);
++  NodeBuilder conjunction(NodeManager::currentNM(), Kind::AND);
+   for (TNode n : all) { conjunction << n; }
+   return conjunction;
+ }
+@@ -160,7 +160,7 @@ Node mkOr(const std::vector<NodeTemplate<ref_count>>& nodes)
+   /* All the same, or just one  */
+   if (all.size() == 1) { return nodes[0]; }
+ 
+-  NodeBuilder disjunction(Kind::OR);
++  NodeBuilder disjunction(NodeManager::currentNM(), Kind::OR);
+   for (TNode n : all) { disjunction << n; }
+   return disjunction;
+ }
+diff --git a/src/theory/datatypes/datatypes_rewriter.cpp b/src/theory/datatypes/datatypes_rewriter.cpp
+index 7c1b3ba81..d506b6377 100644
+--- a/src/theory/datatypes/datatypes_rewriter.cpp
++++ b/src/theory/datatypes/datatypes_rewriter.cpp
+@@ -1085,7 +1085,7 @@ Node DatatypesRewriter::expandUpdater(const Node& n)
+   size_t updateIndex = utils::indexOf(op);
+   size_t cindex = utils::cindexOf(op);
+   const DTypeConstructor& dc = dt[cindex];
+-  NodeBuilder b(Kind::APPLY_CONSTRUCTOR);
++  NodeBuilder b(nm, Kind::APPLY_CONSTRUCTOR);
+   if (tn.isParametricDatatype())
+   {
+     b << dc.getInstantiatedConstructor(n[0].getType());
+diff --git a/src/theory/datatypes/theory_datatypes.cpp b/src/theory/datatypes/theory_datatypes.cpp
+index 73aa21a61..57806821e 100644
+--- a/src/theory/datatypes/theory_datatypes.cpp
++++ b/src/theory/datatypes/theory_datatypes.cpp
+@@ -761,7 +761,7 @@ void TheoryDatatypes::addTester(
+           Assert(testerIndex != -1);
+           //we must explain why each term in the set of testers for this equivalence class is equal
+           std::vector< Node > eq_terms;
+-          NodeBuilder nb(Kind::AND);
++          NodeBuilder nb(NodeManager::currentNM(), Kind::AND);
+           for (unsigned i = 0; i < n_lbl; i++)
+           {
+             Node ti = d_labels_data[n][i];
+@@ -1697,7 +1697,7 @@ void TheoryDatatypes::checkSplit()
+         Trace("dt-split") << "*************Split for possible constructor "
+                           << dt[consIndex] << " for " << n << endl;
+         test = rewrite(test);
+-        NodeBuilder nb(Kind::OR);
++        NodeBuilder nb(NodeManager::currentNM(), Kind::OR);
+         nb << test << test.notNode();
+         Node lemma = nb;
+         d_im.lemma(lemma, InferenceId::DATATYPES_BINARY_SPLIT);
+diff --git a/src/theory/datatypes/type_enumerator.cpp b/src/theory/datatypes/type_enumerator.cpp
+index a53943bcf..e43ff62a0 100644
+--- a/src/theory/datatypes/type_enumerator.cpp
++++ b/src/theory/datatypes/type_enumerator.cpp
+@@ -140,7 +140,7 @@ Node DatatypesEnumerator::getTermEnum( TypeNode tn, unsigned i ){
+        }
+      }
+      Trace("dt-enum-debug") << "Get constructor..." << std::endl;
+-     NodeBuilder b(Kind::APPLY_CONSTRUCTOR);
++     NodeBuilder b(NodeManager::currentNM(), Kind::APPLY_CONSTRUCTOR);
+      if (d_datatype.isParametric())
+      {
+        b << ctor.getInstantiatedConstructor(d_type);
+diff --git a/src/theory/fp/fp_word_blaster.cpp b/src/theory/fp/fp_word_blaster.cpp
+index 065a9d5ae..2559cdb7a 100644
+--- a/src/theory/fp/fp_word_blaster.cpp
++++ b/src/theory/fp/fp_word_blaster.cpp
+@@ -634,7 +634,7 @@ symbolicBitVector<false> symbolicBitVector<isSigned>::toUnsigned(void) const
+ template <>
+ symbolicBitVector<true> symbolicBitVector<true>::extend(bwt extension) const
+ {
+-  NodeBuilder construct(Kind::BITVECTOR_SIGN_EXTEND);
++  NodeBuilder construct(NodeManager::currentNM(), Kind::BITVECTOR_SIGN_EXTEND);
+   construct << NodeManager::currentNM()->mkConst<BitVectorSignExtend>(
+       BitVectorSignExtend(extension))
+             << *this;
+@@ -645,7 +645,7 @@ symbolicBitVector<true> symbolicBitVector<true>::extend(bwt extension) const
+ template <>
+ symbolicBitVector<false> symbolicBitVector<false>::extend(bwt extension) const
+ {
+-  NodeBuilder construct(Kind::BITVECTOR_ZERO_EXTEND);
++  NodeBuilder construct(NodeManager::currentNM(), Kind::BITVECTOR_ZERO_EXTEND);
+   construct << NodeManager::currentNM()->mkConst<BitVectorZeroExtend>(
+       BitVectorZeroExtend(extension))
+             << *this;
+@@ -659,7 +659,7 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::contract(
+ {
+   Assert(this->getWidth() > reduction);
+ 
+-  NodeBuilder construct(Kind::BITVECTOR_EXTRACT);
++  NodeBuilder construct(NodeManager::currentNM(), Kind::BITVECTOR_EXTRACT);
+   construct << NodeManager::currentNM()->mkConst<BitVectorExtract>(
+       BitVectorExtract((this->getWidth() - 1) - reduction, 0))
+             << *this;
+@@ -710,7 +710,7 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::extract(
+ {
+   Assert(upper >= lower);
+ 
+-  NodeBuilder construct(Kind::BITVECTOR_EXTRACT);
++  NodeBuilder construct(NodeManager::currentNM(), Kind::BITVECTOR_EXTRACT);
+   construct << NodeManager::currentNM()->mkConst<BitVectorExtract>(
+       BitVectorExtract(upper, lower))
+             << *this;
+diff --git a/src/theory/fp/theory_fp.cpp b/src/theory/fp/theory_fp.cpp
+index cb88abb03..6a1eb4d8a 100644
+--- a/src/theory/fp/theory_fp.cpp
++++ b/src/theory/fp/theory_fp.cpp
+@@ -789,7 +789,7 @@ Node TheoryFp::getCandidateModelValue(TNode node)
+     }
+     else if (!vit->second)
+     {
+-      NodeBuilder nb(kind);
++      NodeBuilder nb(nodeManager(), kind);
+       if (cur.getMetaKind() == kind::metakind::PARAMETERIZED)
+       {
+         nb << cur.getOperator();
+diff --git a/src/theory/fp/theory_fp_rewriter.cpp b/src/theory/fp/theory_fp_rewriter.cpp
+index 903f5e9ec..b229f9a5d 100644
+--- a/src/theory/fp/theory_fp_rewriter.cpp
++++ b/src/theory/fp/theory_fp_rewriter.cpp
+@@ -129,7 +129,7 @@ RewriteResponse breakChain(NodeManager* nm, TNode node, bool isPreRewrite)
+   size_t children = node.getNumChildren();
+   if (children > 2)
+   {
+-    NodeBuilder conjunction(Kind::AND);
++    NodeBuilder conjunction(nm, Kind::AND);
+ 
+     for (size_t i = 0; i < children - 1; ++i)
+     {
+diff --git a/src/theory/quantifiers/bv_inverter.cpp b/src/theory/quantifiers/bv_inverter.cpp
+index 0d66c294d..560e6e6d2 100644
+--- a/src/theory/quantifiers/bv_inverter.cpp
++++ b/src/theory/quantifiers/bv_inverter.cpp
+@@ -213,7 +213,7 @@ static Node dropChild(Node n, unsigned index)
+   if (nchildren < 2) return Node::null();
+ 
+   Kind k = n.getKind();
+-  NodeBuilder nb(k);
++  NodeBuilder nb(n.getNodeManager(), k);
+   for (unsigned i = 0; i < nchildren; ++i)
+   {
+     if (i == index) continue;
+@@ -363,7 +363,7 @@ Node BvInverter::solveBvLit(Node sv,
+         unsigned upper, lower;
+         upper = bv::utils::getSize(t) - 1;
+         lower = 0;
+-        NodeBuilder nb(Kind::BITVECTOR_CONCAT);
++        NodeBuilder nb(NodeManager::currentNM(), Kind::BITVECTOR_CONCAT);
+         for (unsigned i = 0; i < nchildren; i++)
+         {
+           if (i < index)
+diff --git a/src/theory/quantifiers/bv_inverter_utils.cpp b/src/theory/quantifiers/bv_inverter_utils.cpp
+index c13f791ea..c060ed00d 100644
+--- a/src/theory/quantifiers/bv_inverter_utils.cpp
++++ b/src/theory/quantifiers/bv_inverter_utils.cpp
+@@ -1223,10 +1223,8 @@ namespace {
+ Node defaultShiftIC(Kind litk, Kind shk, Node s, Node t)
+ {
+   unsigned w;
+-  NodeBuilder nb(Kind::OR);
+-  NodeManager* nm;
+-
+-  nm = NodeManager::currentNM();
++  NodeManager* nm = s.getNodeManager();
++  NodeBuilder nb(nm, Kind::OR);
+ 
+   w = bv::utils::getSize(s);
+   Assert(w == bv::utils::getSize(t));
+@@ -2064,7 +2062,8 @@ Node getICBvConcat(bool pol, Kind litk, unsigned idx, Node x, Node sv_t, Node t)
+   unsigned nchildren = sv_t.getNumChildren();
+   unsigned w1 = 0, w2 = 0;
+   unsigned w = bv::utils::getSize(t), wx = bv::utils::getSize(x);
+-  NodeBuilder nbs1(Kind::BITVECTOR_CONCAT), nbs2(Kind::BITVECTOR_CONCAT);
++  NodeBuilder nbs1(nm, Kind::BITVECTOR_CONCAT),
++      nbs2(nm, Kind::BITVECTOR_CONCAT);
+   Node s1, s2;
+   Node t1, t2, tx;
+   Node scl, scr;
+diff --git a/src/theory/quantifiers/cegqi/ceg_bv_instantiator_utils.cpp b/src/theory/quantifiers/cegqi/ceg_bv_instantiator_utils.cpp
+index 2fc8b934f..2fd0c5957 100644
+--- a/src/theory/quantifiers/cegqi/ceg_bv_instantiator_utils.cpp
++++ b/src/theory/quantifiers/cegqi/ceg_bv_instantiator_utils.cpp
+@@ -68,11 +68,10 @@ Node BvInstantiatorUtil::normalizePvMult(
+ {
+   bool neg, neg_coeff = false;
+   bool found_pv = false;
+-  NodeManager* nm;
+-  NodeBuilder nb(Kind::BITVECTOR_MULT);
++  NodeManager* nm = nodeManager();
++  NodeBuilder nb(nm, Kind::BITVECTOR_MULT);
+   BvLinearAttribute is_linear;
+ 
+-  nm = nodeManager();
+   for (TNode nc : children)
+   {
+     if (!contains_pv[nc])
+@@ -164,13 +163,12 @@ Node BvInstantiatorUtil::normalizePvPlus(
+     const std::vector<Node>& children,
+     std::unordered_map<Node, bool>& contains_pv) const
+ {
+-  NodeManager* nm;
+-  NodeBuilder nb_c(Kind::BITVECTOR_ADD);
+-  NodeBuilder nb_l(Kind::BITVECTOR_ADD);
++  NodeManager* nm = nodeManager();
++  NodeBuilder nb_c(nm, Kind::BITVECTOR_ADD);
++  NodeBuilder nb_l(nm, Kind::BITVECTOR_ADD);
+   BvLinearAttribute is_linear;
+   bool neg;
+ 
+-  nm = nodeManager();
+   for (TNode nc : children)
+   {
+     if (!contains_pv[nc])
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index 2fb812d8d..4595a9786 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -1985,7 +1985,7 @@ Node QuantifiersRewriter::computeMiniscoping(Node q,
+       BoundVarManager* bvm = nm->getBoundVarManager();
+       // Break apart the quantifed formula
+       // forall x. P1 ^ ... ^ Pn ---> forall x. P1 ^ ... ^ forall x. Pn
+-      NodeBuilder t(Kind::AND);
++      NodeBuilder t(nm, Kind::AND);
+       std::vector<Node> argsc;
+       for (size_t i = 0, nchild = body.getNumChildren(); i < nchild; i++)
+       {
+diff --git a/src/theory/quantifiers/skolemize.cpp b/src/theory/quantifiers/skolemize.cpp
+index 994c0794f..661c14a70 100644
+--- a/src/theory/quantifiers/skolemize.cpp
++++ b/src/theory/quantifiers/skolemize.cpp
+@@ -92,7 +92,7 @@ TrustNode Skolemize::process(Node q)
+     // otherwise, we use the more general skolemization with inductive
+     // strengthening, which does not support proofs
+     Node body = getSkolemizedBodyInduction(q);
+-    NodeBuilder nb(Kind::OR);
++    NodeBuilder nb(nodeManager(), Kind::OR);
+     nb << q << body.notNode();
+     lem = nb;
+   }
+diff --git a/src/theory/rewriter.cpp b/src/theory/rewriter.cpp
+index d18a525a1..78fb9b7ad 100644
+--- a/src/theory/rewriter.cpp
++++ b/src/theory/rewriter.cpp
+@@ -56,7 +56,8 @@ struct RewriteStackElement {
+         d_original(node),
+         d_theoryId(theoryId),
+         d_originalTheoryId(theoryId),
+-        d_nextChild(0)
++        d_nextChild(0),
++        d_builder(NodeManager::currentNM())
+   {
+   }
+ 
+diff --git a/src/theory/strings/sequences_rewriter.cpp b/src/theory/strings/sequences_rewriter.cpp
+index b57f0e59d..9ca47b405 100644
+--- a/src/theory/strings/sequences_rewriter.cpp
++++ b/src/theory/strings/sequences_rewriter.cpp
+@@ -1645,7 +1645,7 @@ Node SequencesRewriter::rewriteMembership(TNode node)
+         Node one = nm->mkConstInt(Rational(1));
+         if (flr == one)
+         {
+-          NodeBuilder nb(Kind::AND);
++          NodeBuilder nb(nodeManager(), Kind::AND);
+           for (const Node& xc : x)
+           {
+             nb << nm->mkNode(Kind::STRING_IN_REGEXP, xc, r);
+@@ -2395,7 +2395,7 @@ Node SequencesRewriter::rewriteContains(Node node)
+       {
+         std::vector<Node> vec = Word::getChars(node[0]);
+         Node emp = Word::mkEmptyWord(t.getType());
+-        NodeBuilder nb(Kind::OR);
++        NodeBuilder nb(nodeManager(), Kind::OR);
+         nb << emp.eqNode(t);
+         for (const Node& c : vec)
+         {
+@@ -2441,7 +2441,7 @@ Node SequencesRewriter::rewriteContains(Node node)
+       {
+         std::vector<Node> nc1;
+         utils::getConcat(node[0], nc1);
+-        NodeBuilder nb(Kind::OR);
++        NodeBuilder nb(nodeManager(), Kind::OR);
+         for (const Node& ncc : nc1)
+         {
+           nb << nm->mkNode(Kind::STRING_CONTAINS, ncc, node[1]);
+@@ -2530,7 +2530,7 @@ Node SequencesRewriter::rewriteContains(Node node)
+         if (nc2.size() > 1)
+         {
+           Node emp = Word::mkEmptyWord(stype);
+-          NodeBuilder nb2(Kind::AND);
++          NodeBuilder nb2(nodeManager(), Kind::AND);
+           for (const Node& n2 : nc2)
+           {
+             if (n2 == n)
+@@ -3843,7 +3843,7 @@ Node SequencesRewriter::canonicalStrForSymbolicLength(Node len,
+   else if (len.getKind() == Kind::ADD)
+   {
+     // x + y -> norm(x) + norm(y)
+-    NodeBuilder concatBuilder(Kind::STRING_CONCAT);
++    NodeBuilder concatBuilder(nodeManager(), Kind::STRING_CONCAT);
+     for (const auto& n : len)
+     {
+       Node sn = canonicalStrForSymbolicLength(n, stype);
+@@ -3872,7 +3872,7 @@ Node SequencesRewriter::canonicalStrForSymbolicLength(Node len,
+     }
+     std::vector<Node> nRepChildren;
+     utils::getConcat(nRep, nRepChildren);
+-    NodeBuilder concatBuilder(Kind::STRING_CONCAT);
++    NodeBuilder concatBuilder(nodeManager(), Kind::STRING_CONCAT);
+     for (size_t i = 0, reps = intReps.getUnsignedInt(); i < reps; i++)
+     {
+       concatBuilder.append(nRepChildren);
+diff --git a/src/theory/strings/strings_entail.cpp b/src/theory/strings/strings_entail.cpp
+index 437399f8a..b4827993a 100644
+--- a/src/theory/strings/strings_entail.cpp
++++ b/src/theory/strings/strings_entail.cpp
+@@ -858,7 +858,7 @@ Node StringsEntail::getMultisetApproximation(Node a)
+   }
+   else if (a.getKind() == Kind::STRING_CONCAT)
+   {
+-    NodeBuilder nb(Kind::STRING_CONCAT);
++    NodeBuilder nb(nm, Kind::STRING_CONCAT);
+     for (const Node& ac : a)
+     {
+       nb << getMultisetApproximation(ac);
+@@ -989,7 +989,7 @@ Node StringsEntail::inferEqsFromContains(Node x, Node y)
+     cs.push_back(yiLen[0]);
+   }
+ 
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(nm, Kind::AND);
+   // (= x (str.++ y1' ... ym'))
+   if (!cs.empty())
+   {
+diff --git a/src/theory/strings/strings_rewriter.cpp b/src/theory/strings/strings_rewriter.cpp
+index 53dc1d6a7..5e9a78f94 100644
+--- a/src/theory/strings/strings_rewriter.cpp
++++ b/src/theory/strings/strings_rewriter.cpp
+@@ -188,7 +188,7 @@ Node StringsRewriter::rewriteStrConvert(Node node)
+   }
+   else if (node[0].getKind() == Kind::STRING_CONCAT)
+   {
+-    NodeBuilder concatBuilder(Kind::STRING_CONCAT);
++    NodeBuilder concatBuilder(nm, Kind::STRING_CONCAT);
+     for (const Node& nc : node[0])
+     {
+       concatBuilder << nm->mkNode(nk, nc);
+diff --git a/src/theory/subs_minimize.cpp b/src/theory/subs_minimize.cpp
+index eebae8be3..5b04f48b1 100644
+--- a/src/theory/subs_minimize.cpp
++++ b/src/theory/subs_minimize.cpp
+@@ -225,7 +225,7 @@ bool SubstitutionMinimize::findInternal(Node n,
+       if (cur.getNumChildren() > 0)
+       {
+         std::vector<Node> children;
+-        NodeBuilder nb(cur.getKind());
++        NodeBuilder nb(nodeManager(), cur.getKind());
+         if (cur.getMetaKind() == kind::metakind::PARAMETERIZED)
+         {
+           if (cur.getKind() == Kind::APPLY_UF)
+diff --git a/src/theory/substitutions.cpp b/src/theory/substitutions.cpp
+index cf8a46067..6ced003de 100644
+--- a/src/theory/substitutions.cpp
++++ b/src/theory/substitutions.cpp
+@@ -122,7 +122,7 @@ Node SubstitutionMap::internalSubstitute(TNode t,
+     if (stackHead.d_children_added)
+     {
+       // Children have been processed, so substitute
+-      NodeBuilder builder(current.getKind());
++      NodeBuilder builder(current.getNodeManager(), current.getKind());
+       if (current.getMetaKind() == kind::metakind::PARAMETERIZED)
+       {
+         builder << Node(cache[current.getOperator()]);
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index 3c48307aa..ce42c6cd5 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -1936,7 +1936,7 @@ TrustNode TheoryEngine::getExplanation(
+   }
+   else
+   {
+-    NodeBuilder conjunction(Kind::AND);
++    NodeBuilder conjunction(nodeManager(), Kind::AND);
+     std::set<TNode>::const_iterator it = exp.begin();
+     std::set<TNode>::const_iterator it_end = exp.end();
+     while (it != it_end)
+diff --git a/src/theory/uf/equality_engine.cpp b/src/theory/uf/equality_engine.cpp
+index 2c92bc31e..0c96efe5b 100644
+--- a/src/theory/uf/equality_engine.cpp
++++ b/src/theory/uf/equality_engine.cpp
+@@ -1853,7 +1853,7 @@ void EqualityEngine::addTriggerEqualityInternal(TNode t1, TNode t2, TNode trigge
+ 
+ Node EqualityEngine::evaluateTerm(TNode node) {
+   Trace("equality::evaluation") << d_name << "::eq::evaluateTerm(" << node << ")" << std::endl;
+-  NodeBuilder builder;
++  NodeBuilder builder(nodeManager());
+   builder << node.getKind();
+   if (node.getMetaKind() == kind::metakind::PARAMETERIZED) {
+     builder << node.getOperator();
+diff --git a/src/theory/uf/symmetry_breaker.cpp b/src/theory/uf/symmetry_breaker.cpp
+index 852928ce1..73c09f53a 100644
+--- a/src/theory/uf/symmetry_breaker.cpp
++++ b/src/theory/uf/symmetry_breaker.cpp
+@@ -54,10 +54,9 @@ namespace uf {
+ 
+ using namespace cvc5::context;
+ 
+-SymmetryBreaker::Template::Template() :
+-  d_template(),
+-  d_sets(),
+-  d_reps() {
++SymmetryBreaker::Template::Template()
++    : d_template(), d_assertions(NodeManager::currentNM()), d_sets(), d_reps()
++{
+ }
+ 
+ TNode SymmetryBreaker::Template::find(TNode n) {
+@@ -574,8 +573,8 @@ void SymmetryBreaker::apply(std::vector<Node>& newClauses) {
+           Trace("ufsymm") << "UFSYMM p == " << p << endl;
+           if(i != p.end() || p.size() != cts.size()) {
+             Trace("ufsymm") << "UFSYMM cts != p" << endl;
+-            NodeBuilder disj(Kind::OR);
+             NodeManager* nm = nodeManager();
++            NodeBuilder disj(nm, Kind::OR);
+             for (const Node& nn : cts)
+             {
+               if (t != nn)
+diff --git a/test/unit/node/node_black.cpp b/test/unit/node/node_black.cpp
+index 85f2401a7..ac9cb9c91 100644
+--- a/test/unit/node/node_black.cpp
++++ b/test/unit/node/node_black.cpp
+@@ -78,7 +78,7 @@ class TestNodeBlackNode : public TestNode
+ 
+   void testNaryExpForSize(Kind k, uint32_t n)
+   {
+-    NodeBuilder nbz(k);
++    NodeBuilder nbz(d_nodeManager, k);
+     Node trueNode = d_nodeManager->mkConst(true);
+     for (uint32_t i = 0; i < n; ++i)
+     {
+@@ -468,7 +468,7 @@ TEST_F(TestNodeBlackNode, getNumChildren)
+ 
+ TEST_F(TestNodeBlackNode, iterator)
+ {
+-  NodeBuilder b;
++  NodeBuilder b(d_nodeManager);
+   Node x = d_skolemManager->mkDummySkolem("x", d_nodeManager->booleanType());
+   Node y = d_skolemManager->mkDummySkolem("y", d_nodeManager->booleanType());
+   Node z = d_skolemManager->mkDummySkolem("z", d_nodeManager->booleanType());
+@@ -494,7 +494,7 @@ TEST_F(TestNodeBlackNode, iterator)
+ 
+ TEST_F(TestNodeBlackNode, const_reverse_iterator)
+ {
+-  NodeBuilder b;
++  NodeBuilder b(d_nodeManager);
+   Node x = d_skolemManager->mkDummySkolem("x", d_nodeManager->booleanType());
+   Node y = d_skolemManager->mkDummySkolem("y", d_nodeManager->booleanType());
+   Node z = d_skolemManager->mkDummySkolem("z", d_nodeManager->booleanType());
+@@ -545,8 +545,8 @@ TEST_F(TestNodeBlackNode, toString)
+       "y", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node z = d_skolemManager->mkDummySkolem(
+       "z", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+-  Node m = NodeBuilder() << w << x << Kind::OR;
+-  Node n = NodeBuilder() << m << y << z << Kind::AND;
++  Node m = NodeBuilder(d_nodeManager) << w << x << Kind::OR;
++  Node n = NodeBuilder(d_nodeManager) << m << y << z << Kind::AND;
+ 
+   ASSERT_EQ(n.toString(), "(AND (OR w x) y z)");
+ }
+@@ -563,9 +563,9 @@ TEST_F(TestNodeBlackNode, toStream)
+       "y", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node z = d_skolemManager->mkDummySkolem(
+       "z", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+-  Node m = NodeBuilder() << x << y << Kind::OR;
+-  Node n = NodeBuilder() << w << m << z << Kind::AND;
+-  Node o = NodeBuilder() << n << n << Kind::XOR;
++  Node m = NodeBuilder(d_nodeManager) << x << y << Kind::OR;
++  Node n = NodeBuilder(d_nodeManager) << w << m << z << Kind::AND;
++  Node o = NodeBuilder(d_nodeManager) << n << n << Kind::XOR;
+ 
+   std::stringstream sstr;
+   options::ioutils::applyDagThresh(sstr, 0);
+@@ -798,7 +798,7 @@ namespace {
+ Node level0(NodeManager* nm)
+ {
+   SkolemManager* sm = nm->getSkolemManager();
+-  NodeBuilder nb(Kind::AND);
++  NodeBuilder nb(nm, Kind::AND);
+   Node x = sm->mkDummySkolem("x", nm->booleanType());
+   nb << x;
+   nb << x;
+diff --git a/test/unit/node/node_builder_black.cpp b/test/unit/node/node_builder_black.cpp
+index f6f4cb16d..9d4b29746 100644
+--- a/test/unit/node/node_builder_black.cpp
++++ b/test/unit/node/node_builder_black.cpp
+@@ -50,13 +50,13 @@ class TestNodeBlackNodeBuilder : public TestNode
+ TEST_F(TestNodeBlackNodeBuilder, ctors)
+ {
+   /* Default size tests. */
+-  NodeBuilder def;
++  NodeBuilder def(d_nodeManager);
+   ASSERT_EQ(def.getKind(), Kind::UNDEFINED_KIND);
+ #ifdef CVC5_ASSERTIONS
+   ASSERT_DEATH(def.getNumChildren(), "getKind\\(\\) != Kind::UNDEFINED_KIND");
+ #endif
+ 
+-  NodeBuilder spec(d_specKind);
++  NodeBuilder spec(d_nodeManager, d_specKind);
+   ASSERT_EQ(spec.getKind(), d_specKind);
+   ASSERT_EQ(spec.getNumChildren(), 0u);
+ 
+@@ -81,12 +81,12 @@ TEST_F(TestNodeBlackNodeBuilder, ctors)
+ 
+ TEST_F(TestNodeBlackNodeBuilder, dtor)
+ {
+-  std::unique_ptr<NodeBuilder> nb(new NodeBuilder());
++  std::unique_ptr<NodeBuilder> nb(new NodeBuilder(d_nodeManager));
+ }
+ 
+ TEST_F(TestNodeBlackNodeBuilder, getKind)
+ {
+-  NodeBuilder noKind;
++  NodeBuilder noKind(d_nodeManager);
+   ASSERT_EQ(noKind.getKind(), Kind::UNDEFINED_KIND);
+ 
+   Node x(d_skolemManager->mkDummySkolem("x", *d_intTypeNode));
+@@ -101,7 +101,7 @@ TEST_F(TestNodeBlackNodeBuilder, getKind)
+   ASSERT_DEATH(noKind.getKind(), "!isUsed\\(\\)");
+ #endif
+ 
+-  NodeBuilder spec(Kind::ADD);
++  NodeBuilder spec(d_nodeManager, Kind::ADD);
+   ASSERT_EQ(spec.getKind(), Kind::ADD);
+   spec << x << x;
+   ASSERT_EQ(spec.getKind(), Kind::ADD);
+@@ -111,7 +111,7 @@ TEST_F(TestNodeBlackNodeBuilder, getNumChildren)
+ {
+   Node x(d_skolemManager->mkDummySkolem("x", *d_intTypeNode));
+ 
+-  NodeBuilder nb;
++  NodeBuilder nb(d_nodeManager);
+ #ifdef CVC5_ASSERTIONS
+   ASSERT_DEATH(nb.getNumChildren(), "getKind\\(\\) != Kind::UNDEFINED_KIND");
+ #endif
+@@ -145,7 +145,7 @@ TEST_F(TestNodeBlackNodeBuilder, getNumChildren)
+ 
+ TEST_F(TestNodeBlackNodeBuilder, operator_square)
+ {
+-  NodeBuilder arr(d_specKind);
++  NodeBuilder arr(d_nodeManager, d_specKind);
+ 
+   Node i_0 = d_nodeManager->mkConst(false);
+   Node i_2 = d_nodeManager->mkConst(true);
+@@ -189,7 +189,7 @@ TEST_F(TestNodeBlackNodeBuilder, operator_square)
+ 
+ TEST_F(TestNodeBlackNodeBuilder, clear)
+ {
+-  NodeBuilder nb;
++  NodeBuilder nb(d_nodeManager);
+   ASSERT_EQ(nb.getKind(), Kind::UNDEFINED_KIND);
+ #ifdef CVC5_ASSERTIONS
+   ASSERT_DEATH(nb.getNumChildren(), "getKind\\(\\) != Kind::UNDEFINED_KIND");
+@@ -226,20 +226,20 @@ TEST_F(TestNodeBlackNodeBuilder, clear)
+ TEST_F(TestNodeBlackNodeBuilder, operator_stream_insertion_kind)
+ {
+ #ifdef CVC5_ASSERTIONS
+-  NodeBuilder spec(d_specKind);
++  NodeBuilder spec(d_nodeManager, d_specKind);
+   ASSERT_DEATH(spec << Kind::ADD, "can't redefine the Kind of a NodeBuilder");
+ #endif
+ 
+-  NodeBuilder noSpec;
++  NodeBuilder noSpec(d_nodeManager);
+   noSpec << d_specKind;
+   ASSERT_EQ(noSpec.getKind(), d_specKind);
+ 
+-  NodeBuilder modified;
++  NodeBuilder modified(d_nodeManager);
+   push_back(modified, K);
+   modified << d_specKind;
+   ASSERT_EQ(modified.getKind(), d_specKind);
+ 
+-  NodeBuilder nb(d_specKind);
++  NodeBuilder nb(d_nodeManager, d_specKind);
+   nb << d_nodeManager->mkConst(true) << d_nodeManager->mkConst(false);
+   nb.clear(Kind::ADD);
+ 
+@@ -253,20 +253,20 @@ TEST_F(TestNodeBlackNodeBuilder, operator_stream_insertion_kind)
+   ASSERT_DEATH(nb << Kind::ADD, "can't redefine the Kind of a NodeBuilder");
+ #endif
+ 
+-  NodeBuilder testRef;
++  NodeBuilder testRef(d_nodeManager);
+   ASSERT_EQ((testRef << d_specKind).getKind(), d_specKind);
+ 
+ #ifdef CVC5_ASSERTIONS
+-  NodeBuilder testTwo;
++  NodeBuilder testTwo(d_nodeManager);
+   ASSERT_DEATH(testTwo << d_specKind << Kind::ADD,
+                "can't redefine the Kind of a NodeBuilder");
+ #endif
+ 
+-  NodeBuilder testMixOrder1;
++  NodeBuilder testMixOrder1(d_nodeManager);
+   ASSERT_EQ(
+       (testMixOrder1 << d_specKind << d_nodeManager->mkConst(true)).getKind(),
+       d_specKind);
+-  NodeBuilder testMixOrder2;
++  NodeBuilder testMixOrder2(d_nodeManager);
+   ASSERT_EQ(
+       (testMixOrder2 << d_nodeManager->mkConst(true) << d_specKind).getKind(),
+       d_specKind);
+@@ -274,7 +274,7 @@ TEST_F(TestNodeBlackNodeBuilder, operator_stream_insertion_kind)
+ 
+ TEST_F(TestNodeBlackNodeBuilder, operator_stream_insertion_node)
+ {
+-  NodeBuilder nb(d_specKind);
++  NodeBuilder nb(d_nodeManager, d_specKind);
+   ASSERT_EQ(nb.getKind(), d_specKind);
+   ASSERT_EQ(nb.getNumChildren(), 0u);
+   push_back(nb, K);
+@@ -286,7 +286,7 @@ TEST_F(TestNodeBlackNodeBuilder, operator_stream_insertion_node)
+   ASSERT_DEATH(nb << n, "!isUsed\\(\\)");
+ #endif
+ 
+-  NodeBuilder overflow(d_specKind);
++  NodeBuilder overflow(d_nodeManager, d_specKind);
+   ASSERT_EQ(overflow.getKind(), d_specKind);
+   ASSERT_EQ(overflow.getNumChildren(), 0u);
+ 
+@@ -322,7 +322,7 @@ TEST_F(TestNodeBlackNodeBuilder, append)
+                "Nodes with kind `xor` must have at most 2 children");
+ #endif
+ 
+-  NodeBuilder b(d_specKind);
++  NodeBuilder b(d_nodeManager, d_specKind);
+ 
+   /* test append(TNode) */
+   b.append(n).append(o).append(q);
+@@ -365,8 +365,8 @@ TEST_F(TestNodeBlackNodeBuilder, append)
+ 
+ TEST_F(TestNodeBlackNodeBuilder, operator_node_cast)
+ {
+-  NodeBuilder implicit(d_specKind);
+-  NodeBuilder explic(d_specKind);
++  NodeBuilder implicit(d_nodeManager, d_specKind);
++  NodeBuilder explic(d_nodeManager, d_specKind);
+ 
+   push_back(implicit, K);
+   push_back(explic, K);
+@@ -387,7 +387,7 @@ TEST_F(TestNodeBlackNodeBuilder, operator_node_cast)
+ 
+ TEST_F(TestNodeBlackNodeBuilder, leftist_building)
+ {
+-  NodeBuilder nb;
++  NodeBuilder nb(d_nodeManager);
+ 
+   Node a = d_skolemManager->mkDummySkolem("a", *d_boolTypeNode);
+ 
+diff --git a/test/unit/node/node_manager_white.cpp b/test/unit/node/node_manager_white.cpp
+index 64b5befd9..948f1c144 100644
+--- a/test/unit/node/node_manager_white.cpp
++++ b/test/unit/node/node_manager_white.cpp
+@@ -40,7 +40,7 @@ TEST_F(TestNodeWhiteNodeManager, mkConst_rational)
+ 
+ TEST_F(TestNodeWhiteNodeManager, oversized_node_builder)
+ {
+-  NodeBuilder nb;
++  NodeBuilder nb(d_nodeManager);
+ 
+   ASSERT_NO_THROW(nb.realloc(15));
+   ASSERT_NO_THROW(nb.realloc(25));
+diff --git a/test/unit/node/node_white.cpp b/test/unit/node/node_white.cpp
+index b020ca472..0c908b8ae 100644
+--- a/test/unit/node/node_white.cpp
++++ b/test/unit/node/node_white.cpp
+@@ -36,7 +36,7 @@ TEST_F(TestNodeWhiteNode, copy_ctor) { Node e(Node::s_null); }
+ 
+ TEST_F(TestNodeWhiteNode, builder)
+ {
+-  NodeBuilder b;
++  NodeBuilder b(d_nodeManager);
+   ASSERT_TRUE(b.d_nv->getId() == 0);
+   ASSERT_TRUE(b.d_nv->getKind() == Kind::UNDEFINED_KIND);
+   ASSERT_EQ(b.d_nv->d_nchildren, 0u);
+diff --git a/test/unit/preprocessing/pass_bv_gauss_white.cpp b/test/unit/preprocessing/pass_bv_gauss_white.cpp
+index f5852d84f..3a1e419d5 100644
+--- a/test/unit/preprocessing/pass_bv_gauss_white.cpp
++++ b/test/unit/preprocessing/pass_bv_gauss_white.cpp
+@@ -2683,20 +2683,20 @@ TEST_F(TestPPWhiteBVGauss, get_min_bw1)
+   Node mult2x = d_nodeManager->mkNode(Kind::BITVECTOR_MULT, zext40x, zext40x);
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(mult2x), 32);
+ 
+-  NodeBuilder nbmult3p(Kind::BITVECTOR_MULT);
++  NodeBuilder nbmult3p(d_nodeManager, Kind::BITVECTOR_MULT);
+   nbmult3p << zext48p << zext48p << zext48p;
+   Node mult3p = nbmult3p;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(mult3p), 11);
+-  NodeBuilder nbmult3x(Kind::BITVECTOR_MULT);
++  NodeBuilder nbmult3x(d_nodeManager, Kind::BITVECTOR_MULT);
+   nbmult3x << zext48x << zext48x << zext48x;
+   Node mult3x = nbmult3x;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(mult3x), 48);
+ 
+-  NodeBuilder nbmult4p(Kind::BITVECTOR_MULT);
++  NodeBuilder nbmult4p(d_nodeManager, Kind::BITVECTOR_MULT);
+   nbmult4p << zext48p << zext48p8 << zext48p;
+   Node mult4p = nbmult4p;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(mult4p), 11);
+-  NodeBuilder nbmult4x(Kind::BITVECTOR_MULT);
++  NodeBuilder nbmult4x(d_nodeManager, Kind::BITVECTOR_MULT);
+   nbmult4x << zext48x << zext48x8 << zext48x;
+   Node mult4x = nbmult4x;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(mult4x), 40);
+@@ -2751,29 +2751,29 @@ TEST_F(TestPPWhiteBVGauss, get_min_bw1)
+   Node add3x = d_nodeManager->mkNode(Kind::BITVECTOR_ADD, zext48x8, zext48x);
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(add3x), 17);
+ 
+-  NodeBuilder nbadd4p(Kind::BITVECTOR_ADD);
++  NodeBuilder nbadd4p(d_nodeManager, Kind::BITVECTOR_ADD);
+   nbadd4p << zext48p << zext48p << zext48p;
+   Node add4p = nbadd4p;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(add4p), 6);
+-  NodeBuilder nbadd4x(Kind::BITVECTOR_ADD);
++  NodeBuilder nbadd4x(d_nodeManager, Kind::BITVECTOR_ADD);
+   nbadd4x << zext48x << zext48x << zext48x;
+   Node add4x = nbadd4x;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(add4x), 18);
+ 
+-  NodeBuilder nbadd5p(Kind::BITVECTOR_ADD);
++  NodeBuilder nbadd5p(d_nodeManager, Kind::BITVECTOR_ADD);
+   nbadd5p << zext48p << zext48p8 << zext48p;
+   Node add5p = nbadd5p;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(add5p), 6);
+-  NodeBuilder nbadd5x(Kind::BITVECTOR_ADD);
++  NodeBuilder nbadd5x(d_nodeManager, Kind::BITVECTOR_ADD);
+   nbadd5x << zext48x << zext48x8 << zext48x;
+   Node add5x = nbadd5x;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(add5x), 18);
+ 
+-  NodeBuilder nbadd6p(Kind::BITVECTOR_ADD);
++  NodeBuilder nbadd6p(d_nodeManager, Kind::BITVECTOR_ADD);
+   nbadd6p << zext48p << zext48p << zext48p << zext48p;
+   Node add6p = nbadd6p;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(add6p), 6);
+-  NodeBuilder nbadd6x(Kind::BITVECTOR_ADD);
++  NodeBuilder nbadd6x(d_nodeManager, Kind::BITVECTOR_ADD);
+   nbadd6x << zext48x << zext48x << zext48x << zext48x;
+   Node add6x = nbadd6x;
+   ASSERT_EQ(d_bv_gauss->getMinBwExpr(add6x), 18);
+diff --git a/test/unit/util/boolean_simplification_black.cpp b/test/unit/util/boolean_simplification_black.cpp
+index 1aa967a76..e11ab280a 100644
+--- a/test/unit/util/boolean_simplification_black.cpp
++++ b/test/unit/util/boolean_simplification_black.cpp
+@@ -150,15 +150,17 @@ TEST_F(TestUtilBlackBooleanSimplification, simplifyClause)
+   in = d_nodeManager->mkNode(
+       Kind::OR,
+       {d_fa, d_ga.orNode(d_c).notNode(), d_hfc, d_ac, d_d.andNode(d_b)});
+-  out = NodeBuilder(Kind::OR) << d_fa << d_ga.orNode(d_c).notNode() << d_hfc
+-                              << d_ac << d_d.andNode(d_b);
++  out = NodeBuilder(d_nodeManager, Kind::OR)
++        << d_fa << d_ga.orNode(d_c).notNode() << d_hfc << d_ac
++        << d_d.andNode(d_b);
+   test_nodes_equal(out, BooleanSimplification::simplifyClause(in));
+ 
+   in = d_nodeManager->mkNode(
+       Kind::OR,
+       {d_fa, d_ga.andNode(d_c).notNode(), d_hfc, d_ac, d_d.andNode(d_b)});
+-  out = NodeBuilder(Kind::OR) << d_fa << d_ga.notNode() << d_c.notNode()
+-                              << d_hfc << d_ac << d_d.andNode(d_b);
++  out = NodeBuilder(d_nodeManager, Kind::OR)
++        << d_fa << d_ga.notNode() << d_c.notNode() << d_hfc << d_ac
++        << d_d.andNode(d_b);
+   test_nodes_equal(out, BooleanSimplification::simplifyClause(in));
+ 
+ #ifdef CVC5_ASSERTIONS
+@@ -202,7 +204,7 @@ TEST_F(TestUtilBlackBooleanSimplification, simplifyHornClause)
+                              d_ga.orNode(d_c).notNode(),
+                              d_hfc.orNode(d_ac),
+                              d_d.andNode(d_b).notNode()}));
+-  out = NodeBuilder(Kind::OR)
++  out = NodeBuilder(d_nodeManager, Kind::OR)
+         << d_a.notNode() << d_b.notNode() << d_fa << d_ga.orNode(d_c).notNode()
+         << d_hfc << d_ac << d_d.notNode();
+   test_nodes_equal(out, BooleanSimplification::simplifyHornClause(in));
+@@ -232,8 +234,9 @@ TEST_F(TestUtilBlackBooleanSimplification, simplifyConflict)
+                               d_fa,
+                               d_hfc.orNode(d_ac),
+                               d_d.andNode(d_b)});
+-  out = NodeBuilder(Kind::AND) << d_fa << d_ga.notNode() << d_c.notNode()
+-                               << d_hfc.orNode(d_ac) << d_d << d_b;
++  out = NodeBuilder(d_nodeManager, Kind::AND)
++        << d_fa << d_ga.notNode() << d_c.notNode() << d_hfc.orNode(d_ac) << d_d
++        << d_b;
+   test_nodes_equal(out, BooleanSimplification::simplifyConflict(in));
+ 
+ #ifdef CVC5_ASSERTIONS
+-- 
+2.47.1
+

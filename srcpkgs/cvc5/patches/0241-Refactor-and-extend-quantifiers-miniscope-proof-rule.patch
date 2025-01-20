@@ -1,0 +1,440 @@
+From e7236b586d565c2606f34532882c8f3c6f7a9848 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 12 Dec 2024 16:15:43 -0600
+Subject: [PATCH 241/312] Refactor and extend quantifiers miniscope proof rules
+ (#11431)
+
+This is work towards having full reconstruction for MACRO_QUANT_PRENEX.
+
+It renames 2 proof rules and adds a case for ITE.
+
+Note that the quantifiers rewriter now miniscopes over ITE, a regression
+for this is added.
+
+---------
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ include/cvc5/cvc5_proof_rule.h                | 27 ++++++--
+ proofs/eo/cpc/rules/Quantifiers.eo            | 66 ++++++++++++-------
+ src/api/cpp/cvc5_proof_rule_template.cpp      |  5 +-
+ src/proof/alf/alf_printer.cpp                 |  5 +-
+ src/rewriter/basic_rewrite_rcons.cpp          | 21 ++++--
+ .../quantifiers/quantifiers_rewriter.cpp      | 52 ++++++++++++---
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../regress0/quantifiers/miniscope-ite.smt2   |  7 ++
+ 8 files changed, 134 insertions(+), 50 deletions(-)
+ create mode 100644 test/regress/cli/regress0/quantifiers/miniscope-ite.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 451c9ba49..9abf6b11b 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2603,14 +2603,19 @@ enum ENUM(ProofRewriteRule)
+    *   G_1 \wedge \cdots \wedge G_n
+    *
+    * where each :math:`G_i` is semantically equivalent to
+-   * :math:`\forall X.\> F_i`.
++   * :math:`\forall X.\> F_i`, or alternatively
++   *
++   * .. math::
++   *   \forall X.\> \ite{C}{F_1}{F_2} = \ite{C}{G_1}{G_2}
++   *
++   * where :math:`C` does not have any free variable in :math:`X`.
+    *
+    * \endverbatim
+    */
+   EVALUE(MACRO_QUANT_MINISCOPE),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+-   * **Quantifiers -- Miniscoping**
++   * **Quantifiers -- Miniscoping and**
+    *
+    * .. math::
+    *   \forall X.\> F_1 \wedge \ldots \wedge F_n =
+@@ -2618,10 +2623,10 @@ enum ENUM(ProofRewriteRule)
+    *
+    * \endverbatim
+    */
+-  EVALUE(QUANT_MINISCOPE),
++  EVALUE(QUANT_MINISCOPE_AND),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+-   * **Quantifiers -- Miniscoping free variables**
++   * **Quantifiers -- Miniscoping or**
+    *
+    * .. math::
+    *   \forall X.\> F_1 \vee \ldots \vee F_n = (\forall X_1.\> F_1) \vee \ldots \vee (\forall X_n.\> F_n)
+@@ -2631,7 +2636,19 @@ enum ENUM(ProofRewriteRule)
+    *
+    * \endverbatim
+    */
+-  EVALUE(QUANT_MINISCOPE_FV),
++  EVALUE(QUANT_MINISCOPE_OR),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Quantifiers -- Miniscoping ite**
++   *
++   * .. math::
++   *   \forall X.\> \ite{C}{F_1}{F_2} = \ite{C}{\forall X.\> F_1}{\forall X.\> F_2}
++   * 
++   * where :math:`C` does not have any free variable in :math:`X`.
++   *
++   * \endverbatim
++   */
++  EVALUE(QUANT_MINISCOPE_ITE),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Quantifiers -- Datatypes Split**
+diff --git a/proofs/eo/cpc/rules/Quantifiers.eo b/proofs/eo/cpc/rules/Quantifiers.eo
+index 004a69e55..23f35f021 100644
+--- a/proofs/eo/cpc/rules/Quantifiers.eo
++++ b/proofs/eo/cpc/rules/Quantifiers.eo
+@@ -192,74 +192,90 @@
+   :conclusion (= (Q x F) G)
+ )
+ 
+-;;;;; ProofRewriteRule::QUANT_MINISCOPE
++;;;;; ProofRewriteRule::QUANT_MINISCOPE_AND
+ 
+-; program: $mk_quant_miniscope
++; program: $mk_quant_miniscope_and
+ ; args:
+ ; - x @List: The list of variables of the formula.
+ ; - F Bool: The body of the formula in question.
+ ; return: The result of miniscoping (forall x F) based on conjunctions.
+-(program $mk_quant_miniscope ((x @List) (f Bool) (fs Bool :list))
++(program $mk_quant_miniscope_and ((x @List) (f Bool) (fs Bool :list))
+   (@List Bool) Bool
+   (
+-  (($mk_quant_miniscope x (and f fs)) (eo::cons and (forall x f) ($mk_quant_miniscope x fs)))
+-  (($mk_quant_miniscope x true)       true)
++  (($mk_quant_miniscope_and x (and f fs)) (eo::cons and (forall x f) ($mk_quant_miniscope_and x fs)))
++  (($mk_quant_miniscope_and x true)       true)
+   )
+ )
+ 
+-; rule: quant-miniscope
+-; implements: ProofRewriteRule::QUANT_MINISCOPE
++; rule: quant-miniscope-and
++; implements: ProofRewriteRule::QUANT_MINISCOPE_AND
+ ; args:
+ ; - eq Bool: The equality whose left hand side is a quantified formula.
+ ; requires: >
+ ;   The right hand side of the equality is the result of miniscoping the
+ ;   left hand side.
+ ; conclusion: The given equality.
+-(declare-rule quant-miniscope ((x @List) (F Bool) (G Bool))
++(declare-rule quant-miniscope-and ((x @List) (F Bool) (G Bool))
+   :args ((= (forall x F) G))
+-  :requires ((($mk_quant_miniscope x F) G))
++  :requires ((($mk_quant_miniscope_and x F) G))
+   :conclusion (= (forall x F) G)
+ )
+ 
+-;;;;; ProofRewriteRule::QUANT_MINISCOPE_FV
++;;;;; ProofRewriteRule::QUANT_MINISCOPE_OR
+ 
+-; program: $is_quant_miniscope_fv
++; program: $is_quant_miniscope_or
+ ; args:
+ ; - x @List: The list of variables of the first formula we have yet to process
+ ; - F Bool: The body of the first formula in question.
+ ; - G Bool: The second formula in question.
+ ; return: >
+ ;    True if (forall x F) is equivalent to G based on miniscope reasoning with
+-;    free variables.
+-(program $is_quant_miniscope_fv ((x @List) (xs @List :list) (ys @List :list) (f Bool) (fs Bool :list) (g Bool) (gs Bool :list))
++;    free variables over OR.
++(program $is_quant_miniscope_or ((x @List) (xs @List :list) (ys @List :list) (f Bool) (fs Bool :list) (g Bool) (gs Bool :list))
+   (@List Bool Bool) Bool
+   (
+-  (($is_quant_miniscope_fv x (or f fs) (or f gs))                     (eo::requires ($contains_subterm_list f x) false 
+-                                                                        ($is_quant_miniscope_fv x fs gs)))
+-  (($is_quant_miniscope_fv x (or f fs) (or (forall @list.nil f) gs))  (eo::requires ($contains_subterm_list f x) false 
+-                                                                        ($is_quant_miniscope_fv x fs gs)))
+-  (($is_quant_miniscope_fv (@list x xs) (or f fs) (or (forall (@list x ys) f) gs))  
++  (($is_quant_miniscope_or x (or f fs) (or f gs))                     (eo::requires ($contains_subterm_list f x) false 
++                                                                        ($is_quant_miniscope_or x fs gs)))
++  (($is_quant_miniscope_or x (or f fs) (or (forall @list.nil f) gs))  (eo::requires ($contains_subterm_list f x) false 
++                                                                        ($is_quant_miniscope_or x fs gs)))
++  (($is_quant_miniscope_or (@list x xs) (or f fs) (or (forall (@list x ys) f) gs))  
+                                                                       (eo::requires ($contains_subterm gs x) false
+-                                                                        ($is_quant_miniscope_fv xs (or f fs) (or (forall ys f) gs))))
+-  (($is_quant_miniscope_fv @list.nil false false)                     true)
+-  (($is_quant_miniscope_fv x f g)                                     false)
++                                                                        ($is_quant_miniscope_or xs (or f fs) (or (forall ys f) gs))))
++  (($is_quant_miniscope_or @list.nil false false)                     true)
++  (($is_quant_miniscope_or x f g)                                     false)
+   )
+ )
+ 
+-; rule: quant-miniscope-fv
+-; implements: ProofRewriteRule::QUANT_MINISCOPE_FV
++; rule: quant-miniscope-or
++; implements: ProofRewriteRule::QUANT_MINISCOPE_OR
+ ; args:
+ ; - eq Bool: The equality whose left hand side is a quantified formula.
+ ; requires: >
+ ;   The right hand side of the equality can be shown equivalent to the right
+ ;   hand side based on reasoning about the disjuncts of F that contain x.
+ ; conclusion: The given equality.
+-(declare-rule quant-miniscope-fv ((x @List) (F Bool) (G Bool))
++(declare-rule quant-miniscope-or ((x @List) (F Bool) (G Bool))
+   :args ((= (forall x F) G))
+-  :requires ((($is_quant_miniscope_fv x F G) true))
++  :requires ((($is_quant_miniscope_or x F G) true))
+   :conclusion (= (forall x F) G)
+ )
+ 
++;;;;; ProofRewriteRule::QUANT_MINISCOPE_ITE
++
++; rule: quant-miniscope-ite
++; implements: ProofRewriteRule::QUANT_MINISCOPE_ITE
++; args:
++; - eq Bool: The equality whose left hand side is a quantified formula.
++; requires: >
++;   The right hand side of the equality is the result of miniscoping the
++;   left hand side.
++; conclusion: The given equality.
++(declare-rule quant-miniscope-ite ((x @List) (A Bool) (F1 Bool) (F2 Bool) (G Bool))
++  :args ((= (forall x (ite A F1 F2)) (ite A (forall x F1) (forall x F2))))
++  :requires ((($contains_subterm_list A x) false))
++  :conclusion (= (forall x (ite A F1 F2)) (ite A (forall x F1) (forall x F2)))
++)
++
+ ;;;;; ProofRewriteRule::QUANT_VAR_ELIM_EQ
+ 
+ ; define: $mk_quant_var_elim_eq_subs
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index b2e1f87ca..f837d9e90 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -251,8 +251,9 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::MACRO_QUANT_PRENEX: return "macro-quant-prenex";
+     case ProofRewriteRule::MACRO_QUANT_MINISCOPE:
+       return "macro-quant-miniscope";
+-    case ProofRewriteRule::QUANT_MINISCOPE: return "quant-miniscope";
+-    case ProofRewriteRule::QUANT_MINISCOPE_FV: return "quant-miniscope-fv";
++    case ProofRewriteRule::QUANT_MINISCOPE_AND: return "quant-miniscope-and";
++    case ProofRewriteRule::QUANT_MINISCOPE_OR: return "quant-miniscope-or";
++    case ProofRewriteRule::QUANT_MINISCOPE_ITE: return "quant-miniscope-ite";
+     case ProofRewriteRule::QUANT_DT_SPLIT: return "quant-dt-split";
+     case ProofRewriteRule::MACRO_QUANT_PARTITION_CONNECTED_FV:
+       return "macro-quant-partition-connected-fv";
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 7a38281a3..da27e4f7e 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -277,8 +277,9 @@ bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id, const Node& n)
+     case ProofRewriteRule::ARRAYS_SELECT_CONST:
+     case ProofRewriteRule::DT_INST:
+     case ProofRewriteRule::QUANT_MERGE_PRENEX:
+-    case ProofRewriteRule::QUANT_MINISCOPE:
+-    case ProofRewriteRule::QUANT_MINISCOPE_FV:
++    case ProofRewriteRule::QUANT_MINISCOPE_AND:
++    case ProofRewriteRule::QUANT_MINISCOPE_OR:
++    case ProofRewriteRule::QUANT_MINISCOPE_ITE:
+     case ProofRewriteRule::QUANT_VAR_ELIM_EQ:
+     case ProofRewriteRule::RE_LOOP_ELIM:
+     case ProofRewriteRule::SETS_IS_EMPTY_EVAL:
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index dff46203a..b037eeeb6 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -659,7 +659,7 @@ bool BasicRewriteRCons::ensureProofMacroQuantPrenex(CDProof* cdp,
+   Trace("brc-macro") << "Remains to prove: " << body1 << " == " << body2
+                      << std::endl;
+   Node body2ms =
+-      rr->rewriteViaRule(ProofRewriteRule::QUANT_MINISCOPE_FV, body2);
++      rr->rewriteViaRule(ProofRewriteRule::QUANT_MINISCOPE_OR, body2);
+   if (body2ms.isNull())
+   {
+     // currently fails if we are doing
+@@ -670,7 +670,7 @@ bool BasicRewriteRCons::ensureProofMacroQuantPrenex(CDProof* cdp,
+     return false;
+   }
+   Node eqqm = body2.eqNode(body2ms);
+-  cdp->addTheoryRewriteStep(eqqm, ProofRewriteRule::QUANT_MINISCOPE_FV);
++  cdp->addTheoryRewriteStep(eqqm, ProofRewriteRule::QUANT_MINISCOPE_OR);
+   Node eqqrs = body2.eqNode(body1);
+   if (body2ms != body1)
+   {
+@@ -806,8 +806,8 @@ bool BasicRewriteRCons::ensureProofMacroQuantPartitionConnectedFv(
+   Node eqq2 = newQuant.eqNode(eq[1]);
+   // Then prove
+   //   (forall X F1 or ... or Fn) = (forall X1 F1) or ... or (forall Xn Fn)
+-  // via ProofRewriteRule::QUANT_MINISCOPE_FV.
+-  if (!cdp->addTheoryRewriteStep(eqq2, ProofRewriteRule::QUANT_MINISCOPE_FV))
++  // via ProofRewriteRule::QUANT_MINISCOPE_OR.
++  if (!cdp->addTheoryRewriteStep(eqq2, ProofRewriteRule::QUANT_MINISCOPE_OR))
+   {
+     Assert(false);
+     return false;
+@@ -974,13 +974,20 @@ bool BasicRewriteRCons::ensureProofMacroQuantVarElimEq(CDProof* cdp,
+ bool BasicRewriteRCons::ensureProofMacroQuantMiniscope(CDProof* cdp,
+                                                        const Node& eq)
+ {
++  Trace("brc-macro") << "Expand quant miniscope " << eq[0] << " == " << eq[1]
++                     << std::endl;
+   Node q = eq[0];
+   Assert(q.getKind() == Kind::FORALL);
+   NodeManager* nm = nodeManager();
++  Kind bk = q[1].getKind();
++  Assert(bk == Kind::AND || bk == Kind::ITE);
++  ProofRewriteRule prr = bk == Kind::AND
++                             ? ProofRewriteRule::QUANT_MINISCOPE_AND
++                             : ProofRewriteRule::QUANT_MINISCOPE_ITE;
+   theory::Rewriter* rr = d_env.getRewriter();
+-  Node mq = rr->rewriteViaRule(ProofRewriteRule::QUANT_MINISCOPE, q);
++  Node mq = rr->rewriteViaRule(prr, q);
+   Node equiv = q.eqNode(mq);
+-  cdp->addTheoryRewriteStep(equiv, ProofRewriteRule::QUANT_MINISCOPE);
++  cdp->addTheoryRewriteStep(equiv, prr);
+   if (mq == eq[1])
+   {
+     return true;
+@@ -1033,7 +1040,7 @@ bool BasicRewriteRCons::ensureProofMacroQuantMiniscope(CDProof* cdp,
+     Assert(false) << "Failed ensureProofMacroQuantMiniscope " << eq;
+     return false;
+   }
+-  // add the CONG step to conclude AND terms are equal
++  // add the CONG step to conclude AND or ITE terms are equal
+   std::vector<Node> cargs;
+   ProofRule cr = expr::getCongRule(mq, cargs);
+   cdp->addStep(equiv2, cr, premises, cargs);
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index 00551b5d1..cb05619fb 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -112,7 +112,7 @@ QuantifiersRewriter::QuantifiersRewriter(NodeManager* nm,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_MINISCOPE,
+                            TheoryRewriteCtx::PRE_DSL);
+-  // QUANT_MINISCOPE is part of the reconstruction for MACRO_QUANT_MINISCOPE
++  // QUANT_MINISCOPE_OR is part of the reconstruction for MACRO_QUANT_MINISCOPE
+   registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_PARTITION_CONNECTED_FV,
+                            TheoryRewriteCtx::PRE_DSL);
+   // note ProofRewriteRule::QUANT_DT_SPLIT is done by a module dynamically with
+@@ -201,7 +201,12 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+     break;
+     case ProofRewriteRule::MACRO_QUANT_MINISCOPE:
+     {
+-      if (n.getKind() != Kind::FORALL || n[1].getKind() != Kind::AND)
++      if (n.getKind() != Kind::FORALL)
++      {
++        return Node::null();
++      }
++      Kind k = n[1].getKind();
++      if (k != Kind::AND && k != Kind::ITE)
+       {
+         return Node::null();
+       }
+@@ -210,11 +215,13 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       QAttributes qa;
+       QuantAttributes::computeQuantAttributes(n, qa);
+       Node nret = computeMiniscoping(n, qa, true, false);
+-      Assert(nret != n);
+-      return nret;
++      if (nret != n)
++      {
++        return nret;
++      }
+     }
+     break;
+-    case ProofRewriteRule::QUANT_MINISCOPE:
++    case ProofRewriteRule::QUANT_MINISCOPE_AND:
+     {
+       if (n.getKind() != Kind::FORALL || n[1].getKind() != Kind::AND)
+       {
+@@ -252,7 +259,7 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
+-    case ProofRewriteRule::QUANT_MINISCOPE_FV:
++    case ProofRewriteRule::QUANT_MINISCOPE_OR:
+     {
+       if (n.getKind() != Kind::FORALL || n[1].getKind() != Kind::OR)
+       {
+@@ -305,6 +312,23 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       return ret;
+     }
+     break;
++    case ProofRewriteRule::QUANT_MINISCOPE_ITE:
++    {
++      if (n.getKind() != Kind::FORALL || n[1].getKind() != Kind::ITE)
++      {
++        return Node::null();
++      }
++      std::vector<Node> args(n[0].begin(), n[0].end());
++      Node body = n[1];
++      if (!expr::hasSubterm(body[0], args))
++      {
++        return d_nm->mkNode(Kind::ITE,
++                            body[0],
++                            d_nm->mkNode(Kind::FORALL, n[0], body[1]),
++                            d_nm->mkNode(Kind::FORALL, n[0], body[2]));
++      }
++    }
++    break;
+     case ProofRewriteRule::QUANT_DT_SPLIT:
+     {
+       // always runs split utility on the first variable
+@@ -2011,16 +2035,26 @@ Node QuantifiersRewriter::computeMiniscoping(Node q,
+   NodeManager* nm = nodeManager();
+   std::vector<Node> args(q[0].begin(), q[0].end());
+   Node body = q[1];
+-  if (body.getKind() == Kind::AND)
++  Kind k = body.getKind();
++  if (k == Kind::AND || k == Kind::ITE)
+   {
++    bool doRewrite = miniscopeConj;
++    if (k == Kind::ITE)
++    {
++      // ITE miniscoping is only valid if condition contains no variables
++      if (expr::hasSubterm(body[0], args))
++      {
++        doRewrite = false;
++      }
++    }
+     // aggressive miniscoping implies that structural miniscoping should
+     // be applied first
+-    if (miniscopeConj)
++    if (doRewrite)
+     {
+       BoundVarManager* bvm = nm->getBoundVarManager();
+       // Break apart the quantifed formula
+       // forall x. P1 ^ ... ^ Pn ---> forall x. P1 ^ ... ^ forall x. Pn
+-      NodeBuilder t(nm, Kind::AND);
++      NodeBuilder t(nm, k);
+       std::vector<Node> argsc;
+       for (size_t i = 0, nchild = body.getNumChildren(); i < nchild; i++)
+       {
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 4c05243db..6878c4af3 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1505,6 +1505,7 @@ set(regress_0_tests
+   regress0/quantifiers/matching-lia-1arg.smt2
+   regress0/quantifiers/mbqi-simple.smt2
+   regress0/quantifiers/merge-shadow.smt2
++  regress0/quantifiers/miniscope-ite.smt2
+   regress0/quantifiers/mix-complete-strat.smt2
+   regress0/quantifiers/mix-match.smt2
+   regress0/quantifiers/mix-simp.smt2
+diff --git a/test/regress/cli/regress0/quantifiers/miniscope-ite.smt2 b/test/regress/cli/regress0/quantifiers/miniscope-ite.smt2
+new file mode 100644
+index 000000000..4331e813f
+--- /dev/null
++++ b/test/regress/cli/regress0/quantifiers/miniscope-ite.smt2
+@@ -0,0 +1,7 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun a () Int)
++(declare-fun c () Int)
++(assert (forall ((x Int)) (ite (> c 0) (> x 0) (or (< x a) (> x (- a 3))))))
++(assert (> c 1))
++(check-sat)
+-- 
+2.47.1
+

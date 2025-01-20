@@ -1,0 +1,108 @@
+From 9a741c0a99f7451273b0bbce8cb7e2eec20148b8 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Sat, 24 Aug 2024 14:13:08 -0500
+Subject: [PATCH 039/312] Eliminate use of decimals and let in cpc signature
+ (#11177)
+
+Decimals are syntax sugar by default for rationals, although this may
+change later if we make the syntax of *.eo files fixed and less
+configurable.
+
+Additionally, `let` will not be a builtin symbol by default.
+---
+ proofs/eo/cpc/Cpc.eo                   | 4 ++--
+ proofs/eo/cpc/programs/Arith.eo        | 6 +++---
+ proofs/eo/cpc/programs/Strings.eo      | 8 ++++----
+ proofs/eo/cpc/rules/Arith.eo           | 2 +-
+ proofs/eo/cpc/rules/Transcendentals.eo | 2 +-
+ 5 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/proofs/eo/cpc/Cpc.eo b/proofs/eo/cpc/Cpc.eo
+index cd76784be..0faf53d79 100644
+--- a/proofs/eo/cpc/Cpc.eo
++++ b/proofs/eo/cpc/Cpc.eo
+@@ -128,8 +128,8 @@
+       (($run_evaluate (div_total x y))     (eo::define ((d ($run_evaluate y)))
+                                              (eo::ite (eo::is_eq d 0) 0 (eo::zdiv ($run_evaluate x) d))))
+       (($run_evaluate (mod x y))           (eo::zmod ($run_evaluate x) ($run_evaluate y)))
+-      (($run_evaluate (mod_total x y))     (let ((ex ($run_evaluate x)))
+-                                           (let ((ey ($run_evaluate y)))
++      (($run_evaluate (mod_total x y))     (eo::define ((ex ($run_evaluate x)))
++                                           (eo::define ((ey ($run_evaluate y)))
+                                             (eo::ite (eo::is_eq ey 0) ex (eo::zmod ex ey)))))
+       (($run_evaluate (to_real x))         (eo::to_q ($run_evaluate x)))
+       (($run_evaluate (to_int x))          (eo::to_z ($run_evaluate x)))
+diff --git a/proofs/eo/cpc/programs/Arith.eo b/proofs/eo/cpc/programs/Arith.eo
+index 0605458ef..3a4fbe968 100644
+--- a/proofs/eo/cpc/programs/Arith.eo
++++ b/proofs/eo/cpc/programs/Arith.eo
+@@ -143,7 +143,7 @@
+     (($poly_add (@poly (@mon a1 c1) p1) (@poly (@mon a2 c2) p2)) (eo::ite (eo::is_eq a1 a2)
+                                                                   (eo::define ((ca (eo::add c1 c2)) (pa ($poly_add p1 p2)))
+                                                                   ; check if cancels
+-                                                                  (eo::ite (eo::is_eq ca 0.0) pa (eo::cons @poly (@mon a1 ca) pa)))
++                                                                  (eo::ite (eo::is_eq ca 0/1) pa (eo::cons @poly (@mon a1 ca) pa)))
+                                                                 (eo::ite ($compare_var a1 a2)
+                                                                   (eo::cons @poly (@mon a1 c1) ($poly_add p1 (@poly (@mon a2 c2) p2)))
+                                                                   (eo::cons @poly (@mon a2 c2) ($poly_add (@poly (@mon a1 c1) p1) p2)))))
+@@ -224,10 +224,10 @@
+                                   ; if it is a constant, which can be tested if to_q is idempotent after the first
+                                   (eo::ite (eo::is_eq aq (eo::to_q aq))
+                                     ; if it is zero, it cancels, otherwise it is 1 with itself as coefficient
+-                                    (eo::ite (eo::is_eq aq 0.0)
++                                    (eo::ite (eo::is_eq aq 0/1)
+                                       @poly.zero
+                                       (@poly (@mon 1 aq)))
+-                                  (@poly (@mon (* a) 1.0)))))    ; introduces list
++                                  (@poly (@mon (* a) 1/1)))))    ; introduces list
+   )
+ )
+ 
+diff --git a/proofs/eo/cpc/programs/Strings.eo b/proofs/eo/cpc/programs/Strings.eo
+index 6c508008b..2a09d60b9 100644
+--- a/proofs/eo/cpc/programs/Strings.eo
++++ b/proofs/eo/cpc/programs/Strings.eo
+@@ -1130,10 +1130,10 @@
+   (($str_re_includes r1 r1)                               true)
+   (($str_re_includes r1 (str.to_re s1))                   ($str_eval_str_in_re s1 r1))
+   (($str_re_includes (str.to_re s1) r1)                   false)
+-  (($str_re_includes (re.range s1 s2) (re.range s3 s4))   (let ((z1 (eo::to_z s1)))
+-                                                          (let ((z2 (eo::to_z s2)))
+-                                                          (let ((z3 (eo::to_z s3)))
+-                                                          (let ((z4 (eo::to_z s4)))
++  (($str_re_includes (re.range s1 s2) (re.range s3 s4))   (eo::define ((z1 (eo::to_z s1)))
++                                                          (eo::define ((z2 (eo::to_z s2)))
++                                                          (eo::define ((z3 (eo::to_z s3)))
++                                                          (eo::define ((z4 (eo::to_z s4)))
+                                                           (eo::requires (eo::is_neg z1) false
+                                                           (eo::requires (eo::is_neg z2) false
+                                                           (eo::requires (eo::is_neg z3) false
+diff --git a/proofs/eo/cpc/rules/Arith.eo b/proofs/eo/cpc/rules/Arith.eo
+index 6e5483324..778ee8e0d 100644
+--- a/proofs/eo/cpc/rules/Arith.eo
++++ b/proofs/eo/cpc/rules/Arith.eo
+@@ -33,7 +33,7 @@
+ (program $arith_mk_zero ((T Type))
+   (Type) T
+   (
+-    (($arith_mk_zero Real) 0.0)
++    (($arith_mk_zero Real) 0/1)
+     (($arith_mk_zero Int)  0)
+   )
+ )
+diff --git a/proofs/eo/cpc/rules/Transcendentals.eo b/proofs/eo/cpc/rules/Transcendentals.eo
+index 0c62b3340..c5b0bed7e 100644
+--- a/proofs/eo/cpc/rules/Transcendentals.eo
++++ b/proofs/eo/cpc/rules/Transcendentals.eo
+@@ -58,7 +58,7 @@
+ ;   is one.
+ (declare-rule arith_trans_exp_zero ((x Real))
+   :args (x)
+-  :conclusion (= (= x 0.0) (= (exp x) 1.0))
++  :conclusion (= (= x 0/1) (= (exp x) 1/1))
+ )
+ 
+ ; rule: arith_trans_sine_bounds
+-- 
+2.47.1
+

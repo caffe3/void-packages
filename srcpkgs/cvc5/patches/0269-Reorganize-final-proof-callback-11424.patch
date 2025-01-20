@@ -1,0 +1,389 @@
+From e065d981e135ee088515976c0abd75808d9b641c Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 6 Jan 2025 14:11:40 -0600
+Subject: [PATCH 269/312] Reorganize final proof callback (#11424)
+
+This reorganizes when the final proof callback is run. The motivation is
+to more accurately record statistics for our proof holes and secondly
+for performance.
+
+In particular, previously it was being run whenever we connected a proof
+to input assertions, e.g. for unsat cores, which was spurious.
+
+Instead, we now only run the callback when `--check-proofs` is enabled.
+
+This decouples the final proof callback from the proof post processor.
+We now call `ProofManager::checkFinalProof` when applicable.
+
+Also adds a statistic for which rules are handled in the *.eo signature.
+Furthermore, it guards the computation of statistics when not using
+`--stats-internal`.
+---
+ src/smt/proof_final_callback.cpp              | 100 +++++++++---------
+ src/smt/proof_final_callback.h                |  10 ++
+ src/smt/proof_manager.cpp                     |  20 +++-
+ src/smt/proof_manager.h                       |  14 +++
+ src/smt/proof_post_processor.cpp              |  20 +---
+ src/smt/proof_post_processor.h                |   8 --
+ src/smt/solver_engine.cpp                     |   2 +
+ .../printer/print_trusted_proof_steps.smt2    |   2 +-
+ 8 files changed, 101 insertions(+), 75 deletions(-)
+
+diff --git a/src/smt/proof_final_callback.cpp b/src/smt/proof_final_callback.cpp
+index d26dd4d51..8aef0995e 100644
+--- a/src/smt/proof_final_callback.cpp
++++ b/src/smt/proof_final_callback.cpp
+@@ -18,6 +18,7 @@
+ #include "expr/skolem_manager.h"
+ #include "options/base_options.h"
+ #include "options/proof_options.h"
++#include "proof/alf/alf_printer.h"
+ #include "proof/proof_checker.h"
+ #include "proof/proof_node_manager.h"
+ #include "rewriter/rewrite_proof_rule.h"
+@@ -37,6 +38,8 @@ ProofFinalCallback::ProofFinalCallback(Env& env)
+     : EnvObj(env),
+       d_ruleCount(statisticsRegistry().registerHistogram<ProofRule>(
+           "finalProof::ruleCount")),
++      d_ruleEouCount(statisticsRegistry().registerHistogram<ProofRule>(
++          "finalProof::ruleUnhandledEoCount")),
+       d_instRuleIds(statisticsRegistry().registerHistogram<theory::InferenceId>(
+           "finalProof::instRuleId")),
+       d_dslRuleCount(statisticsRegistry().registerHistogram<ProofRewriteRule>(
+@@ -44,6 +47,9 @@ ProofFinalCallback::ProofFinalCallback(Env& env)
+       d_theoryRewriteRuleCount(
+           statisticsRegistry().registerHistogram<ProofRewriteRule>(
+               "finalProof::theoryRewriteRuleCount")),
++      d_theoryRewriteEouCount(
++          statisticsRegistry().registerHistogram<ProofRewriteRule>(
++              "finalProof::theoryRewriteRuleUnhandledEoCount")),
+       d_trustIds(statisticsRegistry().registerHistogram<TrustId>(
+           "finalProof::trustCount")),
+       d_trustTheoryRewriteCount(
+@@ -98,78 +104,76 @@ bool ProofFinalCallback::shouldUpdate(std::shared_ptr<ProofNode> pn,
+   {
+     d_minPedanticLevel.minAssign(plevel);
+   }
+-  // record stats for the rule
+-  d_ruleCount << r;
+-  ++d_totalRuleCount;
+-  // if a DSL rewrite, take DSL stat
+-  if (r == ProofRule::DSL_REWRITE || r == ProofRule::THEORY_REWRITE)
++  // if not taking statistics, don't bother computing the following
++  if (options().base.statisticsInternal)
+   {
+-    const std::vector<Node>& args = pn->getArguments();
+-    ProofRewriteRule di;
+-    if (rewriter::getRewriteRule(args[0], di))
++    // record stats for the rule
++    d_ruleCount << r;
++    bool isHandled = proof::AlfPrinter::isHandled(options(), pn.get());
++    if (!isHandled)
++    {
++      d_ruleEouCount << r;
++    }
++    ++d_totalRuleCount;
++    // if a DSL rewrite, take DSL stat
++    if (r == ProofRule::DSL_REWRITE || r == ProofRule::THEORY_REWRITE)
+     {
++      const std::vector<Node>& args = pn->getArguments();
++      ProofRewriteRule di = ProofRewriteRule::NONE;
++      rewriter::getRewriteRule(args[0], di);
++      Assert(di != ProofRewriteRule::NONE);
+       if (r == ProofRule::DSL_REWRITE)
+       {
+         d_dslRuleCount << di;
+       }
+       else
+       {
++        if (!isHandled)
++        {
++          d_theoryRewriteEouCount << di;
++        }
+         d_theoryRewriteRuleCount << di;
+       }
+     }
+-  }
+-  // take stats on the instantiations in the proof
+-  else if (r == ProofRule::INSTANTIATE)
+-  {
+-    Node q = pn->getChildren()[0]->getResult();
+-    const std::vector<Node>& args = pn->getArguments();
+-    if (args.size() > 1)
++    // take stats on the instantiations in the proof
++    else if (r == ProofRule::INSTANTIATE)
+     {
+-      InferenceId id;
+-      if (getInferenceId(args[1], id))
++      Node q = pn->getChildren()[0]->getResult();
++      const std::vector<Node>& args = pn->getArguments();
++      if (args.size() > 1)
+       {
+-        d_instRuleIds << id;
++        InferenceId id;
++        if (getInferenceId(args[1], id))
++        {
++          d_instRuleIds << id;
++        }
+       }
+     }
+-  }
+-  else if (r == ProofRule::TRUST)
+-  {
+-    TrustId id;
+-    Trace("final-pf-hole") << "hole TRUST";
+-    if (getTrustId(pn->getArguments()[0], id))
++    else if (r == ProofRule::TRUST)
+     {
+-      d_trustIds << id;
+-      Trace("final-pf-hole") << " " << id;
+-      if (id == TrustId::THEORY_LEMMA)
++      TrustId id;
++      if (getTrustId(pn->getArguments()[0], id))
+       {
+-        const std::vector<Node>& args = pn->getArguments();
+-        TheoryId tid = THEORY_BUILTIN;
+-        if (args.size() >= 3)
++        d_trustIds << id;
++        if (id == TrustId::THEORY_LEMMA)
+         {
+-          builtin::BuiltinProofRuleChecker::getTheoryId(args[2], tid);
++          const std::vector<Node>& args = pn->getArguments();
++          TheoryId tid = THEORY_BUILTIN;
++          if (args.size() >= 3)
++          {
++            builtin::BuiltinProofRuleChecker::getTheoryId(args[2], tid);
++          }
++          d_trustTheoryLemmaCount << tid;
+         }
+-        d_trustTheoryLemmaCount << tid;
+       }
+     }
+-    Trace("final-pf-hole") << ": " << pn->getResult() << std::endl;
+-  }
+-  else if (r == ProofRule::TRUST_THEORY_REWRITE)
+-  {
+-    const std::vector<Node>& args = pn->getArguments();
+-    Node eq = args[0];
+-    TheoryId tid = THEORY_BUILTIN;
+-    builtin::BuiltinProofRuleChecker::getTheoryId(args[1], tid);
+-    Trace("final-pf-hole") << "hole " << r << " " << tid << " : " << eq[0]
+-                           << " ---> " << eq[1] << std::endl;
+-    d_trustTheoryRewriteCount << tid;
+-  }
+-  else if (r == ProofRule::MACRO_REWRITE)
+-  {
+-    if (TraceIsOn("final-pf-hole"))
++    else if (r == ProofRule::TRUST_THEORY_REWRITE)
+     {
+       const std::vector<Node>& args = pn->getArguments();
+       Node eq = args[0];
+-      Trace("final-pf-hole") << "hole " << r << " : " << eq << std::endl;
++      TheoryId tid = THEORY_BUILTIN;
++      builtin::BuiltinProofRuleChecker::getTheoryId(args[1], tid);
++      d_trustTheoryRewriteCount << tid;
+     }
+   }
+ 
+diff --git a/src/smt/proof_final_callback.h b/src/smt/proof_final_callback.h
+index 5d438458f..58a3656cc 100644
+--- a/src/smt/proof_final_callback.h
++++ b/src/smt/proof_final_callback.h
+@@ -53,6 +53,11 @@ class ProofFinalCallback : protected EnvObj, public ProofNodeUpdaterCallback
+  private:
+   /** Counts number of postprocessed proof nodes for each kind of proof rule */
+   HistogramStat<ProofRule> d_ruleCount;
++  /**
++   * Counts number of proof nodes for each kind of proof rule that cannot be
++   * printed in CPC+Eunoia.
++   */
++  HistogramStat<ProofRule> d_ruleEouCount;
+   /**
+    * Counts number of postprocessed proof nodes of rule INSTANTIATE that were
+    * marked with the given inference id.
+@@ -66,6 +71,11 @@ class ProofFinalCallback : protected EnvObj, public ProofNodeUpdaterCallback
+    * Counts number of postprocessed proof nodes for each kind of THEORY_REWRITE
+    */
+   HistogramStat<ProofRewriteRule> d_theoryRewriteRuleCount;
++  /**
++   * Counts number of proof nodes for each kind of THEORY_REWRITE that cannot be
++   * printed in CPC+Eunoia.
++   */
++  HistogramStat<ProofRewriteRule> d_theoryRewriteEouCount;
+   /**
+    * Counts number of postprocessed proof nodes for each trusted step
+    */
+diff --git a/src/smt/proof_manager.cpp b/src/smt/proof_manager.cpp
+index 7878ae52f..5e1c10664 100644
+--- a/src/smt/proof_manager.cpp
++++ b/src/smt/proof_manager.cpp
+@@ -46,7 +46,9 @@ PfManager::PfManager(Env& env)
+       d_pchecker(nullptr),
+       d_pnm(nullptr),
+       d_pfpp(nullptr),
+-      d_pppg(nullptr)
++      d_pppg(nullptr),
++      d_finalCb(env),
++      d_finalizer(env, d_finalCb)
+ {
+   // construct the rewrite db only if DSL rewrites are enabled
+   if (options().proof.proofGranularityMode
+@@ -267,6 +269,22 @@ std::shared_ptr<ProofNode> PfManager::connectProofToAssertions(
+   }
+ }
+ 
++void PfManager::checkFinalProof(std::shared_ptr<ProofNode> pfn)
++{
++  // take stats and check pedantic
++  d_finalCb.initializeUpdate();
++  d_finalizer.process(pfn);
++
++  std::stringstream serr;
++  bool wasPedanticFailure = d_finalCb.wasPedanticFailure(serr);
++  if (wasPedanticFailure)
++  {
++    AlwaysAssert(!wasPedanticFailure)
++        << "ProofPostprocess::process: pedantic failure:" << std::endl
++        << serr.str();
++  }
++}
++
+ void PfManager::printProof(std::ostream& out,
+                            std::shared_ptr<ProofNode> fp,
+                            options::ProofFormatMode mode,
+diff --git a/src/smt/proof_manager.h b/src/smt/proof_manager.h
+index 4db96d2d3..f3eda2039 100644
+--- a/src/smt/proof_manager.h
++++ b/src/smt/proof_manager.h
+@@ -22,6 +22,7 @@
+ #include "expr/node.h"
+ #include "options/proof_options.h"
+ #include "smt/env_obj.h"
++#include "smt/proof_final_callback.h"
+ 
+ namespace cvc5::internal {
+ 
+@@ -143,6 +144,12 @@ class PfManager : protected EnvObj
+       std::shared_ptr<ProofNode> pfn,
+       Assertions& as,
+       ProofScopeMode scopeMode = ProofScopeMode::UNIFIED);
++  /**
++   * Check proof. This call runs the final proof callback, which checks for
++   * pedantic failures and takes statistics.
++   * @param pfn The proof to check.
++   */
++  void checkFinalProof(std::shared_ptr<ProofNode> pfn);
+   //--------------------------- access to utilities
+   /** Get a pointer to the ProofChecker owned by this. */
+   ProofChecker* getProofChecker() const;
+@@ -176,6 +183,13 @@ class PfManager : protected EnvObj
+   std::unique_ptr<smt::ProofPostprocess> d_pfpp;
+   /** The preprocess proof generator. */
+   std::unique_ptr<PreprocessProofGenerator> d_pppg;
++  /** The post process callback for finalization */
++  ProofFinalCallback d_finalCb;
++  /**
++   * The finalizer, which is responsible for taking stats and checking for
++   * (lazy) pedantic failures.
++   */
++  ProofNodeUpdater d_finalizer;
+ }; /* class SolverEngine */
+ 
+ }  // namespace smt
+diff --git a/src/smt/proof_post_processor.cpp b/src/smt/proof_post_processor.cpp
+index 6e6ee0d5e..9bb816743 100644
+--- a/src/smt/proof_post_processor.cpp
++++ b/src/smt/proof_post_processor.cpp
+@@ -16,6 +16,7 @@
+ #include "smt/proof_post_processor.h"
+ 
+ #include "expr/skolem_manager.h"
++#include "options/base_options.h"
+ #include "options/proof_options.h"
+ #include "preprocessing/assertion_pipeline.h"
+ #include "proof/proof_node_algorithm.h"
+@@ -1076,10 +1077,8 @@ ProofPostprocess::ProofPostprocess(Env& env,
+                                    bool updateScopedAssumptions)
+     : EnvObj(env),
+       d_cb(env, updateScopedAssumptions),
+-      // the update merges subproofs
+-      d_updater(env, d_cb, options().proof.proofPpMerge),
+-      d_finalCb(env),
+-      d_finalizer(env, d_finalCb)
++      // the update merges subproofs if proofPpMerge is true
++      d_updater(env, d_cb, options().proof.proofPpMerge)
+ {
+   if (rdb != nullptr)
+   {
+@@ -1128,19 +1127,6 @@ void ProofPostprocess::process(std::shared_ptr<ProofNode> pf,
+       d_ppdsl->reconstruct(tproofs);
+     }
+   }
+-
+-  // take stats and check pedantic
+-  d_finalCb.initializeUpdate();
+-  d_finalizer.process(pf);
+-
+-  std::stringstream serr;
+-  bool wasPedanticFailure = d_finalCb.wasPedanticFailure(serr);
+-  if (wasPedanticFailure)
+-  {
+-    AlwaysAssert(!wasPedanticFailure)
+-        << "ProofPostprocess::process: pedantic failure:" << std::endl
+-        << serr.str();
+-  }
+ }
+ 
+ void ProofPostprocess::setEliminateRule(ProofRule rule)
+diff --git a/src/smt/proof_post_processor.h b/src/smt/proof_post_processor.h
+index 0bafcc7f6..29615996a 100644
+--- a/src/smt/proof_post_processor.h
++++ b/src/smt/proof_post_processor.h
+@@ -27,7 +27,6 @@
+ #include "proof/proof_node_updater.h"
+ #include "rewriter/rewrites.h"
+ #include "smt/env_obj.h"
+-#include "smt/proof_final_callback.h"
+ #include "smt/proof_post_processor_dsl.h"
+ #include "smt/witness_form.h"
+ #include "theory/inference_id.h"
+@@ -241,13 +240,6 @@ class ProofPostprocess : protected EnvObj
+    * and connecting preprocessed assumptions to input assumptions.
+    */
+   ProofNodeUpdater d_updater;
+-  /** The post process callback for finalization */
+-  ProofFinalCallback d_finalCb;
+-  /**
+-   * The finalizer, which is responsible for taking stats and checking for
+-   * (lazy) pedantic failures.
+-   */
+-  ProofNodeUpdater d_finalizer;
+ };
+ 
+ }  // namespace smt
+diff --git a/src/smt/solver_engine.cpp b/src/smt/solver_engine.cpp
+index 0e78ce69e..91c205e3f 100644
+--- a/src/smt/solver_engine.cpp
++++ b/src/smt/solver_engine.cpp
+@@ -1542,6 +1542,8 @@ void SolverEngine::checkProof()
+     // connect proof to assertions, which will fail if the proof is malformed
+     d_pfManager->connectProofToAssertions(
+         pePfn, d_smtSolver->getAssertions(), ProofScopeMode::UNIFIED);
++    // now check the proof
++    d_pfManager->checkFinalProof(pePfn);
+   }
+ }
+ 
+diff --git a/test/regress/cli/regress0/printer/print_trusted_proof_steps.smt2 b/test/regress/cli/regress0/printer/print_trusted_proof_steps.smt2
+index e5fc28e6a..2f9cba725 100644
+--- a/test/regress/cli/regress0/printer/print_trusted_proof_steps.smt2
++++ b/test/regress/cli/regress0/printer/print_trusted_proof_steps.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs -o trusted-proof-steps
++; COMMAND-LINE: --check-proofs -o trusted-proof-steps
+ ; SCRUBBER: grep -E '\(trusted-proof-step'
+ ; EXPECT: (trusted-proof-step (= (= 0 1) false) :rule TRUST_THEORY_REWRITE :theory THEORY_ARITH)
+ (set-logic ALL)
+-- 
+2.47.1
+

@@ -1,0 +1,207 @@
+From 6fc682e0e0edfc5fff32e12e765b55bd7d95bdcd Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 28 Aug 2024 08:29:42 -0500
+Subject: [PATCH 040/312] Disable UF symmetry breaking by default when proofs
+ are enabled (#10615)
+
+Currently leading to many incomplete proofs on QF_UF.
+---
+ src/options/smt_options.toml |  7 +++++++
+ src/prop/theory_proxy.cpp    |  3 +--
+ src/smt/env.cpp              |  3 ++-
+ src/smt/env.h                |  9 ++++-----
+ src/smt/set_defaults.cpp     | 31 ++++++++++++++++++++++---------
+ src/smt/solver_engine.cpp    |  8 +++-----
+ 6 files changed, 39 insertions(+), 22 deletions(-)
+
+diff --git a/src/options/smt_options.toml b/src/options/smt_options.toml
+index 9f8e76f09..72f114994 100644
+--- a/src/options/smt_options.toml
++++ b/src/options/smt_options.toml
+@@ -126,12 +126,19 @@ name   = "SMT Layer"
+   help_mode  = "proof modes."
+ [[option.mode.OFF]]
+   name = "off"
++  help = "Do not produce proofs."
+ [[option.mode.PP_ONLY]]
+   name = "pp-only"
++  help = "Only produce proofs for preprocessing."
+ [[option.mode.SAT]]
+   name = "sat-proof"
++  help = "Produce proofs for preprocessing and for the SAT solver."
+ [[option.mode.FULL]]
+   name = "full-proof"
++  help = "Produce full proofs of preprocessing, SAT and theory lemmas."
++[[option.mode.FULL_STRICT]]
++  name = "full-proof-strict"
++  help = "Produce full proofs of preprocessing, SAT and theory lemmas. Additionally disable techniques that will lead to incomplete proofs."
+ 
+ [[option]]
+   name       = "checkProofs"
+diff --git a/src/prop/theory_proxy.cpp b/src/prop/theory_proxy.cpp
+index a59a7f3b1..05ad2582b 100644
+--- a/src/prop/theory_proxy.cpp
++++ b/src/prop/theory_proxy.cpp
+@@ -294,8 +294,7 @@ void TheoryProxy::explainPropagation(SatLiteral l, SatClause& explanation) {
+   Node theoryExplanation = tte.getNode();
+   if (d_env.isSatProofProducing())
+   {
+-    Assert(options().smt.proofMode != options::ProofMode::FULL
+-           || tte.getGenerator());
++    Assert(!d_env.isTheoryProofProducing() || tte.getGenerator());
+     // notify the prop engine of the explanation, which is only relevant if
+     // we are proof producing for the purposes of storing the CNF of the
+     // explanation.
+diff --git a/src/smt/env.cpp b/src/smt/env.cpp
+index 99cc691ed..baf2af9a1 100644
+--- a/src/smt/env.cpp
++++ b/src/smt/env.cpp
+@@ -115,7 +115,8 @@ bool Env::isSatProofProducing() const
+ bool Env::isTheoryProofProducing() const
+ {
+   return d_proofNodeManager != nullptr
+-         && d_options.smt.proofMode == options::ProofMode::FULL;
++         && (d_options.smt.proofMode == options::ProofMode::FULL
++             || d_options.smt.proofMode == options::ProofMode::FULL_STRICT);
+ }
+ 
+ theory::Rewriter* Env::getRewriter() { return d_rewriter.get(); }
+diff --git a/src/smt/env.h b/src/smt/env.h
+index 7799d2413..270099e2b 100644
+--- a/src/smt/env.h
++++ b/src/smt/env.h
+@@ -98,16 +98,15 @@ class Env
+ 
+   /**
+    * Check whether the SAT solver should produce proofs. Other than whether
+-   * the proof node manager is set, SAT proofs are only generated when the
+-   * unsat core mode is not ASSUMPTIONS.
++   * the proof node manager is set, SAT proofs are only generated if the proof
++   * mode is not PP_ONLY.
+    */
+   bool isSatProofProducing() const;
+ 
+   /**
+    * Check whether theories should produce proofs as well. Other than whether
+-   * the proof node manager is set, theory engine proofs are conditioned on the
+-   * relationship between proofs and unsat cores: the unsat cores are in
+-   * FULL_PROOF mode, no proofs are generated on theory engine.
++   * the proof node manager is set, theory engine proofs are generated if the
++   * proof mode is FULL or FULL_STRICT.
+    */
+   bool isTheoryProofProducing() const;
+ 
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index 22bb1e00f..07c82a163 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -163,7 +163,8 @@ void SetDefaults::setDefaultsPre(Options& opts)
+   // if check-proofs, dump-proofs, or proof-mode=full, then proofs being fully
+   // enabled is implied
+   if (opts.smt.checkProofs || opts.driver.dumpProofs
+-      || opts.smt.proofMode == options::ProofMode::FULL)
++      || opts.smt.proofMode == options::ProofMode::FULL
++      || opts.smt.proofMode == options::ProofMode::FULL_STRICT)
+   {
+     SET_AND_NOTIFY(smt, produceProofs, true, "option requiring proofs");
+   }
+@@ -171,8 +172,12 @@ void SetDefaults::setDefaultsPre(Options& opts)
+   // this check assumes the user has requested *full* proofs
+   if (opts.smt.produceProofs)
+   {
+-    // if the user requested proofs, proof mode is full
+-    SET_AND_NOTIFY(smt, proofMode, options::ProofMode::FULL, "enabling proofs");
++    // if the user requested proofs, proof mode is (at least) full
++    if (opts.smt.proofMode < options::ProofMode::FULL)
++    {
++      SET_AND_NOTIFY(
++          smt, proofMode, options::ProofMode::FULL, "enabling proofs");
++    }
+     // Default granularity is theory rewrite if we are intentionally using
+     // proofs, otherwise it is MACRO (e.g. if produce unsat cores is true)
+     if (!opts.proof.proofGranularityModeWasSetByUser
+@@ -638,11 +643,17 @@ void SetDefaults::setDefaultsPost(const LogicInfo& logic, Options& opts) const
+   // by default, symmetry breaker is on only for non-incremental QF_UF
+   if (!opts.uf.ufSymmetryBreakerWasSetByUser)
+   {
++    // Only applies to non-incremental QF_UF.
+     bool qf_uf_noinc = logic.isPure(THEORY_UF) && !logic.isQuantified()
+-                       && !opts.base.incrementalSolving
+-                       && !safeUnsatCores(opts);
+-    SET_AND_NOTIFY_VAL_SYM(
+-        uf, ufSymmetryBreaker, qf_uf_noinc, "logic and options");
++                       && !opts.base.incrementalSolving;
++    // We disable this technique when using unsat core production, since it
++    // uses a non-standard implementation that sends (unsound) lemmas during
++    // presolve.
++    // We also disable it by default if safe unsat cores are enabled, or if
++    // the proof mode is FULL_STRICT.
++    bool val = qf_uf_noinc && !safeUnsatCores(opts)
++               && opts.smt.proofMode != options::ProofMode::FULL_STRICT;
++    SET_AND_NOTIFY_VAL_SYM(uf, ufSymmetryBreaker, val, "logic and options");
+   }
+ 
+   // If in arrays, set the UF handler to arrays
+@@ -996,6 +1007,8 @@ bool SetDefaults::incompatibleWithProofs(Options& opts,
+     reason << "global-negate";
+     return true;
+   }
++  bool isFullPf = (opts.smt.proofMode == options::ProofMode::FULL
++                   || opts.smt.proofMode == options::ProofMode::FULL_STRICT);
+   if (isSygus(opts))
+   {
+     // we don't support proofs with SyGuS. One issue is that SyGuS evaluation
+@@ -1003,7 +1016,7 @@ bool SetDefaults::incompatibleWithProofs(Options& opts,
+     // proofs for sygus (sub)solvers is irrelevant, since they are not given
+     // check-sat queries. Note however that we allow proofs in non-full modes
+     // (e.g. unsat cores).
+-    if (opts.smt.proofMode == options::ProofMode::FULL)
++    if (isFullPf)
+     {
+       reason << "sygus";
+       return true;
+@@ -1016,7 +1029,7 @@ bool SetDefaults::incompatibleWithProofs(Options& opts,
+   }
+   // If proofs are required and the user did not specify a specific BV solver,
+   // we make sure to use the proof producing BITBLAST_INTERNAL solver.
+-  if (opts.smt.proofMode == options::ProofMode::FULL)
++  if (isFullPf)
+   {
+     SET_AND_NOTIFY_IF_NOT_USER_VAL_SYM(
+         bv, bvSolver, options::BVSolver::BITBLAST_INTERNAL, "proofs");
+diff --git a/src/smt/solver_engine.cpp b/src/smt/solver_engine.cpp
+index ec3764940..5f283aa87 100644
+--- a/src/smt/solver_engine.cpp
++++ b/src/smt/solver_engine.cpp
+@@ -1656,8 +1656,7 @@ void SolverEngine::getRelevantQuantTermVectors(
+     bool getDebugInfo)
+ {
+   Assert(d_state->getMode() == SmtMode::UNSAT);
+-  Assert(d_env->getOptions().smt.produceProofs
+-         && d_env->getOptions().smt.proofMode == options::ProofMode::FULL);
++  Assert(d_env->isTheoryProofProducing());
+   // note that we don't have to connect the SAT proof to the input assertions,
+   // and preprocessing proofs don't impact what instantiations are used
+   d_ucManager->getRelevantQuantTermVectors(insts, sks, getDebugInfo);
+@@ -1668,7 +1667,7 @@ std::vector<std::shared_ptr<ProofNode>> SolverEngine::getProof(
+ {
+   Trace("smt") << "SMT getProof()\n";
+   const Options& opts = d_env->getOptions();
+-  if (!opts.smt.produceProofs || opts.smt.proofMode != options::ProofMode::FULL)
++  if (!opts.smt.produceProofs || !d_env->isTheoryProofProducing())
+   {
+     throw ModalException("Cannot get a proof when proof option is off.");
+   }
+@@ -1762,8 +1761,7 @@ void SolverEngine::printInstantiations(std::ostream& out)
+   // Extract the skolemizations and instantiations
+   std::map<Node, std::vector<Node>> sks;
+   std::map<Node, InstantiationList> rinsts;
+-  if ((d_env->getOptions().smt.produceProofs
+-       && d_env->getOptions().smt.proofMode == options::ProofMode::FULL)
++  if ((d_env->getOptions().smt.produceProofs && d_env->isTheoryProofProducing())
+       && getSmtMode() == SmtMode::UNSAT)
+   {
+     // minimize skolemizations and instantiations based on proof manager
+-- 
+2.47.1
+

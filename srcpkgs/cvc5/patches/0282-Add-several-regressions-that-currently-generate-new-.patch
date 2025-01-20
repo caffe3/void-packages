@@ -1,0 +1,517 @@
+From e7fa55f6f38dca15028e4966ee0fad68399bf2f8 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 9 Jan 2025 10:54:32 -0600
+Subject: [PATCH 282/312] Add several regressions that currently generate new
+ kinds of holes in proofs (#11486)
+
+This PR add an accumulated collection of regressions that have added new
+proof holes in the last ~3 months.
+
+I am sending these in one PR, whose proof holes will be filled in
+current and forthcoming PRs.
+---
+ test/regress/cli/CMakeLists.txt               | 24 ++++++++++++++++
+ .../arith/int-eq-conflict-simple.smt2         |  5 ++++
+ .../arith/int-geq-tighten-simple.smt2         |  6 ++++
+ .../cli/regress0/arith/mod-neg-rewrite.smt2   |  5 ++++
+ .../regress0/proofs/com-galois-rewrite.smt2   |  6 ++++
+ .../proofs/dd_M301_array_norm_op.smt2         |  8 ++++++
+ .../regress0/proofs/dd_N627_fun_const.smt2    |  6 ++++
+ .../proofs/dd_ic_macro-elim-shadow.smt2       | 16 +++++++++++
+ .../quantifiers/dd_TwoSquares.z3.611901.smt2  | 28 +++++++++++++++++++
+ .../quantifiers/dd_quick_sort-q-rew.smt2      | 19 +++++++++++++
+ .../quantifiers/dd_sym_sat_9_array_rew.smt2   |  8 ++++++
+ test/regress/cli/regress0/sets/eval-test.smt2 |  4 +++
+ .../strings/ctn-decompose-3-sym-nf.smt2       | 12 ++++++++
+ .../regress0/strings/ctn-decompose-3-sym.smt2 | 10 +++++++
+ .../strings/dd_issue6913-str-inf.smt2         |  5 ++++
+ .../regress0/strings/dd_norn_235_extf_d.smt2  |  9 ++++++
+ .../cli/regress0/strings/dd_norn_675.smt2     |  7 +++++
+ .../cli/regress0/strings/dd_rw_984.smt2       |  6 ++++
+ .../strings/eager-red-str-to-int.smt2         |  5 ++++
+ test/regress/cli/regress0/strings/rw_545.smt2 |  8 ++++++
+ .../strings/str-pred-small-rw_429.smt2        |  8 ++++++
+ .../strings/str-pred-small-rw_538.smt2        |  8 ++++++
+ .../strings/str-pred-small-rw_593.smt2        |  8 ++++++
+ .../strings/str-pred-small-rw_831.smt2        |  8 ++++++
+ .../strings/str-term-small-rw_593.smt2        |  8 ++++++
+ 25 files changed, 237 insertions(+)
+ create mode 100644 test/regress/cli/regress0/arith/int-eq-conflict-simple.smt2
+ create mode 100644 test/regress/cli/regress0/arith/int-geq-tighten-simple.smt2
+ create mode 100644 test/regress/cli/regress0/arith/mod-neg-rewrite.smt2
+ create mode 100644 test/regress/cli/regress0/proofs/com-galois-rewrite.smt2
+ create mode 100644 test/regress/cli/regress0/proofs/dd_M301_array_norm_op.smt2
+ create mode 100644 test/regress/cli/regress0/proofs/dd_N627_fun_const.smt2
+ create mode 100644 test/regress/cli/regress0/proofs/dd_ic_macro-elim-shadow.smt2
+ create mode 100644 test/regress/cli/regress0/quantifiers/dd_TwoSquares.z3.611901.smt2
+ create mode 100644 test/regress/cli/regress0/quantifiers/dd_quick_sort-q-rew.smt2
+ create mode 100644 test/regress/cli/regress0/quantifiers/dd_sym_sat_9_array_rew.smt2
+ create mode 100644 test/regress/cli/regress0/sets/eval-test.smt2
+ create mode 100644 test/regress/cli/regress0/strings/ctn-decompose-3-sym-nf.smt2
+ create mode 100644 test/regress/cli/regress0/strings/ctn-decompose-3-sym.smt2
+ create mode 100644 test/regress/cli/regress0/strings/dd_issue6913-str-inf.smt2
+ create mode 100644 test/regress/cli/regress0/strings/dd_norn_235_extf_d.smt2
+ create mode 100644 test/regress/cli/regress0/strings/dd_norn_675.smt2
+ create mode 100644 test/regress/cli/regress0/strings/dd_rw_984.smt2
+ create mode 100644 test/regress/cli/regress0/strings/eager-red-str-to-int.smt2
+ create mode 100644 test/regress/cli/regress0/strings/rw_545.smt2
+ create mode 100644 test/regress/cli/regress0/strings/str-pred-small-rw_429.smt2
+ create mode 100644 test/regress/cli/regress0/strings/str-pred-small-rw_538.smt2
+ create mode 100644 test/regress/cli/regress0/strings/str-pred-small-rw_593.smt2
+ create mode 100644 test/regress/cli/regress0/strings/str-pred-small-rw_831.smt2
+ create mode 100644 test/regress/cli/regress0/strings/str-term-small-rw_593.smt2
+
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 1393fd394..abe7e7a4e 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -41,6 +41,8 @@ set(regress_0_tests
+   regress0/arith/exp-in-model.smt2
+   regress0/arith/fuzz_3-eq.smtv1.smt2
+   regress0/arith/incorrect1.smtv1.smt2
++  regress0/arith/int-eq-conflict-simple.smt2
++  regress0/arith/int-geq-tighten-simple.smt2
+   regress0/arith/integers/ackermann1.smt2
+   regress0/arith/integers/ackermann2.smt2
+   regress0/arith/integers/ackermann3.smt2
+@@ -79,6 +81,7 @@ set(regress_0_tests
+   regress0/arith/miplib2.cvc.smt2
+   regress0/arith/miplib4.cvc.smt2
+   regress0/arith/miplibtrick.smtv1.smt2
++  regress0/arith/mod-neg-rewrite.smt2
+   regress0/arith/mod-simp.smt2
+   regress0/arith/mod.01.smt2
+   regress0/arith/mult.01.smt2
+@@ -1322,11 +1325,15 @@ set(regress_0_tests
+   regress0/proofs/bvrewrite-extract.smt2
+   regress0/proofs/bvrewrite-ite.smt2
+   regress0/proofs/bvrewrite-shlbyconst.smt2
++  regress0/proofs/com-galois-rewrite.smt2
+   regress0/proofs/dd_ada_open.smt2
+   regress0/proofs/dd_alpha_eq_qpattern.smt2
+   regress0/proofs/dd_bug787_beta_reduce.smt2
+   regress0/proofs/dd_fv-bvl.smt2
++  regress0/proofs/dd_ic_macro-elim-shadow.smt2
+   regress0/proofs/dd_ic_pf_764.smt2
++  regress0/proofs/dd_M301_array_norm_op.smt2
++  regress0/proofs/dd_N627_fun_const.smt2
+   regress0/proofs/dd_pf_739.smt2
+   regress0/proofs/dd_spark_nnf_pf.smt2
+   regress0/proofs/define-fun-shadow.smt2
+@@ -1462,7 +1469,10 @@ set(regress_0_tests
+   regress0/quantifiers/clock-3.smt2
+   regress0/quantifiers/cond-var-elim-binary.smt2
+   regress0/quantifiers/dd_german169_semi_eval.smt2
++  regress0/quantifiers/dd_quick_sort-q-rew.smt2
+   regress0/quantifiers/dd_spark2014-pat.smt2
++  regress0/quantifiers/dd_sym_sat_9_array_rew.smt2
++  regress0/quantifiers/dd_TwoSquares.z3.611901.smt2
+   regress0/quantifiers/dd_SA10-027-dt-ipc.smt2
+   regress0/quantifiers/dd.german169-ieval.smt2
+   regress0/quantifiers/dd.german169-lemma-inp.smt2
+@@ -1722,6 +1732,7 @@ set(regress_0_tests
+   regress0/sets/eqtest.smt2
+   regress0/sets/error1.smt2
+   regress0/sets/error2.smt2
++  regress0/sets/eval-test.smt2
+   regress0/sets/filter-up-unsat.smt2
+   regress0/sets/filter-qe-simple.smt2
+   regress0/sets/filter-qe-simple-bv.smt2
+@@ -1821,9 +1832,16 @@ set(regress_0_tests
+   regress0/strings/code-perf.smt2
+   regress0/strings/code-sat-neg-one.smt2
+   regress0/strings/complement-simple.smt2
++  regress0/strings/ctn-decompose-3-sym.smt2
++  regress0/strings/ctn-decompose-3-sym-nf.smt2
++  regress0/strings/dd_issue6913-str-inf.smt2
++  regress0/strings/dd_norn_235_extf_d.smt2
++  regress0/strings/dd_norn_675.smt2
++  regress0/strings/dd_rw_984.smt2
+   regress0/strings/delta-trust-subs.smt2
+   regress0/strings/denghan-instance56567.smt2
+   regress0/strings/distinct-witness-id.smt2
++  regress0/strings/eager-red-str-to-int.smt2
+   regress0/strings/escchar_25.smt2
+   regress0/strings/escchar.smt2
+   regress0/strings/foreign-theory-rew-simple.smt2
+@@ -1926,6 +1944,7 @@ set(regress_0_tests
+   regress0/strings/replaceall-eval.smt2
+   regress0/strings/rewrites-re-concat.smt2
+   regress0/strings/rewrites-v2.smt2
++  regress0/strings/rw_545.smt2 
+   regress0/strings/sigma-star-mod-3.smt2
+   regress0/strings/simple-include-mem.smt2
+   regress0/strings/simple-include-subrange.smt2
+@@ -1933,7 +1952,12 @@ set(regress_0_tests
+   regress0/strings/std2.6.1.smt2
+   regress0/strings/str_unsound_ext_rew_eq.smt2
+   regress0/strings/str-in-re-mixed-include.smt2
++  regress0/strings/str-pred-small-rw_429.smt2
++  regress0/strings/str-pred-small-rw_538.smt2
++  regress0/strings/str-pred-small-rw_593.smt2
++  regress0/strings/str-pred-small-rw_831.smt2
+   regress0/strings/str-rev-simple.smt2
++  regress0/strings/str-term-small-rw_593.smt2
+   regress0/strings/str003.smt2
+   regress0/strings/str004.smt2
+   regress0/strings/str005.smt2
+diff --git a/test/regress/cli/regress0/arith/int-eq-conflict-simple.smt2 b/test/regress/cli/regress0/arith/int-eq-conflict-simple.smt2
+new file mode 100644
+index 000000000..6313f4fe4
+--- /dev/null
++++ b/test/regress/cli/regress0/arith/int-eq-conflict-simple.smt2
+@@ -0,0 +1,5 @@
++; EXPECT: unsat
++(set-logic QF_LIRA)
++(declare-fun j () Int)
++(assert (= 2.5 (to_real j)))
++(check-sat)
+diff --git a/test/regress/cli/regress0/arith/int-geq-tighten-simple.smt2 b/test/regress/cli/regress0/arith/int-geq-tighten-simple.smt2
+new file mode 100644
+index 000000000..92e815f5f
+--- /dev/null
++++ b/test/regress/cli/regress0/arith/int-geq-tighten-simple.smt2
+@@ -0,0 +1,6 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun i () Int)
++(assert (>= (to_real i) 2.5))
++(assert (= i 0))
++(check-sat)
+diff --git a/test/regress/cli/regress0/arith/mod-neg-rewrite.smt2 b/test/regress/cli/regress0/arith/mod-neg-rewrite.smt2
+new file mode 100644
+index 000000000..70b681ac8
+--- /dev/null
++++ b/test/regress/cli/regress0/arith/mod-neg-rewrite.smt2
+@@ -0,0 +1,5 @@
++; EXPECT: unsat
++(set-logic QF_NIA)
++(declare-fun x () Int)
++(assert (not (= (mod x 101) (mod x (- 101)))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/com-galois-rewrite.smt2 b/test/regress/cli/regress0/proofs/com-galois-rewrite.smt2
+new file mode 100644
+index 000000000..1ab359942
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/com-galois-rewrite.smt2
+@@ -0,0 +1,6 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun x () (_ BitVec 384))
++(assert
++(= (= x (bvadd x #b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001110001001110010110010011111100000101111001000110100100010000010100111111001011111001001001101101101110100111101011000100001010001001100010011111001101001010100110011001110101101011010001101)) true))
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/dd_M301_array_norm_op.smt2 b/test/regress/cli/regress0/proofs/dd_M301_array_norm_op.smt2
+new file mode 100644
+index 000000000..d820e5a1d
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/dd_M301_array_norm_op.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic AUFDTLIRA)
++(declare-sort ns 0)
++(declare-fun n (ns) Int)
++(define-fun t ((x ns)) Int (n x))
++(declare-const r ns)
++(assert (exists ((x (Array Int ns)) (x1 (Array Int ns))) (not (=> (= x (store x1 1 r)) (= x (store (store (store (store (store (store x 2 r) 0 r) 5 r) 3 r) 4 r) 9 r)) (= x (store x 0 r))))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/dd_N627_fun_const.smt2 b/test/regress/cli/regress0/proofs/dd_N627_fun_const.smt2
+new file mode 100644
+index 000000000..b71d8e86a
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/dd_N627_fun_const.smt2
+@@ -0,0 +1,6 @@
++; EXPECT: unsat
++(set-logic ADTLIRA)
++(define-fun i ((x Int)) Bool (or (= x 0) (= x 1)))
++(declare-datatypes ((s 0)) (((f))))
++(assert (exists ((s s)) (not (i 0))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/dd_ic_macro-elim-shadow.smt2 b/test/regress/cli/regress0/proofs/dd_ic_macro-elim-shadow.smt2
+new file mode 100644
+index 000000000..719c7a10c
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/dd_ic_macro-elim-shadow.smt2
+@@ -0,0 +1,16 @@
++; EXPECT: unsat
++(set-logic ALL)
++(define-fun in_range ((k Int) (x Int)) Bool (and (>= x 0)))
++(define-fun intmodtotal ((k Int) (a Int) (b Int)) Int (ite (= b 0) a (mod a b)))
++(define-fun l ((k Int) (x Int) (s Int) (t Int)) Bool (<= (intmodtotal k s x) t))
++(define-fun SC ((k Int) (s Int) (t Int)) Bool true)
++(declare-fun k () Int)
++(declare-fun s () Int)
++(declare-fun t () Int)
++(define-fun inv ((k Int) (s Int) (t Int)) Int s)
++(define-fun l_part ((k Int) (s Int) (t Int)) Bool (l k (inv k s t) s t))
++(define-fun left_to_right ((k Int) (s Int) (t Int)) Bool (=> (SC k s t) (l_part k s t)))
++(define-fun assertion_ltr () Bool (not (left_to_right k s t)))
++(assert (in_range k t))
++(assert assertion_ltr)
++(check-sat)
+diff --git a/test/regress/cli/regress0/quantifiers/dd_TwoSquares.z3.611901.smt2 b/test/regress/cli/regress0/quantifiers/dd_TwoSquares.z3.611901.smt2
+new file mode 100644
+index 000000000..992447acc
+--- /dev/null
++++ b/test/regress/cli/regress0/quantifiers/dd_TwoSquares.z3.611901.smt2
+@@ -0,0 +1,28 @@
++; EXPECT: unsat
++; DISABLE-TESTER: cpc
++; DISABLE-TESTER: alethe
++; cpc fails due to congruence on overloaded operator
++(set-logic ALL)
++(declare-const x Bool)
++(declare-sort S 0)
++(declare-sort S2 0)
++(declare-sort S3 0)
++(declare-sort S4 0)
++(declare-sort S5 0)
++(declare-sort S6 0)
++(declare-sort S7 0)
++(declare-fun f (S2 Int) Int)
++(declare-fun f (S3 Int) S2)
++(declare-fun f (Int Int Int) S)
++(declare-fun f7 () S3)
++(declare-fun f (S4 S5) Int)
++(declare-fun f10 (S6 Int) S4)
++(declare-fun f1 () S6)
++(declare-fun f12 (S7 Int) S5)
++(declare-fun f13 () S7)
++(declare-fun f14 () S4)
++(declare-fun f15 () S3)
++(assert (distinct (f (f (f f7 (- 1)) (+ 1 (* 4 (f f14 (f12 f13 0))))) (f (f10 f1 (- 1)) (f12 f13 (* 2 (f f14 (f12 f13 0))))) (+ 1 (* 4 (f f14 (f12 f13 0))))) (f (f (f f7 (- 1)) (+ 1 (* 4 (f f14 (f12 f13 0))))) (f (f10 f1 (- 1)) (f12 f13 (f (f f15 (* 4 (f f14 (f12 f13 0)))) 2))) (+ 1 (* 4 (f f14 (f12 f13 0)))))))
++(assert x)
++(assert (forall ((? Int) (v Int)) (= (f (f f15 ?) v) (ite x (div ? v) (div (f f14 (f12 f13 0)) (- 1))))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/quantifiers/dd_quick_sort-q-rew.smt2 b/test/regress/cli/regress0/quantifiers/dd_quick_sort-q-rew.smt2
+new file mode 100644
+index 000000000..9c54f74c7
+--- /dev/null
++++ b/test/regress/cli/regress0/quantifiers/dd_quick_sort-q-rew.smt2
+@@ -0,0 +1,19 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-datatypes ((List!1123 0)) (((Cons!1124 (head!1125 (_ BitVec 32)) (tail!1126 List!1123)) (Nil!1127))))
++(declare-datatypes ((OptInt!1128 0)) (((None!1129) (Some!1130 (i!1131 (_ BitVec 32))))))
++(declare-fun error_value!1132 () OptInt!1128)
++(declare-fun error_value!1133 () OptInt!1128)
++(declare-fun max!216 (List!1123) OptInt!1128)
++(declare-fun error_value!1134 () List!1123)
++(declare-fun smaller!233 ((_ BitVec 32) List!1123) List!1123)
++(declare-fun error_value!1135 () Bool)
++(declare-sort I_max!216 0)
++(declare-fun max!216_arg_0_1 (I_max!216) List!1123)
++(declare-sort I_smaller!233 0)
++(declare-fun smaller!233_arg_0_2 (I_smaller!233) (_ BitVec 32))
++(declare-fun smaller!233_arg_1_3 (I_smaller!233) List!1123)
++(assert (forall ((?i I_max!216)) (and (= (max!216 (max!216_arg_0_1 ?i)) (ite ((_ is Nil!1127) (max!216_arg_0_1 ?i)) None!1129 (ite ((_ is Cons!1124) (max!216_arg_0_1 ?i)) (ite ((_ is Some!1130) (max!216 (tail!1126 (max!216_arg_0_1 ?i)))) (ite (not (bvslt (head!1125 (max!216_arg_0_1 ?i)) (i!1131 (max!216 (tail!1126 (max!216_arg_0_1 ?i)))))) (Some!1130 (head!1125 (max!216_arg_0_1 ?i))) (Some!1130 (i!1131 (max!216 (tail!1126 (max!216_arg_0_1 ?i)))))) (ite ((_ is None!1129) (max!216 (tail!1126 (max!216_arg_0_1 ?i)))) (Some!1130 (head!1125 (max!216_arg_0_1 ?i))) error_value!1132)) error_value!1133))))))
++(assert (forall ((?i I_smaller!233)) (and (= (smaller!233 (smaller!233_arg_0_2 ?i) (smaller!233_arg_1_3 ?i)) (ite ((_ is Nil!1127) (smaller!233_arg_1_3 ?i)) Nil!1127 (ite ((_ is Cons!1124) (smaller!233_arg_1_3 ?i)) (ite (bvslt (head!1125 (smaller!233_arg_1_3 ?i)) (smaller!233_arg_0_2 ?i)) (Cons!1124 (head!1125 (smaller!233_arg_1_3 ?i)) (smaller!233 (smaller!233_arg_0_2 ?i) (tail!1126 (smaller!233_arg_1_3 ?i)))) (smaller!233 (smaller!233_arg_0_2 ?i) (tail!1126 (smaller!233_arg_1_3 ?i)))) error_value!1134))))))
++(assert (not (forall ((n!234 (_ BitVec 32))) (or (ite ((_ is Some!1130) (max!216 (smaller!233 (i!1131 (max!216 (smaller!233 n!234 Nil!1127))) Nil!1127))) (bvslt n!234 n!234) (or (ite ((_ is None!1129) (max!216 (smaller!233 n!234 Nil!1127))) true error_value!1135) (forall ((?z I_smaller!233)) (not (and (= (smaller!233_arg_0_2 ?z) n!234) (= (smaller!233_arg_1_3 ?z) Nil!1127)))))) (forall ((?z I_smaller!233)) (not (and (= (smaller!233_arg_0_2 ?z) (i!1131 (max!216 (smaller!233 n!234 Nil!1127)))) (= (smaller!233_arg_1_3 ?z) Nil!1127)))) (forall ((?z I_max!216)) (not (= (max!216_arg_0_1 ?z) (smaller!233 n!234 Nil!1127)))) (forall ((?z I_smaller!233)) (not (and (= (smaller!233_arg_0_2 ?z) n!234) (= (smaller!233_arg_1_3 ?z) Nil!1127))))))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/quantifiers/dd_sym_sat_9_array_rew.smt2 b/test/regress/cli/regress0/quantifiers/dd_sym_sat_9_array_rew.smt2
+new file mode 100644
+index 000000000..8db3f16d4
+--- /dev/null
++++ b/test/regress/cli/regress0/quantifiers/dd_sym_sat_9_array_rew.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-const x (Array Int (Array Int Real)))
++(declare-fun s ((Array Int (Array Int Real)) Int) Bool)
++(declare-fun a () (Array Int (Array Int Real)))
++(assert (forall ((n Int) (?a (Array Int (Array Int Real)))) (= (s ?a 0) (forall ((? Int)) (or (= 1 n) (= (select (select ?a ?) 1) (select (select x 1) 0)))))))
++(assert (not (s (store (store (store (store (store (store (store x 1 (store (select x 1) 1 0.0)) 0 (select a 0)) 3 (select x 1)) 2 (select x 0)) 5 (select x 0)) 6 (select x 0)) 7 (select x 1)) 0)))
++(check-sat)
+diff --git a/test/regress/cli/regress0/sets/eval-test.smt2 b/test/regress/cli/regress0/sets/eval-test.smt2
+new file mode 100644
+index 000000000..a947ddc31
+--- /dev/null
++++ b/test/regress/cli/regress0/sets/eval-test.smt2
+@@ -0,0 +1,4 @@
++; EXPECT: unsat
++(set-logic ALL)
++(assert (= (set.inter (set.union (set.singleton 1) (set.singleton 2)) (set.singleton 1)) (set.minus (set.singleton 3) (set.singleton 4))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/strings/ctn-decompose-3-sym-nf.smt2 b/test/regress/cli/regress0/strings/ctn-decompose-3-sym-nf.smt2
+new file mode 100644
+index 000000000..9b970e599
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/ctn-decompose-3-sym-nf.smt2
+@@ -0,0 +1,12 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () String)
++(declare-fun w () String)
++(declare-fun u () String)
++(assert (not (= y "")))
++(assert (str.contains x (str.++ y u)))
++(assert (not (str.contains x w)))
++(assert (or (= u (str.++ z w)) (= u (str.++ w z))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/strings/ctn-decompose-3-sym.smt2 b/test/regress/cli/regress0/strings/ctn-decompose-3-sym.smt2
+new file mode 100644
+index 000000000..f3eb92d19
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/ctn-decompose-3-sym.smt2
+@@ -0,0 +1,10 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () String)
++(declare-fun w () String)
++(declare-fun u () String)
++(assert (str.contains x (str.++ y z w)))
++(assert (or (not (str.contains x y)) (and (= z u) (not (str.contains x u))) (not (str.contains x w))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/strings/dd_issue6913-str-inf.smt2 b/test/regress/cli/regress0/strings/dd_issue6913-str-inf.smt2
+new file mode 100644
+index 000000000..b95eac7a1
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/dd_issue6913-str-inf.smt2
+@@ -0,0 +1,5 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun a () String)
++(assert (= (str.++ "0" (str.from_code 0) "AA") (str.++ a "0" (str.at (str.++ a a) 1) "A")))
++(check-sat)
+diff --git a/test/regress/cli/regress0/strings/dd_norn_235_extf_d.smt2 b/test/regress/cli/regress0/strings/dd_norn_235_extf_d.smt2
+new file mode 100644
+index 000000000..abac8095e
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/dd_norn_235_extf_d.smt2
+@@ -0,0 +1,9 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun v () String)
++(declare-fun a () String)
++(assert (str.in_re (str.++ v "z" a) (re.++ (re.union (str.to_re "") (re.++ (str.to_re "a") (re.++ (str.to_re "z") (re.* (str.to_re "a"))))) (str.to_re "a"))))
++(assert (str.in_re (str.++ v v) (re.++ (str.to_re "a") (re.union (str.to_re "") (re.++ (str.to_re "z") (re.union (str.to_re "") (str.to_re "a")))))))
++(assert (str.in_re a (re.range "a" "u")))
++(assert (str.in_re v (re.* (re.range "a" "u"))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/strings/dd_norn_675.smt2 b/test/regress/cli/regress0/strings/dd_norn_675.smt2
+new file mode 100644
+index 000000000..c14e382ff
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/dd_norn_675.smt2
+@@ -0,0 +1,7 @@
++; EXPECT: unsat
++(set-logic QF_S)
++(declare-fun v () String)
++(declare-fun a () String)
++(assert (str.in_re (str.++ v a) (re.* (re.++ (str.to_re "b") (str.to_re "z")))))
++(assert (str.in_re v (str.to_re "a")))
++(check-sat)
+diff --git a/test/regress/cli/regress0/strings/dd_rw_984.smt2 b/test/regress/cli/regress0/strings/dd_rw_984.smt2
+new file mode 100644
+index 000000000..b09139c1a
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/dd_rw_984.smt2
+@@ -0,0 +1,6 @@
++; EXPECT: unsat
++(set-logic QF_S)
++(declare-fun x () String)
++(declare-fun y () String)
++(assert (distinct (str.replace (str.replace "A" x y) "B" y) (str.replace "A" x (str.replace y "B" y))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/strings/eager-red-str-to-int.smt2 b/test/regress/cli/regress0/strings/eager-red-str-to-int.smt2
+new file mode 100644
+index 000000000..3436fa233
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/eager-red-str-to-int.smt2
+@@ -0,0 +1,5 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun x () String)
++(assert (< (str.to_int x) (- 2)))
++(check-sat)
+diff --git a/test/regress/cli/regress0/strings/rw_545.smt2 b/test/regress/cli/regress0/strings/rw_545.smt2
+new file mode 100644
+index 000000000..9b3442849
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/rw_545.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic QF_SLIA)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () Int)
++(assert (not (= (str.replace x (str.replace x "A" "B") "A") (str.replace x (str.replace x "A" x) "A"))))
++(check-sat)
++(exit)
+diff --git a/test/regress/cli/regress0/strings/str-pred-small-rw_429.smt2 b/test/regress/cli/regress0/strings/str-pred-small-rw_429.smt2
+new file mode 100644
+index 000000000..f988913b8
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/str-pred-small-rw_429.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic QF_SLIA)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () Int)
++(assert (not (= (= "B" (str.from_int z)) false)))
++(check-sat)
++(exit)
+diff --git a/test/regress/cli/regress0/strings/str-pred-small-rw_538.smt2 b/test/regress/cli/regress0/strings/str-pred-small-rw_538.smt2
+new file mode 100644
+index 000000000..282f1925e
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/str-pred-small-rw_538.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic QF_SLIA)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () Int)
++(assert (not (= (= "" (str.replace x y x)) (= x ""))))
++(check-sat)
++(exit)
+diff --git a/test/regress/cli/regress0/strings/str-pred-small-rw_593.smt2 b/test/regress/cli/regress0/strings/str-pred-small-rw_593.smt2
+new file mode 100644
+index 000000000..176332001
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/str-pred-small-rw_593.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic QF_SLIA)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () Int)
++(assert (not (= (str.prefixof (str.substr x 1 0) y) true)))
++(check-sat)
++(exit)
+diff --git a/test/regress/cli/regress0/strings/str-pred-small-rw_831.smt2 b/test/regress/cli/regress0/strings/str-pred-small-rw_831.smt2
+new file mode 100644
+index 000000000..34a5a71eb
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/str-pred-small-rw_831.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic QF_SLIA)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () Int)
++(assert (not (= (not (str.contains x "A")) (= x (str.replace x "A" "B")))))
++(check-sat)
++(exit)
+diff --git a/test/regress/cli/regress0/strings/str-term-small-rw_593.smt2 b/test/regress/cli/regress0/strings/str-term-small-rw_593.smt2
+new file mode 100644
+index 000000000..88f1ae419
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/str-term-small-rw_593.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic QF_SLIA)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () Int)
++(assert (not (= (str.replace x (str.replace "A" y x) "A") (str.replace x (str.replace y "A" x) y))))
++(check-sat)
++(exit)
+-- 
+2.47.1
+

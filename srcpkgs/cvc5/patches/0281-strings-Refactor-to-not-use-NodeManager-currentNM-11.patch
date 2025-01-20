@@ -1,0 +1,505 @@
+From 5f55821d840b722dbe3d104ceac5760efae5a2f2 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Wed, 8 Jan 2025 18:46:08 -0600
+Subject: [PATCH 281/312] strings: Refactor to not use NodeManager::currentNM()
+ (#11499)
+
+This PR introduces some calls to `NodeManager::currentNM()`, which will
+be removed in subsequent PRs.
+---
+ src/theory/strings/base_solver.cpp          |  4 +-
+ src/theory/strings/core_solver.cpp          | 12 +++---
+ src/theory/strings/eager_solver.cpp         |  2 +-
+ src/theory/strings/infer_info.cpp           |  4 +-
+ src/theory/strings/infer_info.h             |  2 +-
+ src/theory/strings/inference_manager.cpp    |  9 ++--
+ src/theory/strings/regexp_entail.cpp        | 17 ++++----
+ src/theory/strings/regexp_entail.h          |  5 ++-
+ src/theory/strings/sequences_rewriter.cpp   |  3 +-
+ src/theory/strings/theory_strings_utils.cpp |  6 +--
+ src/theory/strings/theory_strings_utils.h   |  2 +-
+ src/theory/strings/type_enumerator.cpp      | 46 +++++++++++++--------
+ src/theory/strings/type_enumerator.h        | 22 +++++++---
+ 13 files changed, 80 insertions(+), 54 deletions(-)
+
+diff --git a/src/theory/strings/base_solver.cpp b/src/theory/strings/base_solver.cpp
+index a6e3c8271..bbca3eeeb 100644
+--- a/src/theory/strings/base_solver.cpp
++++ b/src/theory/strings/base_solver.cpp
+@@ -535,7 +535,7 @@ void BaseSolver::checkConstantEquivalenceClasses(TermIndex* ti,
+             bei.d_base = n;
+             if (!exp.empty())
+             {
+-              bei.d_exp = utils::mkAnd(exp);
++              bei.d_exp = utils::mkAnd(nodeManager(), exp);
+             }
+             Trace("strings-debug")
+                 << "Set eqc best content " << n << " to " << nct
+@@ -556,7 +556,7 @@ void BaseSolver::checkConstantEquivalenceClasses(TermIndex* ti,
+         {
+           bei.d_bestContent = c;
+           bei.d_base = n;
+-          bei.d_exp = utils::mkAnd(exp);
++          bei.d_exp = utils::mkAnd(nodeManager(), exp);
+           Trace("strings-debug")
+               << "Set eqc const " << n << " to " << c
+               << ", explanation = " << bei.d_exp << std::endl;
+diff --git a/src/theory/strings/core_solver.cpp b/src/theory/strings/core_solver.cpp
+index 6f7036ce7..329e4f5c4 100644
+--- a/src/theory/strings/core_solver.cpp
++++ b/src/theory/strings/core_solver.cpp
+@@ -262,7 +262,7 @@ void CoreSolver::checkFlatForm(std::vector<Node>& eqc,
+             conc_c.push_back(b[d_flat_form_index[b][j]].eqNode(emp));
+           }
+           Assert(!conc_c.empty());
+-          conc = utils::mkAnd(conc_c);
++          conc = utils::mkAnd(nodeManager(), conc_c);
+           infType = InferenceId::STRINGS_F_ENDPOINT_EMP;
+           Assert(count > 0);
+           // swap, will enforce is empty past current
+@@ -302,7 +302,7 @@ void CoreSolver::checkFlatForm(std::vector<Node>& eqc,
+             conc_c.push_back(a[d_flat_form_index[a][j]].eqNode(emp));
+           }
+           Assert(!conc_c.empty());
+-          conc = utils::mkAnd(conc_c);
++          conc = utils::mkAnd(nodeManager(), conc_c);
+           infType = InferenceId::STRINGS_F_ENDPOINT_EMP;
+           Assert(count > 0);
+           break;
+@@ -366,7 +366,7 @@ void CoreSolver::checkFlatForm(std::vector<Node>& eqc,
+                 lexpc.insert(lexpc.end(), lexp.begin(), lexp.end());
+                 lexpc.insert(lexpc.end(), lexp2.begin(), lexp2.end());
+                 d_im.addToExplanation(lcurr, lcc, lexpc);
+-                lant = utils::mkAnd(lexpc);
++                lant = utils::mkAnd(nodeManager(), lexpc);
+                 conc = ac.eqNode(bc);
+                 infType = InferenceId::STRINGS_F_UNIFY;
+                 break;
+@@ -590,7 +590,7 @@ void CoreSolver::checkNormalFormsEqProp()
+       std::vector<Node> nf_exp(nfe.d_exp.begin(), nfe.d_exp.end());
+       if (!nfe_eq.d_exp.empty())
+       {
+-        nf_exp.push_back(utils::mkAnd(nfe_eq.d_exp));
++        nf_exp.push_back(utils::mkAnd(nodeManager(), nfe_eq.d_exp));
+       }
+       Node eq = nfe.d_base.eqNode(nfe_eq.d_base);
+       d_im.sendInference(nf_exp, eq, InferenceId::STRINGS_NORMAL_FORM);
+@@ -1337,7 +1337,7 @@ bool CoreSolver::processSimpleNEq(NormalForm& nfi,
+       Node eq = x.eqNode(y);
+       d_im.addToExplanation(xLenTerm, yLenTerm, lenExp);
+       // set the explanation for length
+-      Node lant = utils::mkAnd(lenExp);
++      Node lant = utils::mkAnd(nodeManager(), lenExp);
+       ant.push_back(lant);
+       d_im.sendInference(ant, eq, InferenceId::STRINGS_N_UNIFY, isRev);
+       break;
+@@ -1740,7 +1740,7 @@ bool CoreSolver::processSimpleNEq(NormalForm& nfi,
+           nodeManager(), y, x, ProofRule::CONCAT_LPROP, isRev, skc, newSkolems);
+     }
+     // add the length constraint(s) as the last antecedant
+-    Node lc = utils::mkAnd(lcVec);
++    Node lc = utils::mkAnd(nodeManager(), lcVec);
+     iinfo.d_premises.push_back(lc);
+     iinfo.d_idRev = isRev;
+     pinfer.push_back(info);
+diff --git a/src/theory/strings/eager_solver.cpp b/src/theory/strings/eager_solver.cpp
+index bb35f25e3..23b5b69c7 100644
+--- a/src/theory/strings/eager_solver.cpp
++++ b/src/theory/strings/eager_solver.cpp
+@@ -30,7 +30,7 @@ EagerSolver::EagerSolver(Env& env, SolverState& state, TermRegistry& treg)
+       d_state(state),
+       d_treg(treg),
+       d_aent(env.getRewriter()),
+-      d_rent(env.getRewriter())
++      d_rent(env.getNodeManager(), env.getRewriter())
+ {
+ }
+ 
+diff --git a/src/theory/strings/infer_info.cpp b/src/theory/strings/infer_info.cpp
+index 94a1e2e34..fc20d89d3 100644
+--- a/src/theory/strings/infer_info.cpp
++++ b/src/theory/strings/infer_info.cpp
+@@ -65,10 +65,10 @@ bool InferInfo::isFact() const
+          && d_noExplain.empty();
+ }
+ 
+-Node InferInfo::getPremises() const
++Node InferInfo::getPremises(NodeManager* nm) const
+ {
+   // d_noExplain is a subset of d_ant
+-  return utils::mkAnd(d_premises);
++  return utils::mkAnd(nm, d_premises);
+ }
+ 
+ std::ostream& operator<<(std::ostream& out, const InferInfo& ii)
+diff --git a/src/theory/strings/infer_info.h b/src/theory/strings/infer_info.h
+index 2daf58d81..91e0b575a 100644
+--- a/src/theory/strings/infer_info.h
++++ b/src/theory/strings/infer_info.h
+@@ -137,7 +137,7 @@ class InferInfo : public TheoryInference
+    */
+   bool isFact() const;
+   /** Get premises */
+-  Node getPremises() const;
++  Node getPremises(NodeManager* nm) const;
+ };
+ 
+ /**
+diff --git a/src/theory/strings/inference_manager.cpp b/src/theory/strings/inference_manager.cpp
+index a1190f78f..6ebac84f7 100644
+--- a/src/theory/strings/inference_manager.cpp
++++ b/src/theory/strings/inference_manager.cpp
+@@ -370,11 +370,12 @@ void InferenceManager::processConflict(const InferInfo& ii)
+ 
+ void InferenceManager::processFact(InferInfo& ii, ProofGenerator*& pg)
+ {
+-  Trace("strings-assert") << "(assert (=> " << ii.getPremises() << " "
+-                          << ii.d_conc << ")) ; fact " << ii.getId() << std::endl;
++  Trace("strings-assert") << "(assert (=> " << ii.getPremises(nodeManager())
++                          << " " << ii.d_conc << ")) ; fact " << ii.getId()
++                          << std::endl;
+   Trace("strings-lemma") << "Strings::Fact: " << ii.d_conc << " from "
+-                         << ii.getPremises() << " by " << ii.getId()
+-                         << std::endl;
++                         << ii.getPremises(nodeManager()) << " by "
++                         << ii.getId() << std::endl;
+   if (d_ipc != nullptr)
+   {
+     // ensure the proof generator is ready to explain this fact in the
+diff --git a/src/theory/strings/regexp_entail.cpp b/src/theory/strings/regexp_entail.cpp
+index 12c7ff675..88c20dc7b 100644
+--- a/src/theory/strings/regexp_entail.cpp
++++ b/src/theory/strings/regexp_entail.cpp
+@@ -29,19 +29,19 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace strings {
+ 
+-RegExpEntail::RegExpEntail(Rewriter* r) : d_aent(r)
++RegExpEntail::RegExpEntail(NodeManager* nm, Rewriter* r) : d_aent(r)
+ {
+-  d_zero = NodeManager::currentNM()->mkConstInt(Rational(0));
+-  d_one = NodeManager::currentNM()->mkConstInt(Rational(1));
++  d_zero = nm->mkConstInt(Rational(0));
++  d_one = nm->mkConstInt(Rational(1));
+ }
+ 
+-Node RegExpEntail::simpleRegexpConsume(std::vector<Node>& mchildren,
++Node RegExpEntail::simpleRegexpConsume(NodeManager* nm,
++                                       std::vector<Node>& mchildren,
+                                        std::vector<Node>& children,
+                                        int dir)
+ {
+   Trace("regexp-ext-rewrite-debug")
+       << "Simple reg exp consume, dir=" << dir << ":" << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+   unsigned tmin = dir < 0 ? 0 : dir;
+   unsigned tmax = dir < 0 ? 1 : dir;
+   // try to remove off front and back
+@@ -203,7 +203,7 @@ Node RegExpEntail::simpleRegexpConsume(std::vector<Node>& mchildren,
+               mchildren_s.push_back(xc);
+               utils::getConcat(rc[i], children_s);
+               Trace("regexp-ext-rewrite-debug") << push;
+-              Node ret = simpleRegexpConsume(mchildren_s, children_s, t);
++              Node ret = simpleRegexpConsume(nm, mchildren_s, children_s, t);
+               Trace("regexp-ext-rewrite-debug") << pop;
+               if (!ret.isNull())
+               {
+@@ -281,7 +281,7 @@ Node RegExpEntail::simpleRegexpConsume(std::vector<Node>& mchildren,
+             Trace("regexp-ext-rewrite-debug")
+                 << "- recursive call on body of star" << std::endl;
+             Trace("regexp-ext-rewrite-debug") << push;
+-            Node ret = simpleRegexpConsume(mchildren_s, children_s, t);
++            Node ret = simpleRegexpConsume(nm, mchildren_s, children_s, t);
+             Trace("regexp-ext-rewrite-debug") << pop;
+             if (!ret.isNull())
+             {
+@@ -320,7 +320,8 @@ Node RegExpEntail::simpleRegexpConsume(std::vector<Node>& mchildren,
+                   Trace("regexp-ext-rewrite-debug")
+                       << "- recursive call required repeat star" << std::endl;
+                   Trace("regexp-ext-rewrite-debug") << push;
+-                  Node rets = simpleRegexpConsume(mchildren_ss, children_ss, t);
++                  Node rets =
++                      simpleRegexpConsume(nm, mchildren_ss, children_ss, t);
+                   Trace("regexp-ext-rewrite-debug") << pop;
+                   if (!rets.isNull())
+                   {
+diff --git a/src/theory/strings/regexp_entail.h b/src/theory/strings/regexp_entail.h
+index 37c04a231..51801a022 100644
+--- a/src/theory/strings/regexp_entail.h
++++ b/src/theory/strings/regexp_entail.h
+@@ -35,7 +35,7 @@ namespace strings {
+ class RegExpEntail
+ {
+  public:
+-  RegExpEntail(Rewriter* r);
++  RegExpEntail(NodeManager* nm, Rewriter* r);
+   /** simple regular expression consume
+    *
+    * This method is called when we are rewriting a membership of the form
+@@ -91,7 +91,8 @@ class RegExpEntail
+    *   "bb" ++ x  in ( "b" ++ ("a")* )*
+    * is equivalent to false.
+    */
+-  static Node simpleRegexpConsume(std::vector<Node>& mchildren,
++  static Node simpleRegexpConsume(NodeManager* nm,
++                                  std::vector<Node>& mchildren,
+                                   std::vector<Node>& children,
+                                   int dir = -1);
+   /**
+diff --git a/src/theory/strings/sequences_rewriter.cpp b/src/theory/strings/sequences_rewriter.cpp
+index adf0e193c..69762be81 100644
+--- a/src/theory/strings/sequences_rewriter.cpp
++++ b/src/theory/strings/sequences_rewriter.cpp
+@@ -1571,7 +1571,8 @@ Node SequencesRewriter::rewriteViaStrInReConsume(const Node& node)
+     utils::getConcat(r, children);
+     std::vector<Node> mchildren;
+     utils::getConcat(node[0], mchildren);
+-    Node scn = RegExpEntail::simpleRegexpConsume(mchildren, children, dir);
++    Node scn =
++        RegExpEntail::simpleRegexpConsume(d_nm, mchildren, children, dir);
+     if (!scn.isNull())
+     {
+       return scn;
+diff --git a/src/theory/strings/theory_strings_utils.cpp b/src/theory/strings/theory_strings_utils.cpp
+index fac9c5e31..f17b5446d 100644
+--- a/src/theory/strings/theory_strings_utils.cpp
++++ b/src/theory/strings/theory_strings_utils.cpp
+@@ -46,7 +46,7 @@ uint32_t getDefaultAlphabetCardinality()
+   return 196608;
+ }
+ 
+-Node mkAnd(const std::vector<Node>& a)
++Node mkAnd(NodeManager* nm, const std::vector<Node>& a)
+ {
+   std::vector<Node> au;
+   for (const Node& ai : a)
+@@ -58,13 +58,13 @@ Node mkAnd(const std::vector<Node>& a)
+   }
+   if (au.empty())
+   {
+-    return NodeManager::currentNM()->mkConst(true);
++    return nm->mkConst(true);
+   }
+   else if (au.size() == 1)
+   {
+     return au[0];
+   }
+-  return NodeManager::currentNM()->mkNode(Kind::AND, au);
++  return nm->mkNode(Kind::AND, au);
+ }
+ 
+ void flattenOp(Kind k, Node n, std::vector<Node>& conj)
+diff --git a/src/theory/strings/theory_strings_utils.h b/src/theory/strings/theory_strings_utils.h
+index a681075f7..fe0cf6f3c 100644
+--- a/src/theory/strings/theory_strings_utils.h
++++ b/src/theory/strings/theory_strings_utils.h
+@@ -34,7 +34,7 @@ uint32_t getDefaultAlphabetCardinality();
+  * Make the conjunction of nodes in a. Removes duplicate conjuncts, returns
+  * true if a is empty, and a single literal if a has size 1.
+  */
+-Node mkAnd(const std::vector<Node>& a);
++Node mkAnd(NodeManager* nm, const std::vector<Node>& a);
+ 
+ /**
+  * Adds all (non-duplicate) children of <k> applications from n to conj. For
+diff --git a/src/theory/strings/type_enumerator.cpp b/src/theory/strings/type_enumerator.cpp
+index 504450616..0524d943b 100644
+--- a/src/theory/strings/type_enumerator.cpp
++++ b/src/theory/strings/type_enumerator.cpp
+@@ -23,7 +23,8 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace strings {
+ 
+-Node makeStandardModelConstant(const std::vector<unsigned>& vec,
++Node makeStandardModelConstant(NodeManager* nm,
++                               const std::vector<unsigned>& vec,
+                                uint32_t cardinality)
+ {
+   std::vector<unsigned> mvec;
+@@ -58,7 +59,7 @@ Node makeStandardModelConstant(const std::vector<unsigned>& vec,
+   {
+     mvec = vec;
+   }
+-  return NodeManager::currentNM()->mkConst(String(mvec));
++  return nm->mkConst(String(mvec));
+ }
+ 
+ WordIter::WordIter(uint32_t startLength) : d_hasEndLength(false), d_endLength(0)
+@@ -127,18 +128,21 @@ Node SEnumLen::getCurrent() const { return d_curr; }
+ 
+ bool SEnumLen::isFinished() const { return d_curr.isNull(); }
+ 
+-StringEnumLen::StringEnumLen(uint32_t startLength,
++StringEnumLen::StringEnumLen(NodeManager* nm,
++                             uint32_t startLength,
+                              uint32_t endLength,
+                              uint32_t card)
+-    : SEnumLen(NodeManager::currentNM()->stringType(), startLength, endLength),
++    : SEnumLen(nm->stringType(), startLength, endLength),
++      d_nm(nm),
+       d_cardinality(card)
+ {
+   mkCurr();
+ }
+ 
+-StringEnumLen::StringEnumLen(uint32_t startLength, uint32_t card)
+-    : SEnumLen(NodeManager::currentNM()->stringType(), startLength),
+-      d_cardinality(card)
++StringEnumLen::StringEnumLen(NodeManager* nm,
++                             uint32_t startLength,
++                             uint32_t card)
++    : SEnumLen(nm->stringType(), startLength), d_nm(nm), d_cardinality(card)
+ {
+   mkCurr();
+ }
+@@ -157,24 +161,26 @@ bool StringEnumLen::increment()
+ 
+ void StringEnumLen::mkCurr()
+ {
+-  d_curr = makeStandardModelConstant(d_witer->getData(), d_cardinality);
++  d_curr = makeStandardModelConstant(d_nm, d_witer->getData(), d_cardinality);
+ }
+ 
+-SeqEnumLen::SeqEnumLen(TypeNode tn,
++SeqEnumLen::SeqEnumLen(NodeManager* nm,
++                       TypeNode tn,
+                        TypeEnumeratorProperties* tep,
+                        uint32_t startLength)
+-    : SEnumLen(tn, startLength)
++    : SEnumLen(tn, startLength), d_nm(nm)
+ {
+   d_elementEnumerator.reset(
+       new TypeEnumerator(d_type.getSequenceElementType(), tep));
+   mkCurr();
+ }
+ 
+-SeqEnumLen::SeqEnumLen(TypeNode tn,
++SeqEnumLen::SeqEnumLen(NodeManager* nm,
++                       TypeNode tn,
+                        TypeEnumeratorProperties* tep,
+                        uint32_t startLength,
+                        uint32_t endLength)
+-    : SEnumLen(tn, startLength, endLength)
++    : SEnumLen(tn, startLength, endLength), d_nm(nm)
+ {
+   d_elementEnumerator.reset(
+       new TypeEnumerator(d_type.getSequenceElementType(), tep));
+@@ -186,6 +192,7 @@ SeqEnumLen::SeqEnumLen(TypeNode tn,
+ 
+ SeqEnumLen::SeqEnumLen(const SeqEnumLen& wenum)
+     : SEnumLen(wenum),
++      d_nm(wenum.d_nm),
+       d_elementEnumerator(new TypeEnumerator(*wenum.d_elementEnumerator)),
+       d_elementDomain(wenum.d_elementDomain)
+ {
+@@ -221,8 +228,7 @@ void SeqEnumLen::mkCurr()
+     seq.push_back(d_elementDomain[i]);
+   }
+   // make sequence from seq
+-  d_curr = NodeManager::currentNM()->mkConst(
+-      Sequence(d_type.getSequenceElementType(), seq));
++  d_curr = d_nm->mkConst(Sequence(d_type.getSequenceElementType(), seq));
+ }
+ 
+ SEnumLenSet::SEnumLenSet(TypeEnumeratorProperties* tep) : d_tep(tep) {}
+@@ -239,21 +245,24 @@ SEnumLen* SEnumLenSet::getEnumerator(size_t len, TypeNode tn)
+   if (tn.isString())  // string-only
+   {
+     d_sels[key].reset(
+-        new StringEnumLen(len,
++        new StringEnumLen(NodeManager::currentNM(),
++                          len,
+                           len,
+                           d_tep ? d_tep->getStringsAlphabetCard()
+                                 : utils::getDefaultAlphabetCardinality()));
+   }
+   else
+   {
+-    d_sels[key].reset(new SeqEnumLen(tn, d_tep, len, len));
++    d_sels[key].reset(
++        new SeqEnumLen(NodeManager::currentNM(), tn, d_tep, len, len));
+   }
+   return d_sels[key].get();
+ }
+ 
+ StringEnumerator::StringEnumerator(TypeNode type, TypeEnumeratorProperties* tep)
+     : TypeEnumeratorBase<StringEnumerator>(type),
+-      d_wenum(0,
++      d_wenum(NodeManager::currentNM(),
++              0,
+               tep ? tep->getStringsAlphabetCard()
+                   : utils::getDefaultAlphabetCardinality())
+ {
+@@ -279,7 +288,8 @@ bool StringEnumerator::isFinished() { return d_wenum.isFinished(); }
+ 
+ SequenceEnumerator::SequenceEnumerator(TypeNode type,
+                                        TypeEnumeratorProperties* tep)
+-    : TypeEnumeratorBase<SequenceEnumerator>(type), d_wenum(type, tep, 0)
++    : TypeEnumeratorBase<SequenceEnumerator>(type),
++      d_wenum(NodeManager::currentNM(), type, tep, 0)
+ {
+ }
+ 
+diff --git a/src/theory/strings/type_enumerator.h b/src/theory/strings/type_enumerator.h
+index aac28ac32..2a9eb3259 100644
+--- a/src/theory/strings/type_enumerator.h
++++ b/src/theory/strings/type_enumerator.h
+@@ -45,7 +45,8 @@ namespace strings {
+  * @return A string whose characters have the code points corresponding
+  * to vec in the standard model construction described above.
+  */
+-Node makeStandardModelConstant(const std::vector<unsigned>& vec,
++Node makeStandardModelConstant(NodeManager* nm,
++                               const std::vector<unsigned>& vec,
+                                uint32_t cardinality);
+ 
+ /**
+@@ -123,14 +124,19 @@ class StringEnumLen : public SEnumLen
+ {
+  public:
+   /** For strings */
+-  StringEnumLen(uint32_t startLength, uint32_t card);
+-  StringEnumLen(uint32_t startLength, uint32_t endLength, uint32_t card);
++  StringEnumLen(NodeManager* nm, uint32_t startLength, uint32_t card);
++  StringEnumLen(NodeManager* nm,
++                uint32_t startLength,
++                uint32_t endLength,
++                uint32_t card);
+   /** destructor */
+   ~StringEnumLen() {}
+   /** increment */
+   bool increment() override;
+ 
+  private:
++  /** The associated node manager */
++  NodeManager* d_nm;
+   /** The cardinality of the alphabet */
+   uint32_t d_cardinality;
+   /** Make the current term from d_data */
+@@ -144,8 +150,12 @@ class SeqEnumLen : public SEnumLen
+ {
+  public:
+   /** For sequences */
+-  SeqEnumLen(TypeNode tn, TypeEnumeratorProperties* tep, uint32_t startLength);
+-  SeqEnumLen(TypeNode tn,
++  SeqEnumLen(NodeManager* nm,
++             TypeNode tn,
++             TypeEnumeratorProperties* tep,
++             uint32_t startLength);
++  SeqEnumLen(NodeManager* nm,
++             TypeNode tn,
+              TypeEnumeratorProperties* tep,
+              uint32_t startLength,
+              uint32_t endLength);
+@@ -157,6 +167,8 @@ class SeqEnumLen : public SEnumLen
+   bool increment() override;
+ 
+  private:
++  /** The associated node manager */
++  NodeManager* d_nm;
+   /** an enumerator for the elements' type */
+   std::unique_ptr<TypeEnumerator> d_elementEnumerator;
+   /** The domain */
+-- 
+2.47.1
+

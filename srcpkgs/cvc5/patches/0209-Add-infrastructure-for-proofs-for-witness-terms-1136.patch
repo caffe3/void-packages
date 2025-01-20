@@ -1,0 +1,240 @@
+From daab1239b5055f994dc8d929ee0f14f061a1396a Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 3 Dec 2024 11:32:35 -0600
+Subject: [PATCH 209/312] Add infrastructure for proofs for witness terms
+ (#11364)
+
+Witness terms are introduced and eliminated in CEGQI. This PR adds a
+dedicated proof generator for the exists that are introduced in this
+manner.
+
+For now, we simply add TRUST steps of a new kind VALID_WITNESS.
+---
+ src/CMakeLists.txt                            |  2 +
+ src/expr/elim_witness_converter.cpp           |  4 +-
+ src/proof/trust_id.cpp                        |  1 +
+ src/proof/trust_id.h                          |  5 ++
+ src/proof/valid_witness_proof_generator.cpp   | 38 ++++++++++++++
+ src/proof/valid_witness_proof_generator.h     | 52 +++++++++++++++++++
+ .../quantifiers/cegqi/ceg_instantiator.cpp    |  9 +++-
+ .../quantifiers/cegqi/ceg_instantiator.h      |  7 ++-
+ 8 files changed, 115 insertions(+), 3 deletions(-)
+ create mode 100644 src/proof/valid_witness_proof_generator.cpp
+ create mode 100644 src/proof/valid_witness_proof_generator.h
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 2d02c302b..cb2ed3886 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -234,6 +234,8 @@ libcvc5_add_sources(
+   proof/theory_proof_step_buffer.h
+   proof/unsat_core.cpp
+   proof/unsat_core.h
++  proof/valid_witness_proof_generator.cpp
++  proof/valid_witness_proof_generator.h
+   proof/alethe/alethe_let_binding.cpp
+   proof/alethe/alethe_let_binding.h
+   proof/alethe/alethe_node_converter.cpp
+diff --git a/src/expr/elim_witness_converter.cpp b/src/expr/elim_witness_converter.cpp
+index 978f480fa..83f0c5745 100644
+--- a/src/expr/elim_witness_converter.cpp
++++ b/src/expr/elim_witness_converter.cpp
+@@ -48,7 +48,9 @@ Node ElimWitnessNodeConverter::postConvert(Node n)
+     Assert(qn.getKind() == Kind::FORALL);
+     Node k = skm->mkSkolemFunction(SkolemId::QUANTIFIERS_SKOLEMIZE,
+                                    {qn, nm->mkConstInt(Rational(0))});
+-    d_exists.push_back(qn.notNode());
++    // save the non-normalized version, which makes it easier to e.g.
++    // track proofs
++    d_exists.push_back(q.notNode());
+     return k;
+   }
+   return n;
+diff --git a/src/proof/trust_id.cpp b/src/proof/trust_id.cpp
+index ab14fd248..8c9f56891 100644
+--- a/src/proof/trust_id.cpp
++++ b/src/proof/trust_id.cpp
+@@ -91,6 +91,7 @@ const char* toString(TrustId id)
+     case TrustId::ARITH_PRED_CAST_TYPE: return "ARITH_PRED_CAST_TYPE";
+     case TrustId::RE_ELIM: return "RE_ELIM";
+     case TrustId::QUANTIFIERS_PREPROCESS: return "QUANTIFIERS_PREPROCESS";
++    case TrustId::VALID_WITNESS: return "VALID_WITNESS";
+     case TrustId::SUBTYPE_ELIMINATION: return "SUBTYPE_ELIMINATION";
+     case TrustId::MACRO_THEORY_REWRITE_RCONS:
+       return "MACRO_THEORY_REWRITE_RCONS";
+diff --git a/src/proof/trust_id.h b/src/proof/trust_id.h
+index 184f65206..348573612 100644
+--- a/src/proof/trust_id.h
++++ b/src/proof/trust_id.h
+@@ -172,6 +172,11 @@ enum class TrustId : uint32_t
+   RE_ELIM,
+   /** A quantifiers preprocessing step that was given without a proof */
+   QUANTIFIERS_PREPROCESS,
++  /**
++   * An existential corresponding to a witness term introduced e.g. in
++   * quantifier instantiation
++   */
++  VALID_WITNESS,
+   /** A subtype elimination step that could not be processed */
+   SUBTYPE_ELIMINATION,
+   /** A rewrite required for showing a macro theory rewrite */
+diff --git a/src/proof/valid_witness_proof_generator.cpp b/src/proof/valid_witness_proof_generator.cpp
+new file mode 100644
+index 000000000..244596534
+--- /dev/null
++++ b/src/proof/valid_witness_proof_generator.cpp
+@@ -0,0 +1,38 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Valid witness proof generator utility.
++ */
++
++#include "proof/valid_witness_proof_generator.h"
++
++#include "proof/proof.h"
++
++namespace cvc5::internal {
++
++ValidWitnessProofGenerator::ValidWitnessProofGenerator(Env& env) : EnvObj(env) {}
++
++ValidWitnessProofGenerator::~ValidWitnessProofGenerator() {}
++
++std::shared_ptr<ProofNode> ValidWitnessProofGenerator::getProofFor(Node fact) 
++{
++  Trace("valid-witness") << "Prove " << fact << std::endl;
++  // proofs not yet supported
++  CDProof cdp(d_env);
++  cdp.addTrustedStep(fact, TrustId::VALID_WITNESS, {}, {});
++  return cdp.getProofFor(fact);
++}
++
++std::string ValidWitnessProofGenerator::identify() const { return "ValidWitnessProofGenerator"; }
++
++}  // namespace cvc5::internal
++
+diff --git a/src/proof/valid_witness_proof_generator.h b/src/proof/valid_witness_proof_generator.h
+new file mode 100644
+index 000000000..33073d469
+--- /dev/null
++++ b/src/proof/valid_witness_proof_generator.h
+@@ -0,0 +1,52 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Valid witness proof generator utility.
++ */
++
++#include "cvc5_private.h"
++
++#ifndef CVC5__PROOF__VALID_WITNESS_PROOF_GENERATOR_H
++#define CVC5__PROOF__VALID_WITNESS_PROOF_GENERATOR_H
++
++#include "proof/method_id.h"
++#include "proof/proof_generator.h"
++#include "smt/env_obj.h"
++
++namespace cvc5::internal {
++
++class ProofNode;
++class ProofNodeManager;
++
++/**
++ * Proof generator expected to prove (exists x. P) for all witness terms
++ * (witness x. P) introduced.
++ */
++class ValidWitnessProofGenerator : protected EnvObj, public ProofGenerator
++{
++ public:
++  /**
++   * @param env Reference to the environment
++   */
++  ValidWitnessProofGenerator(Env& env);
++  virtual ~ValidWitnessProofGenerator();
++  /**
++   * Get proof for fact.
++   */
++  std::shared_ptr<ProofNode> getProofFor(Node fact) override;
++  /** identify */
++  std::string identify() const override;
++};
++
++}  // namespace cvc5::internal
++
++#endif /* CVC5__PROOF__VALID_WITNESS_PROOF_GENERATOR_H */
+diff --git a/src/theory/quantifiers/cegqi/ceg_instantiator.cpp b/src/theory/quantifiers/cegqi/ceg_instantiator.cpp
+index bc768b378..922e580a0 100644
+--- a/src/theory/quantifiers/cegqi/ceg_instantiator.cpp
++++ b/src/theory/quantifiers/cegqi/ceg_instantiator.cpp
+@@ -57,6 +57,10 @@ CegInstantiator::CegInstantiator(Env& env,
+       d_is_nested_quant(false),
+       d_effort(CEG_INST_EFFORT_NONE)
+ {
++  if (d_env.isTheoryProofProducing())
++  {
++    d_vwpg.reset(new ValidWitnessProofGenerator(env));
++  }
+ }
+ 
+ CegInstantiator::~CegInstantiator() {
+@@ -1055,7 +1059,10 @@ bool CegInstantiator::doAddInstantiation(std::vector<Node>& vars,
+     // add the existentials, if any witness term was eliminated
+     for (const Node& q : exists)
+     {
+-      d_qim.addPendingLemma(q, InferenceId::QUANTIFIERS_CEGQI_WITNESS);
++      d_qim.addPendingLemma(q,
++                            InferenceId::QUANTIFIERS_CEGQI_WITNESS,
++                            LemmaProperty::NONE,
++                            d_vwpg.get());
+     }
+     return true;
+   }
+diff --git a/src/theory/quantifiers/cegqi/ceg_instantiator.h b/src/theory/quantifiers/cegqi/ceg_instantiator.h
+index cccf4d966..a026be380 100644
+--- a/src/theory/quantifiers/cegqi/ceg_instantiator.h
++++ b/src/theory/quantifiers/cegqi/ceg_instantiator.h
+@@ -21,10 +21,11 @@
+ #include <vector>
+ 
+ #include "expr/node.h"
++#include "proof/valid_witness_proof_generator.h"
+ #include "smt/env_obj.h"
+ #include "theory/inference_id.h"
+-#include "util/statistics_stats.h"
+ #include "theory/quantifiers/cegqi/ceg_utils.h"
++#include "util/statistics_stats.h"
+ 
+ namespace cvc5::internal {
+ namespace theory {
+@@ -415,6 +416,10 @@ class CegInstantiator : protected EnvObj
+   static CegHandledStatus isCbqiSort(
+       TypeNode tn, std::map<TypeNode, CegHandledStatus>& visited);
+   //------------------------------------ end  static queries
++  /**
++   * A proof generator for witness terms.
++   */
++  std::unique_ptr<ValidWitnessProofGenerator> d_vwpg;
+ };
+ 
+ }  // namespace quantifiers
+-- 
+2.47.1
+

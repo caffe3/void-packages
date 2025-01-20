@@ -1,0 +1,81 @@
+From 5a8bfb5aacb071d882cd3926442b0aa6e831c80d Mon Sep 17 00:00:00 2001
+From: Haniel Barbosa <hanielbbarbosa@gmail.com>
+Date: Thu, 8 Aug 2024 13:33:21 -0300
+Subject: [PATCH 002/312] [alethe] Post-processing ProofRule::TRUST (#11125)
+
+---
+ src/proof/alethe/alethe_post_processor.cpp | 55 ++++++++++++++++++++--
+ 1 file changed, 51 insertions(+), 4 deletions(-)
+
+diff --git a/src/proof/alethe/alethe_post_processor.cpp b/src/proof/alethe/alethe_post_processor.cpp
+index 84a32b662..63399b845 100644
+--- a/src/proof/alethe/alethe_post_processor.cpp
++++ b/src/proof/alethe/alethe_post_processor.cpp
+@@ -383,13 +383,60 @@ bool AletheProofPostprocessCallback::update(Node res,
+ 
+       return success;
+     }
+-    case ProofRule::TRUST_THEORY_REWRITE:
+-    {
+-      return addAletheStep(AletheRule::ALL_SIMPLIFY,
++    // If the trusted rule is a theory lemma from arithmetic, we try to phrase
++    // it with "lia_generic".
++    case ProofRule::TRUST:
++    {
++      // check for case where the trust step is introducing an equality between
++      // a term and another whose Alethe conversion is itself, in which case we
++      // justify this as a REFL step. This happens with trusted purification
++      // steps, for example.
++      Node resConv = d_anc.maybeConvert(res);
++      if (!resConv.isNull() && resConv.getKind() == Kind::EQUAL && resConv[0] == resConv[1])
++      {
++        return addAletheStep(AletheRule::REFL,
++                             res,
++                             nm->mkNode(Kind::SEXPR, d_cl, res),
++                             children,
++                             {},
++                             *cdp);
++      }
++      TrustId tid;
++      if (getTrustId(args[0], tid) && tid == TrustId::THEORY_LEMMA)
++      {
++        // if we are in the arithmetic case, we rather add a LIA_GENERIC step
++        if (res.getKind() == Kind::NOT && res[0].getKind() == Kind::AND)
++        {
++          Trace("alethe-proof") << "... test each arg if ineq\n";
++          bool allIneqs = true;
++          for (const Node& arg : res[0])
++          {
++            Node toTest = arg.getKind() == Kind::NOT ? arg[0] : arg;
++            Kind k = toTest.getKind();
++            if (k != Kind::LT && k != Kind::LEQ && k != Kind::GT
++                && k != Kind::GEQ && k != Kind::EQUAL)
++            {
++              Trace("alethe-proof") << "... arg " << arg << " not ineq\n";
++              allIneqs = false;
++              break;
++            }
++          }
++          if (allIneqs)
++          {
++            return addAletheStep(AletheRule::LIA_GENERIC,
++                                 res,
++                                 nm->mkNode(Kind::SEXPR, d_cl, res),
++                                 children,
++                                 {},
++                                 *cdp);
++          }
++        }
++      }
++      return addAletheStep(AletheRule::HOLE,
+                            res,
+                            nm->mkNode(Kind::SEXPR, d_cl, res),
+                            children,
+-                           {},
++                           args,
+                            *cdp);
+     }
+     // ======== Resolution and N-ary Resolution
+-- 
+2.47.1
+

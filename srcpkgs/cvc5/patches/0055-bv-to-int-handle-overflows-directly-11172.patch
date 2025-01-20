@@ -1,0 +1,541 @@
+From da721d176adcf224dd21a6db12294b39b449d420 Mon Sep 17 00:00:00 2001
+From: yoni206 <yoni206@users.noreply.github.com>
+Date: Tue, 17 Sep 2024 23:15:56 +0200
+Subject: [PATCH 055/312] bv-to-int: handle overflows directly (#11172)
+
+Currently, the bit-vector overflow operators are eliminated by the BV
+rewriter in all cases.
+
+This PR conditions the elimination of most of them to the case where
+int-blasting is disabled.
+When int-blasting is enabled, most operators are not eliminated, but
+instead are handled by the int-blaster.
+
+The reason for this is that the translation to integers becomes much
+more efficient on the operators themselves, compared to their rewritten
+variants.
+For example, if `xx` and `yy` are integers that correspond to `x` and
+`y` (resp.), then `bvuaddo x y` simply translates to `x + y < 2^k`,
+where `k` is the bit-width of `x` and `y`.
+
+The only two exceptions are bvnego and bvsdivo, whose elimination in the
+BV rewriter creates a simple equality.
+
+---------
+
+Co-authored-by: Yoni Zohar <yonizohar@Yonis-MacBook-Pro.local>
+Co-authored-by: Mathias Preiner <mathias.preiner@gmail.com>
+---
+ src/theory/bv/int_blaster.cpp                 | 70 +++++++++++++--
+ src/theory/bv/theory_bv.cpp                   |  6 ++
+ src/theory/bv/theory_bv_rewrite_rules.h       | 14 ++-
+ src/theory/bv/theory_bv_rewriter.cpp          | 90 ++++++++-----------
+ src/theory/bv/theory_bv_rewriter.h            | 29 ++++--
+ test/regress/cli/CMakeLists.txt               |  2 +
+ .../cli/regress0/bv/overflow/saddo2.smt2      |  2 +
+ .../cli/regress0/bv/overflow/saddo3.smt2      |  7 ++
+ .../cli/regress0/bv/overflow/sdivo1.smt2      |  2 +
+ .../cli/regress0/bv/overflow/sdivo2.smt2      |  2 +
+ .../cli/regress0/bv/overflow/smulo1.smt2      |  2 +
+ .../cli/regress0/bv/overflow/smulo2.smt2      |  2 +
+ .../cli/regress0/bv/overflow/ssubo1.smt2      |  5 +-
+ .../cli/regress0/bv/overflow/ssubo2.smt2      |  2 +
+ .../cli/regress0/bv/overflow/uaddo2.smt2      |  2 +
+ .../cli/regress0/bv/overflow/uaddo3.smt2      |  7 ++
+ .../cli/regress0/bv/overflow/umulo1.smt2      |  2 +
+ .../cli/regress0/bv/overflow/umulo2.smt2      |  2 +
+ .../cli/regress0/bv/overflow/usubo1.smt2      |  5 +-
+ .../cli/regress0/bv/overflow/usubo2.smt2      |  2 +
+ 20 files changed, 187 insertions(+), 68 deletions(-)
+ create mode 100644 test/regress/cli/regress0/bv/overflow/saddo3.smt2
+ create mode 100644 test/regress/cli/regress0/bv/overflow/uaddo3.smt2
+
+diff --git a/src/theory/bv/int_blaster.cpp b/src/theory/bv/int_blaster.cpp
+index d18c16da8..b182ec4fa 100644
+--- a/src/theory/bv/int_blaster.cpp
++++ b/src/theory/bv/int_blaster.cpp
+@@ -156,7 +156,9 @@ Node IntBlaster::intBlast(Node n,
+                           std::map<Node, Node>& skolems)
+ {
+   // make sure the node is re-written
++  Trace("int-blaster-debug") << "n before rewriting: " << n << std::endl;
+   n = rewrite(n);
++  Trace("int-blaster-debug") << "n after rewriting: " << n << std::endl;
+ 
+   // helper vector for traversal.
+   std::vector<Node> toVisit;
+@@ -539,6 +541,64 @@ Node IntBlaster::translateWithChildren(
+           d_zero);
+       break;
+     }
++    case Kind::BITVECTOR_UADDO:
++    {
++      uint32_t bvsize = original[0].getType().getBitVectorSize();
++      Node sum = d_nm->mkNode(
++          Kind::ADD, translated_children[0], translated_children[1]);
++      returnNode = d_nm->mkNode(Kind::GEQ, sum, pow2(bvsize));
++      break;
++    }
++    case Kind::BITVECTOR_SADDO:
++    {
++      uint32_t bvsize = original[0].getType().getBitVectorSize();
++      Node signed0 = uts(translated_children[0], bvsize);
++      Node signed1 = uts(translated_children[1], bvsize);
++      Node sum = d_nm->mkNode(Kind::ADD, signed0, signed1);
++      Node disj1 = d_nm->mkNode(Kind::GEQ, sum, pow2(bvsize - 1));
++      Node disj2 = d_nm->mkNode(
++          Kind::LT, sum, d_nm->mkNode(Kind::NEG, pow2(bvsize - 1)));
++      returnNode = d_nm->mkNode(Kind::OR, disj1, disj2);
++      break;
++    }
++    case Kind::BITVECTOR_UMULO:
++    {
++      uint32_t bvsize = original[0].getType().getBitVectorSize();
++      Node mul = d_nm->mkNode(
++          Kind::MULT, translated_children[0], translated_children[1]);
++      returnNode = d_nm->mkNode(Kind::GEQ, mul, pow2(bvsize));
++      break;
++    }
++    case Kind::BITVECTOR_SMULO:
++    {
++      uint32_t bvsize = original[0].getType().getBitVectorSize();
++      Node signed0 = uts(translated_children[0], bvsize);
++      Node signed1 = uts(translated_children[1], bvsize);
++      Node mul = d_nm->mkNode(Kind::MULT, signed0, signed1);
++      Node disj1 = d_nm->mkNode(Kind::GEQ, mul, pow2(bvsize - 1));
++      Node disj2 = d_nm->mkNode(
++          Kind::LT, mul, d_nm->mkNode(Kind::NEG, pow2(bvsize - 1)));
++      returnNode = d_nm->mkNode(Kind::OR, disj1, disj2);
++      break;
++    }
++    case Kind::BITVECTOR_USUBO:
++    {
++      returnNode = d_nm->mkNode(
++          Kind::LT, translated_children[0], translated_children[1]);
++      break;
++    }
++    case Kind::BITVECTOR_SSUBO:
++    {
++      uint32_t bvsize = original[0].getType().getBitVectorSize();
++      Node signed0 = uts(translated_children[0], bvsize);
++      Node signed1 = uts(translated_children[1], bvsize);
++      Node sub = d_nm->mkNode(Kind::SUB, signed0, signed1);
++      Node disj1 = d_nm->mkNode(Kind::GEQ, sub, pow2(bvsize - 1));
++      Node disj2 = d_nm->mkNode(
++          Kind::LT, sub, d_nm->mkNode(Kind::NEG, pow2(bvsize - 1)));
++      returnNode = d_nm->mkNode(Kind::OR, disj1, disj2);
++      break;
++    }
+     case Kind::ITE:
+     {
+       returnNode = d_nm->mkNode(oldKind, translated_children);
+@@ -610,11 +670,11 @@ Node IntBlaster::translateWithChildren(
+ 
+ Node IntBlaster::uts(Node x, uint32_t bvsize)
+ {
+-  Node powNode = pow2(bvsize - 1);
+-  Node modNode = d_nm->mkNode(Kind::INTS_MODULUS_TOTAL, x, powNode);
+-  Node two = d_nm->mkConstInt(Rational(2));
+-  Node twoTimesNode = d_nm->mkNode(Kind::MULT, two, modNode);
+-  return d_nm->mkNode(Kind::SUB, twoTimesNode, x);
++  Node signedMin = pow2(bvsize - 1);
++  Node msbOne = d_nm->mkNode(Kind::LT, x, signedMin);
++  Node ite = d_nm->mkNode(Kind::ITE, msbOne, d_zero, pow2(bvsize));
++  Node result = d_nm->mkNode(Kind::SUB, x, ite);
++  return result;
+ }
+ 
+ Node IntBlaster::createSignExtendNode(Node x, uint32_t bvsize, uint32_t amount)
+diff --git a/src/theory/bv/theory_bv.cpp b/src/theory/bv/theory_bv.cpp
+index 7ea57b85c..cd1d66e01 100644
+--- a/src/theory/bv/theory_bv.cpp
++++ b/src/theory/bv/theory_bv.cpp
+@@ -282,6 +282,12 @@ TrustNode TheoryBV::ppRewrite(TNode t, std::vector<SkolemLemma>& lems)
+       res = RewriteRule<ZeroExtendEqConst>::run<false>(t);
+     }
+   }
++  // When int-blasting, it is better to handle most overflow operators
++  // natively, rather than to eliminate them eagerly.
++  if (options().smt.solveBVAsInt == options::SolveBVAsIntMode::OFF)
++  {
++    res = d_rewriter.eliminateOverflows(res);
++  }
+ 
+   Trace("theory-bv-pp-rewrite") << "to   " << res << "\n";
+   if (res != t)
+diff --git a/src/theory/bv/theory_bv_rewrite_rules.h b/src/theory/bv/theory_bv_rewrite_rules.h
+index 15e2f7b49..8060dba28 100644
+--- a/src/theory/bv/theory_bv_rewrite_rules.h
++++ b/src/theory/bv/theory_bv_rewrite_rules.h
+@@ -340,7 +340,13 @@ inline std::ostream& operator << (std::ostream& out, RewriteRuleId ruleId) {
+   case SubEliminate :            out << "SubEliminate";             return out;
+   case CompEliminate :            out << "CompEliminate";             return out;
+   case XnorEliminate :            out << "XnorEliminate";             return out;
+-  case SignExtendEliminate :            out << "SignExtendEliminate";             return out;
++  case SignExtendEliminate: out << "SignExtendEliminate"; return out;
++  case UaddoEliminate:            out << "UaddoEliminate";             return out;
++  case SaddoEliminate:            out << "SaddoEliminate";             return out;
++  case UmuloEliminate:            out << "UmuloEliminate";             return out;
++  case SmuloEliminate:            out << "SmuloEliminate";             return out;
++  case UsuboEliminate:            out << "SsuboEliminate";             return out;
++  case SsuboEliminate: out << "SsuboEliminate"; return out;
+   case NotIdemp :                  out << "NotIdemp"; return out;
+   case UleSelf:                    out << "UleSelf"; return out; 
+   case FlattenAssocCommut:     out << "FlattenAssocCommut"; return out;
+@@ -618,6 +624,12 @@ struct AllRewriteRules {
+   RewriteRule<SmodEliminate> rule145;
+   RewriteRule<UgtUrem> rule146;
+   RewriteRule<UltOnes> rule147;
++  RewriteRule<UaddoEliminate> rule148;
++  RewriteRule<SaddoEliminate> rule149;
++  RewriteRule<UmuloEliminate> rule150;
++  RewriteRule<SmuloEliminate> rule151;
++  RewriteRule<UsuboEliminate> rule152;
++  RewriteRule<SsuboEliminate> rule153;
+ };
+ 
+ template<> inline
+diff --git a/src/theory/bv/theory_bv_rewriter.cpp b/src/theory/bv/theory_bv_rewriter.cpp
+index 130a4e2cd..2e37281ef 100644
+--- a/src/theory/bv/theory_bv_rewriter.cpp
++++ b/src/theory/bv/theory_bv_rewriter.cpp
+@@ -97,6 +97,42 @@ Node TheoryBVRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+   return Node::null();
+ }
+ 
++TrustNode TheoryBVRewriter::expandDefinition(Node node)
++{
++  Node expanded = eliminateOverflows(node);
++  return TrustNode::mkTrustRewrite(node, expanded, nullptr);
++}
++
++Node TheoryBVRewriter::eliminateOverflows(Node node)
++{
++  Node res = node;
++  if (RewriteRule<UaddoEliminate>::applies(node))
++  {
++    res = RewriteRule<UaddoEliminate>::run<false>(node);
++  }
++  else if (RewriteRule<SaddoEliminate>::applies(node))
++  {
++    res = RewriteRule<SaddoEliminate>::run<false>(node);
++  }
++  else if (RewriteRule<UmuloEliminate>::applies(node))
++  {
++    res = RewriteRule<UmuloEliminate>::run<false>(node);
++  }
++  else if (RewriteRule<SmuloEliminate>::applies(node))
++  {
++    res = RewriteRule<SmuloEliminate>::run<false>(node);
++  }
++  else if (RewriteRule<UsuboEliminate>::applies(node))
++  {
++    res = RewriteRule<UsuboEliminate>::run<false>(node);
++  }
++  else if (RewriteRule<SsuboEliminate>::applies(node))
++  {
++    res = RewriteRule<SsuboEliminate>::run<false>(node);
++  }
++  return res;
++}
++
+ RewriteResponse TheoryBVRewriter::RewriteBit(TNode node, bool prerewrite)
+ {
+   Node resultNode = LinearRewriteStrategy<RewriteRule<BitConst>>::apply(node);
+@@ -718,54 +754,6 @@ RewriteResponse TheoryBVRewriter::RewriteNego(TNode node, bool prerewrite)
+   return RewriteResponse(REWRITE_AGAIN, resultNode);
+ }
+ 
+-RewriteResponse TheoryBVRewriter::RewriteUaddo(TNode node, bool prerewrite)
+-{
+-  Node resultNode =
+-      LinearRewriteStrategy<RewriteRule<UaddoEliminate>>::apply(node);
+-
+-  return RewriteResponse(REWRITE_AGAIN, resultNode);
+-}
+-
+-RewriteResponse TheoryBVRewriter::RewriteSaddo(TNode node, bool prerewrite)
+-{
+-  Node resultNode =
+-      LinearRewriteStrategy<RewriteRule<SaddoEliminate>>::apply(node);
+-
+-  return RewriteResponse(REWRITE_AGAIN, resultNode);
+-}
+-
+-RewriteResponse TheoryBVRewriter::RewriteUmulo(TNode node, bool prerewrite)
+-{
+-  Node resultNode =
+-      LinearRewriteStrategy<RewriteRule<UmuloEliminate>>::apply(node);
+-
+-  return RewriteResponse(REWRITE_AGAIN, resultNode);
+-}
+-
+-RewriteResponse TheoryBVRewriter::RewriteSmulo(TNode node, bool prerewrite)
+-{
+-  Node resultNode =
+-      LinearRewriteStrategy<RewriteRule<SmuloEliminate>>::apply(node);
+-
+-  return RewriteResponse(REWRITE_AGAIN, resultNode);
+-}
+-
+-RewriteResponse TheoryBVRewriter::RewriteUsubo(TNode node, bool prerewrite)
+-{
+-  Node resultNode =
+-      LinearRewriteStrategy<RewriteRule<UsuboEliminate>>::apply(node);
+-
+-  return RewriteResponse(REWRITE_AGAIN, resultNode);
+-}
+-
+-RewriteResponse TheoryBVRewriter::RewriteSsubo(TNode node, bool prerewrite)
+-{
+-  Node resultNode =
+-      LinearRewriteStrategy<RewriteRule<SsuboEliminate>>::apply(node);
+-
+-  return RewriteResponse(REWRITE_AGAIN, resultNode);
+-}
+-
+ RewriteResponse TheoryBVRewriter::RewriteSdivo(TNode node, bool prerewrite)
+ {
+   Node resultNode =
+@@ -840,12 +828,6 @@ void TheoryBVRewriter::initializeRewrites()
+   d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_SLTBV)] = RewriteSltBv;
+   d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_ITE)] = RewriteITEBv;
+   d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_NEGO)] = RewriteNego;
+-  d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_UADDO)] = RewriteUaddo;
+-  d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_SADDO)] = RewriteSaddo;
+-  d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_UMULO)] = RewriteUmulo;
+-  d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_SMULO)] = RewriteSmulo;
+-  d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_USUBO)] = RewriteUsubo;
+-  d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_SSUBO)] = RewriteSsubo;
+   d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_SDIVO)] = RewriteSdivo;
+   d_rewriteTable[static_cast<uint32_t>(Kind::BITVECTOR_EAGER_ATOM)] =
+       RewriteEagerAtom;
+diff --git a/src/theory/bv/theory_bv_rewriter.h b/src/theory/bv/theory_bv_rewriter.h
+index 074a77361..cdc315c2f 100644
+--- a/src/theory/bv/theory_bv_rewriter.h
++++ b/src/theory/bv/theory_bv_rewriter.h
+@@ -41,6 +41,29 @@ class TheoryBVRewriter : public TheoryRewriter
+    * cannot be rewritten.
+    */
+   Node rewriteViaRule(ProofRewriteRule id, const Node& n) override;
++
++  /**
++   * Override TheoryRewriter::expandDefinition in order to
++   * eliminate overflow operators
++   */
++  TrustNode expandDefinition(Node node) override;
++
++  /**
++   * This function is called when int-blasting is disabled.
++   * It eliminates the following operators:
++   * uaddo, saddo, umulo, smulo, usubu, ssubo.
++   *
++   * When int-blasting is on, we do not want to eliminate them,
++   * but instead translate them directly.
++   *
++   * The other overflow operators, namely
++   * nego and sdivo, are eliminated by the rewriter,
++   * regardless of whether int-blasting is enabled
++   * or disabled, because their elimination
++   * produces simple equalities.
++   */
++  Node eliminateOverflows(Node node);
++
+  private:
+   static RewriteResponse IdentityRewrite(TNode node, bool prerewrite = false);
+   static RewriteResponse UndefinedRewrite(TNode node, bool prerewrite = false);
+@@ -90,12 +113,6 @@ class TheoryBVRewriter : public TheoryRewriter
+   static RewriteResponse RewriteRedor(TNode node, bool prerewrite = false);
+   static RewriteResponse RewriteRedand(TNode node, bool prerewrite = false);
+   static RewriteResponse RewriteNego(TNode node, bool prerewrite = false);
+-  static RewriteResponse RewriteUaddo(TNode node, bool prerewrite = false);
+-  static RewriteResponse RewriteSaddo(TNode node, bool prerewrite = false);
+-  static RewriteResponse RewriteUmulo(TNode node, bool prerewrite = false);
+-  static RewriteResponse RewriteSmulo(TNode node, bool prerewrite = false);
+-  static RewriteResponse RewriteUsubo(TNode node, bool prerewrite = false);
+-  static RewriteResponse RewriteSsubo(TNode node, bool prerewrite = false);
+   static RewriteResponse RewriteSdivo(TNode node, bool prerewrite = false);
+   static RewriteResponse RewriteEagerAtom(TNode node, bool prerewrite = false);
+   static RewriteResponse RewriteSize(TNode node, bool prerewrite = false);
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index aa2bb7613..8b3513d1b 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -604,8 +604,10 @@ set(regress_0_tests
+   regress0/bv/mult-pow2-negative.smt2
+   regress0/bv/overflow/uaddo1.smt2
+   regress0/bv/overflow/uaddo2.smt2
++  regress0/bv/overflow/uaddo3.smt2
+   regress0/bv/overflow/saddo1.smt2
+   regress0/bv/overflow/saddo2.smt2
++  regress0/bv/overflow/saddo3.smt2
+   regress0/bv/overflow/umulo1.smt2
+   regress0/bv/overflow/umulo2.smt2
+   regress0/bv/overflow/smulo1.smt2
+diff --git a/test/regress/cli/regress0/bv/overflow/saddo2.smt2 b/test/regress/cli/regress0/bv/overflow/saddo2.smt2
+index 6961e01ab..38ee91a81 100644
+--- a/test/regress/cli/regress0/bv/overflow/saddo2.smt2
++++ b/test/regress/cli/regress0/bv/overflow/saddo2.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: sat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 3))
+ (assert (not (bvsaddo v v)))
+diff --git a/test/regress/cli/regress0/bv/overflow/saddo3.smt2 b/test/regress/cli/regress0/bv/overflow/saddo3.smt2
+new file mode 100644
+index 000000000..9abbe430c
+--- /dev/null
++++ b/test/regress/cli/regress0/bv/overflow/saddo3.smt2
+@@ -0,0 +1,7 @@
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
++; EXPECT: unsat
++(set-logic QF_BV)
++(declare-const v (_ BitVec 6))
++(assert (and (bvsgt v (_ bv28 6)) (not (bvsaddo v v))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/bv/overflow/sdivo1.smt2 b/test/regress/cli/regress0/bv/overflow/sdivo1.smt2
+index 99d9dcff7..e354c4d3b 100644
+--- a/test/regress/cli/regress0/bv/overflow/sdivo1.smt2
++++ b/test/regress/cli/regress0/bv/overflow/sdivo1.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: unsat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 6))
+ (assert (and (= (bvsdiv v v) (_ bv53 6)) (not (bvsdivo v v))))
+diff --git a/test/regress/cli/regress0/bv/overflow/sdivo2.smt2 b/test/regress/cli/regress0/bv/overflow/sdivo2.smt2
+index 236bcee79..59ac0c022 100644
+--- a/test/regress/cli/regress0/bv/overflow/sdivo2.smt2
++++ b/test/regress/cli/regress0/bv/overflow/sdivo2.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: sat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 3))
+ (assert (not (bvsdivo v v)))
+diff --git a/test/regress/cli/regress0/bv/overflow/smulo1.smt2 b/test/regress/cli/regress0/bv/overflow/smulo1.smt2
+index a46df1c9f..a840b08ed 100644
+--- a/test/regress/cli/regress0/bv/overflow/smulo1.smt2
++++ b/test/regress/cli/regress0/bv/overflow/smulo1.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: unsat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 6))
+ (assert (and (= (bvmul v v) (_ bv53 6)) (not (bvsmulo v v))))
+diff --git a/test/regress/cli/regress0/bv/overflow/smulo2.smt2 b/test/regress/cli/regress0/bv/overflow/smulo2.smt2
+index ec2d91e37..eeb245b05 100644
+--- a/test/regress/cli/regress0/bv/overflow/smulo2.smt2
++++ b/test/regress/cli/regress0/bv/overflow/smulo2.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: sat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 3))
+ (assert (not (bvsmulo v v)))
+diff --git a/test/regress/cli/regress0/bv/overflow/ssubo1.smt2 b/test/regress/cli/regress0/bv/overflow/ssubo1.smt2
+index a7a17f9bc..8014d147a 100644
+--- a/test/regress/cli/regress0/bv/overflow/ssubo1.smt2
++++ b/test/regress/cli/regress0/bv/overflow/ssubo1.smt2
+@@ -1,5 +1,8 @@
+ ; EXPECT: unsat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
++(declare-const u (_ BitVec 6))
+ (declare-const v (_ BitVec 6))
+-(assert (and (= (bvsub v v) (_ bv53 6)) (not (bvssubo v v))))
++(assert (and (bvugt v (_ bv22 6)) (bvugt (_ bv0 6) u) (not (bvssubo v u))))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/bv/overflow/ssubo2.smt2 b/test/regress/cli/regress0/bv/overflow/ssubo2.smt2
+index 10ae3eba9..6734a4cef 100644
+--- a/test/regress/cli/regress0/bv/overflow/ssubo2.smt2
++++ b/test/regress/cli/regress0/bv/overflow/ssubo2.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: sat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 3))
+ (assert (not (bvssubo v v)))
+diff --git a/test/regress/cli/regress0/bv/overflow/uaddo2.smt2 b/test/regress/cli/regress0/bv/overflow/uaddo2.smt2
+index ae3a90463..df70d1098 100644
+--- a/test/regress/cli/regress0/bv/overflow/uaddo2.smt2
++++ b/test/regress/cli/regress0/bv/overflow/uaddo2.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: sat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 3))
+ (assert (not (bvuaddo v v)))
+diff --git a/test/regress/cli/regress0/bv/overflow/uaddo3.smt2 b/test/regress/cli/regress0/bv/overflow/uaddo3.smt2
+new file mode 100644
+index 000000000..bbb222291
+--- /dev/null
++++ b/test/regress/cli/regress0/bv/overflow/uaddo3.smt2
+@@ -0,0 +1,7 @@
++; EXPECT: unsat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
++(set-logic QF_BV)
++(declare-const v (_ BitVec 6))
++(assert (and (bvugt v (_ bv53 6)) (not (bvuaddo v v))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/bv/overflow/umulo1.smt2 b/test/regress/cli/regress0/bv/overflow/umulo1.smt2
+index f5b3c1eb8..e658a4327 100644
+--- a/test/regress/cli/regress0/bv/overflow/umulo1.smt2
++++ b/test/regress/cli/regress0/bv/overflow/umulo1.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: unsat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 6))
+ (assert (and (= (bvmul v v) (_ bv53 6)) (not (bvumulo v v))))
+diff --git a/test/regress/cli/regress0/bv/overflow/umulo2.smt2 b/test/regress/cli/regress0/bv/overflow/umulo2.smt2
+index 214a5fd7d..773922085 100644
+--- a/test/regress/cli/regress0/bv/overflow/umulo2.smt2
++++ b/test/regress/cli/regress0/bv/overflow/umulo2.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: sat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 3))
+ (assert (not (bvumulo v v)))
+diff --git a/test/regress/cli/regress0/bv/overflow/usubo1.smt2 b/test/regress/cli/regress0/bv/overflow/usubo1.smt2
+index 868327e46..66b66a6dc 100644
+--- a/test/regress/cli/regress0/bv/overflow/usubo1.smt2
++++ b/test/regress/cli/regress0/bv/overflow/usubo1.smt2
+@@ -1,5 +1,8 @@
+ ; EXPECT: unsat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
++(declare-const u (_ BitVec 6))
+ (declare-const v (_ BitVec 6))
+-(assert (and (= (bvsub v v) (_ bv53 6)) (not (bvusubo v v))))
++(assert (and (bvugt v u) (not (bvusubo u v))))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/bv/overflow/usubo2.smt2 b/test/regress/cli/regress0/bv/overflow/usubo2.smt2
+index d0711ed87..947167594 100644
+--- a/test/regress/cli/regress0/bv/overflow/usubo2.smt2
++++ b/test/regress/cli/regress0/bv/overflow/usubo2.smt2
+@@ -1,4 +1,6 @@
+ ; EXPECT: sat
++; COMMAND-LINE: 
++; COMMAND-LINE: --solve-bv-as-int=sum
+ (set-logic QF_BV)
+ (declare-const v (_ BitVec 3))
+ (assert (not (bvusubo v v)))
+-- 
+2.47.1
+

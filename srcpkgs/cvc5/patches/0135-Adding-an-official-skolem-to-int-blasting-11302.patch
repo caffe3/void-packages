@@ -1,0 +1,169 @@
+From aea87371f00eee33eb329080d86c4b32f68d9c2c Mon Sep 17 00:00:00 2001
+From: yoni206 <yoni206@users.noreply.github.com>
+Date: Tue, 22 Oct 2024 20:22:55 +0300
+Subject: [PATCH 135/312] Adding an official skolem to int-blasting (#11302)
+
+This PR eliminates the single usage of `mkDummySkolem` from the
+int-blaster.
+
+---------
+
+Co-authored-by: Yoni Zohar <yonizohar@Yonis-MacBook-Pro.local>
+---
+ include/cvc5/cvc5_skolem_id.h  | 18 ++++++++++++++++++
+ src/expr/skolem_manager.cpp    | 24 ++++++++++++++++++++++++
+ src/expr/skolem_manager.h      |  5 ++++-
+ src/printer/enum_to_string.cpp |  1 +
+ src/theory/bv/int_blaster.cpp  | 28 ++++------------------------
+ 5 files changed, 51 insertions(+), 25 deletions(-)
+
+diff --git a/include/cvc5/cvc5_skolem_id.h b/include/cvc5/cvc5_skolem_id.h
+index 8cd6f261a..33390727c 100644
+--- a/include/cvc5/cvc5_skolem_id.h
++++ b/include/cvc5/cvc5_skolem_id.h
+@@ -732,6 +732,24 @@ enum ENUM(SkolemId)
+    * - Sort: ``(-> FP Real)``
+    */
+   EVALUE(FP_TO_REAL),
++
++  /**
++   * A skolem function introduced by the int-blaster.
++   * Given a function f with argument and/or return types
++   * that include bit-vectors, we get a function
++   * that replaces them by integer types.
++   * For example, if the original function is from
++   * BV and Strings to Strings, the resulting
++   * function is from Ints and Strings to Strings.
++   * - Number of skolem indices: ``1``
++   *   - ``1:`` the original function f, with BV sorts.
++   * - Sort: `(-> T1' ... ( -> Tn' T')...)` Where
++   *   f has sort (->T1 ... (-> Tn T)...) and Ti' (T') is 
++   *   `Int` if Ti (T) is `BV` and Ti' (T') is just Ti (T)
++   *   otherwise.
++   */
++  EVALUE(BV_TO_INT_UF),
++
+   //================================================= Unknown rule
+   /** Indicates this is not a skolem. */
+   EVALUE(NONE),
+diff --git a/src/expr/skolem_manager.cpp b/src/expr/skolem_manager.cpp
+index 0c37e39f4..65b2ce6e5 100644
+--- a/src/expr/skolem_manager.cpp
++++ b/src/expr/skolem_manager.cpp
+@@ -581,6 +581,29 @@ TypeNode SkolemManager::getTypeFor(SkolemId id,
+       Assert(type.isFloatingPoint());
+       return nm->mkFunctionType({type}, nm->realType());
+     }
++    case SkolemId::BV_TO_INT_UF:
++    {
++      Assert(cacheVals.size() == 1);
++      // fetch the original function
++      Node bvUF = cacheVals[0];
++      Assert(cacheVals[0].getType().isFunction());
++      // old and new types of domain and result
++      TypeNode tn = bvUF.getType();
++      TypeNode bvRange = tn.getRangeType();
++      std::vector<TypeNode> bvDomain = tn.getArgTypes();
++      std::vector<TypeNode> intDomain;
++
++      // if the original range is a bit-vector sort,
++      // the new range should be an integer sort.
++      // Otherwise, we keep the original range.
++      // Similarly for the domain sorts.
++      TypeNode intRange = bvRange.isBitVector() ? nm->integerType() : bvRange;
++      for (const TypeNode& d : bvDomain)
++      {
++        intDomain.push_back(d.isBitVector() ? nm->integerType() : d);
++      }
++      return nm->mkFunctionType(intDomain, intRange);
++    }
+     //
+     default: break;
+   }
+@@ -623,6 +646,7 @@ size_t SkolemManager::getNumIndicesForSkolemId(SkolemId id) const
+     case SkolemId::SETS_FOLD_UNION:
+     case SkolemId::FP_MIN_ZERO:
+     case SkolemId::FP_MAX_ZERO:
++    case SkolemId::BV_TO_INT_UF:
+     case SkolemId::FP_TO_REAL: return 1;
+ 
+     // Number of skolem indices: 2
+diff --git a/src/expr/skolem_manager.h b/src/expr/skolem_manager.h
+index c29d8c59c..d03f05613 100644
+--- a/src/expr/skolem_manager.h
++++ b/src/expr/skolem_manager.h
+@@ -152,7 +152,10 @@ class SkolemManager
+    * Make skolem function. This method should be used for creating fixed
+    * skolem functions of the forms described in SkolemId. The user of this
+    * method is responsible for providing a proper type for the identifier that
+-   * matches the description of id. Skolem functions are useful for modelling
++   * matches the description of id.
++   * This can be done from the function
++   * `SkolemManager::getTypeFor`.
++   * Skolem functions are useful for modelling
+    * the behavior of partial functions, or for theory-specific inferences that
+    * introduce fresh variables.
+    *
+diff --git a/src/printer/enum_to_string.cpp b/src/printer/enum_to_string.cpp
+index a18230b7d..c6ed82c90 100644
+--- a/src/printer/enum_to_string.cpp
++++ b/src/printer/enum_to_string.cpp
+@@ -93,6 +93,7 @@ const char* toString(cvc5::SkolemId id)
+     case cvc5::SkolemId::SETS_FOLD_ELEMENTS: return "sets_fold_elements";
+     case cvc5::SkolemId::SETS_FOLD_UNION: return "sets_fold_union";
+     case cvc5::SkolemId::SETS_MAP_DOWN_ELEMENT: return "sets_map_down_element";
++    case cvc5::SkolemId::BV_TO_INT_UF: return "bv_to_int_uf";
+     case cvc5::SkolemId::NONE: return "none";
+     default: return "?";
+   }
+diff --git a/src/theory/bv/int_blaster.cpp b/src/theory/bv/int_blaster.cpp
+index b182ec4fa..9be3e438a 100644
+--- a/src/theory/bv/int_blaster.cpp
++++ b/src/theory/bv/int_blaster.cpp
+@@ -811,32 +811,9 @@ Node IntBlaster::translateNoChildren(Node original,
+ Node IntBlaster::translateFunctionSymbol(Node bvUF,
+                                          std::map<Node, Node>& skolems)
+ {
+-  // construct the new function symbol.
+-  Node intUF;
+-  // old and new types of domain and result
+-  TypeNode tn = bvUF.getType();
+-  TypeNode bvRange = tn.getRangeType();
+-  std::vector<TypeNode> bvDomain = tn.getArgTypes();
+-  std::vector<TypeNode> intDomain;
+-
+-  // if the original range is a bit-vector sort,
+-  // the new range should be an integer sort.
+-  // Otherwise, we keep the original range.
+-  // Similarly for the domain sorts.
+-  TypeNode intRange = bvRange.isBitVector() ? d_nm->integerType() : bvRange;
+-  for (const TypeNode& d : bvDomain)
+-  {
+-    intDomain.push_back(d.isBitVector() ? d_nm->integerType() : d);
+-  }
+-
+   // create the new function symbol as a skolem
+-  std::ostringstream os;
+-  os << "__intblast_fun_" << bvUF << "_int";
+   SkolemManager* sm = d_nm->getSkolemManager();
+-  intUF = sm->mkDummySkolem(
+-      os.str(), d_nm->mkFunctionType(intDomain, intRange), "bv2int function");
+-
+-  // add definition of old function symbol to skolems.
++  Node intUF = sm->mkSkolemFunction(SkolemId::BV_TO_INT_UF, bvUF);
+ 
+   // formal arguments of the lambda expression.
+   std::vector<Node> args;
+@@ -847,6 +824,9 @@ Node IntBlaster::translateFunctionSymbol(Node bvUF,
+ 
+   // iterate the arguments, cast BV arguments to integers
+   int i = 0;
++  TypeNode tn = bvUF.getType();
++  TypeNode bvRange = tn.getRangeType();
++  std::vector<TypeNode> bvDomain = tn.getArgTypes();
+   for (const TypeNode& d : bvDomain)
+   {
+     // Each bit-vector argument is casted to a natural number
+-- 
+2.47.1
+

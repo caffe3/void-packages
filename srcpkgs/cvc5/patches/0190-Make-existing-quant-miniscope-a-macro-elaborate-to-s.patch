@@ -1,0 +1,249 @@
+From 41d49f91efba8c3cf1da6a655dd782a0c998ecf7 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 20 Nov 2024 18:55:00 -0600
+Subject: [PATCH 190/312] Make existing quant miniscope a macro, elaborate to
+ simpler version (#11378)
+
+Also fixes a minor issue in the Eunoia signature.
+
+---------
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ include/cvc5/cvc5_proof_rule.h                | 14 ++++
+ proofs/eo/cpc/rules/Quantifiers.eo            |  2 +-
+ src/api/cpp/cvc5_proof_rule_template.cpp      |  2 +
+ src/proof/alf/alf_printer.cpp                 |  1 +
+ src/rewriter/basic_rewrite_rcons.cpp          | 77 +++++++++++++++++++
+ src/rewriter/basic_rewrite_rcons.h            | 10 +++
+ .../quantifiers/quantifiers_rewriter.cpp      | 20 ++++-
+ 7 files changed, 123 insertions(+), 3 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index e83734128..301620d1e 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2524,6 +2524,20 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(QUANT_MERGE_PRENEX),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Quantifiers -- Macro miniscoping**
++   *
++   * .. math::
++   *   \forall X.\> F_1 \wedge \cdots \wedge F_n =
++   *   G_1 \wedge \cdots \wedge G_n
++   *
++   * where each :math:`G_i` is semantically equivalent to
++   * :math:`\forall X.\> F_i`.
++   *
++   * \endverbatim
++   */
++  EVALUE(MACRO_QUANT_MINISCOPE),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Quantifiers -- Miniscoping**
+diff --git a/proofs/eo/cpc/rules/Quantifiers.eo b/proofs/eo/cpc/rules/Quantifiers.eo
+index 02de2f86b..0e095e947 100644
+--- a/proofs/eo/cpc/rules/Quantifiers.eo
++++ b/proofs/eo/cpc/rules/Quantifiers.eo
+@@ -152,7 +152,7 @@
+ (program $mk_quant_miniscope ((x @List) (f Bool) (fs Bool :list))
+   (@List Bool) Bool
+   (
+-  (($mk_quant_miniscope x (and f fs)) (and (forall x f) ($mk_quant_miniscope x fs)))
++  (($mk_quant_miniscope x (and f fs)) (eo::cons and (forall x f) ($mk_quant_miniscope x fs)))
+   (($mk_quant_miniscope x true)       true)
+   )
+ )
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index e5cb35f21..177463811 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -242,6 +242,8 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::EXISTS_ELIM: return "exists-elim";
+     case ProofRewriteRule::QUANT_UNUSED_VARS: return "quant-unused-vars";
+     case ProofRewriteRule::QUANT_MERGE_PRENEX: return "quant-merge-prenex";
++    case ProofRewriteRule::MACRO_QUANT_MINISCOPE:
++      return "macro-quant-miniscope";
+     case ProofRewriteRule::QUANT_MINISCOPE: return "quant-miniscope";
+     case ProofRewriteRule::QUANT_MINISCOPE_FV: return "quant-miniscope-fv";
+     case ProofRewriteRule::QUANT_DT_SPLIT: return "quant-dt-split";
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 240b881b2..5651a900c 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -261,6 +261,7 @@ bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id, const Node& n)
+     case ProofRewriteRule::EXISTS_ELIM:
+     case ProofRewriteRule::QUANT_UNUSED_VARS:
+     case ProofRewriteRule::ARRAYS_SELECT_CONST:
++    case ProofRewriteRule::QUANT_MINISCOPE:
+     case ProofRewriteRule::QUANT_MINISCOPE_FV:
+     case ProofRewriteRule::QUANT_VAR_ELIM_EQ:
+     case ProofRewriteRule::RE_LOOP_ELIM:
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index 2a75a53d1..d861ccfec 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -206,6 +206,12 @@ void BasicRewriteRCons::ensureProofForTheoryRewrite(
+         handledMacro = true;
+       }
+       break;
++    case ProofRewriteRule::MACRO_QUANT_MINISCOPE:
++      if (ensureProofMacroQuantMiniscope(cdp, eq))
++      {
++        handledMacro = true;
++      }
++      break;
+     default: break;
+   }
+   if (handledMacro)
+@@ -778,6 +784,77 @@ bool BasicRewriteRCons::ensureProofMacroQuantVarElimEq(CDProof* cdp,
+   return true;
+ }
+ 
++bool BasicRewriteRCons::ensureProofMacroQuantMiniscope(CDProof* cdp,
++                                                       const Node& eq)
++{
++  Node q = eq[0];
++  Assert(q.getKind() == Kind::FORALL);
++  NodeManager* nm = nodeManager();
++  theory::Rewriter* rr = d_env.getRewriter();
++  Node mq = rr->rewriteViaRule(ProofRewriteRule::QUANT_MINISCOPE, q);
++  Node equiv = q.eqNode(mq);
++  cdp->addTheoryRewriteStep(equiv, ProofRewriteRule::QUANT_MINISCOPE);
++  if (mq == eq[1])
++  {
++    return true;
++  }
++  if (mq.getNumChildren() != eq[1].getNumChildren())
++  {
++    Assert(false) << "Unexpected input ensureProofMacroQuantMiniscope " << eq;
++    return false;
++  }
++  ProofChecker* pc = d_env.getProofNodeManager()->getChecker();
++  Node equiv2 = mq.eqNode(eq[1]);
++  std::vector<Node> premises;
++  // each conjunct is either equal to the corresponding conjunct, the
++  // result of dropping all variables from the corresponding conjunct, or
++  // is alpha equivalent to the corresponding conjunct.
++  for (size_t i = 0, nconj = mq.getNumChildren(); i < nconj; i++)
++  {
++    Node eqc = mq[i].eqNode(eq[1][i]);
++    premises.emplace_back(eqc);
++    if (mq[i] == eq[1][i])
++    {
++      cdp->addStep(eqc, ProofRule::REFL, {}, {mq[i]});
++      continue;
++    }
++    Assert(mq[i].getKind() == Kind::FORALL);
++    if (mq[i][1] == eq[1][i])
++    {
++      Node mqc = rr->rewriteViaRule(ProofRewriteRule::QUANT_UNUSED_VARS, mq[i]);
++      if (mqc == eq[1][i])
++      {
++        cdp->addTheoryRewriteStep(eqc, ProofRewriteRule::QUANT_UNUSED_VARS);
++        continue;
++      }
++    }
++    else if (eq[1][i].getKind() == Kind::FORALL)
++    {
++      std::vector<Node> v1(mq[i][0].begin(), mq[i][0].end());
++      std::vector<Node> v2(eq[1][i][0].begin(), eq[1][i][0].end());
++      std::vector<Node> aeArgs;
++      aeArgs.push_back(mq[i]);
++      aeArgs.push_back(nm->mkNode(Kind::SEXPR, v1));
++      aeArgs.push_back(nm->mkNode(Kind::SEXPR, v2));
++      Node res = pc->checkDebug(ProofRule::ALPHA_EQUIV, {}, aeArgs);
++      if (!res.isNull() && res[1] == eq[1][i])
++      {
++        cdp->addStep(res, ProofRule::ALPHA_EQUIV, {}, aeArgs);
++        continue;
++      }
++    }
++    Assert(false) << "Failed ensureProofMacroQuantMiniscope " << eq;
++    return false;
++  }
++  // add the CONG step to conclude AND terms are equal
++  std::vector<Node> cargs;
++  ProofRule cr = expr::getCongRule(mq, cargs);
++  cdp->addStep(equiv2, cr, premises, cargs);
++  // transitive
++  cdp->addStep(eq, ProofRule::TRANS, {equiv, equiv2}, {});
++  return true;
++}
++
+ bool BasicRewriteRCons::ensureProofArithPolyNormRel(CDProof* cdp,
+                                                     const Node& eq)
+ {
+diff --git a/src/rewriter/basic_rewrite_rcons.h b/src/rewriter/basic_rewrite_rcons.h
+index d7a80f7b0..9a2843911 100644
+--- a/src/rewriter/basic_rewrite_rcons.h
++++ b/src/rewriter/basic_rewrite_rcons.h
+@@ -190,6 +190,16 @@ class BasicRewriteRCons : protected EnvObj
+    * @return true if added a closed proof of eq to cdp.
+    */
+   bool ensureProofMacroQuantVarElimEq(CDProof* cdp, const Node& eq);
++  /**
++   * Elaborate a rewrite eq that was proven by
++   * ProofRewriteRule::MACRO_QUANT_MINISCOPE.
++   *
++   * @param cdp The proof to add to.
++   * @param eq The rewrite proven by
++   * ProofRewriteRule::MACRO_QUANT_MINISCOPE.
++   * @return true if added a closed proof of eq to cdp.
++   */
++  bool ensureProofMacroQuantMiniscope(CDProof* cdp, const Node& eq);
+   /**
+    * @param cdp The proof to add to.
+    * @param eq The rewrite that can be proven by ProofRule::ARITH_POLY_NORM_REL.
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index 7bd7ca4e3..9abd599c9 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -105,8 +105,10 @@ QuantifiersRewriter::QuantifiersRewriter(NodeManager* nm,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::QUANT_MERGE_PRENEX,
+                            TheoryRewriteCtx::PRE_DSL);
+-  registerProofRewriteRule(ProofRewriteRule::QUANT_MINISCOPE,
++  registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_MINISCOPE,
+                            TheoryRewriteCtx::PRE_DSL);
++  // QUANT_MINISCOPE is handled as part of the reconstruction for
++  // MACRO_QUANT_MINISCOPE
+   registerProofRewriteRule(ProofRewriteRule::MACRO_QUANT_PARTITION_CONNECTED_FV,
+                            TheoryRewriteCtx::PRE_DSL);
+   // note ProofRewriteRule::QUANT_DT_SPLIT is done by a module dynamically with
+@@ -171,7 +173,7 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
+-    case ProofRewriteRule::QUANT_MINISCOPE:
++    case ProofRewriteRule::MACRO_QUANT_MINISCOPE:
+     {
+       if (n.getKind() != Kind::FORALL || n[1].getKind() != Kind::AND)
+       {
+@@ -186,6 +188,20 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       return nret;
+     }
+     break;
++    case ProofRewriteRule::QUANT_MINISCOPE:
++    {
++      if (n.getKind() != Kind::FORALL || n[1].getKind() != Kind::AND)
++      {
++        return Node::null();
++      }
++      std::vector<Node> conj;
++      for (const Node& nc : n[1])
++      {
++        conj.push_back(d_nm->mkNode(Kind::FORALL, n[0], nc));
++      }
++      return d_nm->mkAnd(conj);
++    }
++    break;
+     case ProofRewriteRule::MACRO_QUANT_PARTITION_CONNECTED_FV:
+     {
+       if (n.getKind() != Kind::FORALL || n[1].getKind() != Kind::OR)
+-- 
+2.47.1
+

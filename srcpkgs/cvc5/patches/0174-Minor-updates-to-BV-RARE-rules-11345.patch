@@ -1,0 +1,179 @@
+From a1637c8a56da38f5e8a32af2dd298ad417791a25 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 15 Nov 2024 12:32:24 -0600
+Subject: [PATCH 174/312] Minor updates to BV RARE rules (#11345)
+
+Adds an ad-hoc rewrite BV_REPEAT_ELIM in favor of the 2 RARE rules for
+this purpose, which were broken if the repeat amount was not n=1.
+
+Also generalizes the xor rules slightly which helps reconstruction in
+several cases.
+---
+ include/cvc5/cvc5_proof_rule.h           | 15 +++++++++++----
+ proofs/eo/cpc/rules/Rewrites.eo          | 24 +++++++-----------------
+ src/api/cpp/cvc5_proof_rule_template.cpp |  1 +
+ src/theory/bv/rewrites-elimination       | 10 ----------
+ src/theory/bv/rewrites-simplification    | 15 ++++++++-------
+ src/theory/bv/theory_bv_rewriter.cpp     |  4 ++++
+ 6 files changed, 31 insertions(+), 38 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index a2417b1a2..508e6be94 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2763,6 +2763,17 @@ enum ENUM(ProofRewriteRule)
+    * constant c \endverbatim
+    */
+   EVALUE(BV_BITWISE_SLICING),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Bitvectors -- Extract continuous substrings of bitvectors**
++   *
++   * .. math::
++   *    repeat(n,\ t) = concat(t ... t)
++   *
++   * where :math:`t` is repeated :math:`n` times.
++   * \endverbatim
++   */
++  EVALUE(BV_REPEAT_ELIM),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Strings -- regular expression loop elimination**
+@@ -3234,10 +3245,6 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(BV_ULE_ELIMINATE),
+   /** Auto-generated from RARE rule bv-comp-eliminate */
+   EVALUE(BV_COMP_ELIMINATE),
+-  /** Auto-generated from RARE rule bv-repeat-eliminate-1 */
+-  EVALUE(BV_REPEAT_ELIMINATE_1),
+-  /** Auto-generated from RARE rule bv-repeat-eliminate-2 */
+-  EVALUE(BV_REPEAT_ELIMINATE_2),
+   /** Auto-generated from RARE rule bv-rotate-left-eliminate-1 */
+   EVALUE(BV_ROTATE_LEFT_ELIMINATE_1),
+   /** Auto-generated from RARE rule bv-rotate-left-eliminate-2 */
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index 00aaa1542..abf8c4c87 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -696,16 +696,6 @@
+   :args (x1 y1)
+   :conclusion (= (bvcomp x1 y1) (ite (= x1 y1) (@bv 1 1) (@bv 0 1)))
+ )
+-(declare-rule bv-repeat-eliminate-1 ((@n0 Int) (x1 (BitVec @n0)) (n1 Int) (nm1 Int))
+-  :premises ((= (> n1 1) true) (= nm1 (- n1 1)))
+-  :args (x1 n1 nm1)
+-  :conclusion (= (repeat n1 x1) (concat x1 (repeat nm1 x1)))
+-)
+-(declare-rule bv-repeat-eliminate-2 ((@n0 Int) (x1 (BitVec @n0)) (n1 Int))
+-  :premises ((= n1 1))
+-  :args (x1 n1)
+-  :conclusion (= (repeat n1 x1) x1)
+-)
+ (declare-rule bv-rotate-left-eliminate-1 ((@n0 Int) (x1 (BitVec @n0)) (amount1 Int) (u1 Int) (u2 Int) (l1 Int))
+   :premises ((= (= (mod amount1 (@bvsize x1)) 0) false) (eo::define ((_let_1 (@bvsize x1))) (= u1 (- _let_1 (+ 1 (mod amount1 _let_1))))) (= u2 (- (@bvsize x1) 1)) (eo::define ((_let_1 (@bvsize x1))) (= l1 (- _let_1 (mod amount1 _let_1)))))
+   :args (x1 amount1 u1 u2 l1)
+@@ -926,14 +916,14 @@
+   :args (x1 w1)
+   :conclusion (= (bvxor x1 x1) (@bv 0 w1))
+ )
+-(declare-rule bv-xor-ones ((@n0 Int) (x1 (BitVec @n0)) (n1 Int) (w1 Int))
+-  :premises ((= n1 (- (int.pow2 (@bvsize x1)) 1)))
+-  :args (x1 n1 w1)
+-  :conclusion (= (bvxor x1 (@bv n1 w1)) (bvnot x1))
++(declare-rule bv-xor-ones ((@n0 Int) (@n1 Int) (xs1 (BitVec @n0) :list) (zs1 (BitVec @n1) :list) (n1 Int) (w1 Int))
++  :premises ((= n1 (- (int.pow2 w1) 1)))
++  :args (xs1 zs1 n1 w1)
++  :conclusion (= ($singleton_elim (bvxor xs1 (@bv n1 w1) zs1)) (bvnot ($singleton_elim (bvxor xs1 zs1))))
+ )
+-(declare-rule bv-xor-zero ((@n0 Int) (x1 (BitVec @n0)) (n1 Int))
+-  :args (x1 n1)
+-  :conclusion (= (bvxor x1 (@bv 0 n1)) x1)
++(declare-rule bv-xor-zero ((@n0 Int) (@n1 Int) (xs1 (BitVec @n0) :list) (zs1 (BitVec @n1) :list) (n1 Int))
++  :args (xs1 zs1 n1)
++  :conclusion (= ($singleton_elim (bvxor xs1 (@bv 0 n1) zs1)) ($singleton_elim (bvxor xs1 zs1)))
+ )
+ (declare-rule bv-bitwise-not-and ((@n0 Int) (x1 (BitVec @n0)) (w1 Int))
+   :premises ((= w1 (@bvsize x1)))
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index e2b6876b8..976faf785 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -266,6 +266,7 @@ const char* toString(cvc5::ProofRewriteRule rule)
+       return "bv-add-combine-like-terms";
+     case ProofRewriteRule::BV_MULT_SIMPLIFY: return "bv-mult-simplify";
+     case ProofRewriteRule::BV_BITWISE_SLICING: return "bv-bitwise-slicing";
++    case ProofRewriteRule::BV_REPEAT_ELIM: return "bv-repeat-elim";
+     case ProofRewriteRule::RE_LOOP_ELIM: return "re-loop-elim";
+     case ProofRewriteRule::RE_INTER_UNION_INCLUSION:
+       return "re-inter-union-inclusion";
+diff --git a/src/theory/bv/rewrites-elimination b/src/theory/bv/rewrites-elimination
+index f4cb82f49..a7fc398dd 100644
+--- a/src/theory/bv/rewrites-elimination
++++ b/src/theory/bv/rewrites-elimination
+@@ -49,16 +49,6 @@
+   ((x ?BitVec) (y ?BitVec))
+   (bvcomp x y)
+   (ite (= x y) (@bv 1 1) (@bv 0 1)))
+-(define-cond-rule bv-repeat-eliminate-1
+-  ((x ?BitVec) (n Int) (nm1 Int))
+-  (and (> n 1) (= nm1 (- n 1)))
+-  (repeat n x)
+-  (concat x (repeat nm1 x)))
+-(define-cond-rule bv-repeat-eliminate-2
+-  ((x ?BitVec) (n Int))
+-  (= n 1)
+-  (repeat n x)
+-  x)
+ 
+ (define-cond-rule bv-rotate-left-eliminate-1
+   ((x ?BitVec) (amount Int) (u1 Int) (u2 Int) (l2 Int))
+diff --git a/src/theory/bv/rewrites-simplification b/src/theory/bv/rewrites-simplification
+index a0c7b1281..6ffa7a057 100644
+--- a/src/theory/bv/rewrites-simplification
++++ b/src/theory/bv/rewrites-simplification
+@@ -179,13 +179,14 @@
+   (bvxor x x) 
+   (@bv 0 w))
+ 
+-(define-cond-rule bv-xor-ones ((x ?BitVec) (n Int) (w Int))
+-  (= n (- (int.pow2 (@bvsize x)) 1))
+-  (bvxor x (@bv n w))
+-  (bvnot x))
+-(define-rule bv-xor-zero ((x ?BitVec) (n Int))
+-  (bvxor x (@bv 0 n))
+-  x)
++(define-cond-rule bv-xor-ones ((xs ?BitVec :list) (zs ?BitVec :list) (n Int) (w Int))
++  (= n (- (int.pow2 w) 1))
++  (bvxor xs (@bv n w) zs)
++  (bvnot (bvxor xs zs)))
++
++(define-rule bv-xor-zero ((xs ?BitVec :list) (zs ?BitVec :list) (n Int))
++  (bvxor xs (@bv 0 n) zs)
++  (bvxor xs zs))
+ 
+ (define-cond-rule bv-bitwise-not-and ((x ?BitVec) (w Int))
+   (= w (@bvsize x))
+diff --git a/src/theory/bv/theory_bv_rewriter.cpp b/src/theory/bv/theory_bv_rewriter.cpp
+index 2e37281ef..e23b359c4 100644
+--- a/src/theory/bv/theory_bv_rewriter.cpp
++++ b/src/theory/bv/theory_bv_rewriter.cpp
+@@ -41,6 +41,8 @@ TheoryBVRewriter::TheoryBVRewriter(NodeManager* nm) : TheoryRewriter(nm)
+                            TheoryRewriteCtx::POST_DSL);
+   registerProofRewriteRule(ProofRewriteRule::BV_BITWISE_SLICING,
+                            TheoryRewriteCtx::POST_DSL);
++  registerProofRewriteRule(ProofRewriteRule::BV_REPEAT_ELIM,
++                           TheoryRewriteCtx::PRE_DSL);
+ }
+ 
+ RewriteResponse TheoryBVRewriter::preRewrite(TNode node)
+@@ -92,6 +94,8 @@ Node TheoryBVRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+     case ProofRewriteRule::BV_MULT_SIMPLIFY: BV_PROOF_REWRITE_CASE(MultSimplify)
+     case ProofRewriteRule::BV_BITWISE_SLICING:
+       BV_PROOF_REWRITE_CASE(BitwiseSlicing)
++    case ProofRewriteRule::BV_REPEAT_ELIM:
++      BV_PROOF_REWRITE_CASE(RepeatEliminate)
+     default: break;
+   }
+   return Node::null();
+-- 
+2.47.1
+

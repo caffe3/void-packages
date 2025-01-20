@@ -1,0 +1,859 @@
+From 1d50fb8ba4324253a097754edfeb5b2808a22d43 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 6 Dec 2024 08:33:44 -0600
+Subject: [PATCH 223/312] Eliminate some of the calls to Node::getNodeManager
+ (#11412)
+
+Also makes another method statically available in NodeManager
+(mkDummySkolem).
+
+---------
+
+Co-authored-by: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+---
+ src/expr/dtype_cons.cpp                       | 47 ++++++++++---------
+ src/expr/internal_skolem_id.h                 | 31 ++++++++++++
+ src/expr/node_manager_template.cpp            |  9 ++++
+ src/expr/node_manager_template.h              | 23 +++++++++
+ src/expr/skolem_manager.cpp                   | 15 +++---
+ src/expr/skolem_manager.h                     | 16 +------
+ src/preprocessing/passes/sygus_inference.cpp  |  3 +-
+ src/smt/sygus_solver.cpp                      |  3 +-
+ .../quantifiers/quantifiers_attributes.cpp    |  5 +-
+ .../quantifiers/sygus/example_infer.cpp       |  6 +--
+ src/theory/quantifiers/sygus/example_infer.h  |  4 +-
+ .../quantifiers/sygus/rcons_obligation.cpp    |  4 +-
+ src/theory/quantifiers/sygus/sygus_abduct.cpp |  2 +-
+ .../quantifiers/sygus/sygus_explain.cpp       | 12 ++---
+ src/theory/quantifiers/sygus/sygus_explain.h  |  6 ++-
+ .../quantifiers/sygus/sygus_unif_rl.cpp       | 21 +++++----
+ src/theory/quantifiers/sygus/sygus_unif_rl.h  | 12 +++--
+ src/theory/quantifiers/sygus/sygus_utils.cpp  | 26 +++++-----
+ src/theory/quantifiers/sygus/sygus_utils.h    | 10 ++--
+ .../quantifiers/sygus/synth_conjecture.cpp    |  2 +-
+ test/unit/node/node_black.cpp                 | 24 +++++-----
+ test/unit/node/node_manager_black.cpp         |  2 +-
+ .../theory/theory_arith_coverings_white.cpp   |  4 +-
+ 23 files changed, 178 insertions(+), 109 deletions(-)
+
+diff --git a/src/expr/dtype_cons.cpp b/src/expr/dtype_cons.cpp
+index e29f2ac1f..b318baf30 100644
+--- a/src/expr/dtype_cons.cpp
++++ b/src/expr/dtype_cons.cpp
+@@ -17,7 +17,6 @@
+ #include "expr/ascription_type.h"
+ #include "expr/dtype.h"
+ #include "expr/node_manager.h"
+-#include "expr/skolem_manager.h"
+ #include "expr/type_matcher.h"
+ #include "options/datatypes_options.h"
+ 
+@@ -54,11 +53,11 @@ void DTypeConstructor::addArg(std::string selectorName, TypeNode rangeType)
+   // create the proper selector type)
+   Assert(!isResolved());
+   Assert(!rangeType.isNull());
+-  SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
+-  Node sel = sm->mkDummySkolem("unresolved_" + selectorName,
+-                               rangeType,
+-                               "is an unresolved selector type placeholder",
+-                               SkolemManager::SKOLEM_EXACT_NAME);
++  Node sel =
++      NodeManager::mkDummySkolem("unresolved_" + selectorName,
++                                 rangeType,
++                                 "is an unresolved selector type placeholder",
++                                 SkolemFlags::SKOLEM_EXACT_NAME);
+   // can use null updater for now
+   Node nullNode;
+   Trace("datatypes") << "DTypeConstructor::addArg: " << sel << std::endl;
+@@ -538,7 +537,6 @@ bool DTypeConstructor::resolve(
+                      << std::endl;
+ 
+   NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+   size_t index = 0;
+   std::vector<TypeNode> argTypes;
+   Trace("datatypes-init") << "Initialize constructor " << d_name << std::endl;
+@@ -601,15 +599,17 @@ bool DTypeConstructor::resolve(
+     }
+     // Internally, selectors (and updaters) are fresh internal skolems which
+     // we constructor via mkDummySkolem.
+-    arg->d_selector = sm->mkDummySkolem(argName,
+-                                        nm->mkSelectorType(self, range),
+-                                        "is a selector",
+-                                        SkolemManager::SKOLEM_EXACT_NAME);
++    arg->d_selector =
++        NodeManager::mkDummySkolem(argName,
++                                   nm->mkSelectorType(self, range),
++                                   "is a selector",
++                                   SkolemFlags::SKOLEM_EXACT_NAME);
+     std::string updateName("update_" + argName);
+-    arg->d_updater = sm->mkDummySkolem(updateName,
+-                                       nm->mkDatatypeUpdateType(self, range),
+-                                       "is a selector",
+-                                       SkolemManager::SKOLEM_EXACT_NAME);
++    arg->d_updater =
++        NodeManager::mkDummySkolem(updateName,
++                                   nm->mkDatatypeUpdateType(self, range),
++                                   "is a selector",
++                                   SkolemFlags::SKOLEM_EXACT_NAME);
+     // must set indices to ensure datatypes::utils::indexOf works
+     arg->d_selector.setAttribute(DTypeConsIndexAttr(), cindex);
+     arg->d_selector.setAttribute(DTypeIndexAttr(), index);
+@@ -637,14 +637,15 @@ bool DTypeConstructor::resolve(
+   // The name of the tester variable does not matter, it is only used
+   // internally.
+   std::string testerName("is_" + d_name);
+-  d_tester = sm->mkDummySkolem(testerName,
+-                               nm->mkTesterType(self),
+-                               "is a tester",
+-                               SkolemManager::SKOLEM_EXACT_NAME);
+-  d_constructor = sm->mkDummySkolem(getName(),
+-                                    nm->mkConstructorType(argTypes, self),
+-                                    "is a constructor",
+-                                    SkolemManager::SKOLEM_EXACT_NAME);
++  d_tester = NodeManager::mkDummySkolem(testerName,
++                                        nm->mkTesterType(self),
++                                        "is a tester",
++                                        SkolemFlags::SKOLEM_EXACT_NAME);
++  d_constructor =
++      NodeManager::mkDummySkolem(getName(),
++                                 nm->mkConstructorType(argTypes, self),
++                                 "is a constructor",
++                                 SkolemFlags::SKOLEM_EXACT_NAME);
+   Assert(d_constructor.getType().isDatatypeConstructor());
+   // associate constructor with all selectors
+   for (std::shared_ptr<DTypeSelector> sel : d_args)
+diff --git a/src/expr/internal_skolem_id.h b/src/expr/internal_skolem_id.h
+index b70d08432..0997733c3 100644
+--- a/src/expr/internal_skolem_id.h
++++ b/src/expr/internal_skolem_id.h
+@@ -64,6 +64,37 @@ const char* toString(InternalSkolemId id);
+ /** Writes an internal skolem function name to a stream. */
+ std::ostream& operator<<(std::ostream& out, InternalSkolemId id);
+ 
++/**
++ * Optional flags used to control behavior of skolem creation.
++ * They should be composed with bitwise operators.
++ */
++enum class SkolemFlags : uint8_t
++{
++  /** default behavior */
++  SKOLEM_DEFAULT = 0,
++  /** do not make the name unique by adding the id */
++  SKOLEM_EXACT_NAME = 1,
++};
++
++/*
++ * Performs a bitwise OR operation between two SkolemFlags values.
++ */
++inline SkolemFlags operator|(SkolemFlags lhs, SkolemFlags rhs)
++{
++  return static_cast<SkolemFlags>(
++      static_cast<std::underlying_type_t<SkolemFlags>>(lhs)
++      | static_cast<std::underlying_type_t<SkolemFlags>>(rhs));
++}
++
++/*
++ * Performs a bitwise AND operation between two SkolemFlags values.
++ */
++inline SkolemFlags operator&(SkolemFlags lhs, SkolemFlags rhs)
++{
++  return static_cast<SkolemFlags>(
++      static_cast<std::underlying_type_t<SkolemFlags>>(lhs)
++      & static_cast<std::underlying_type_t<SkolemFlags>>(rhs));
++}
+ 
+ }  // namespace cvc5::internal
+ 
+diff --git a/src/expr/node_manager_template.cpp b/src/expr/node_manager_template.cpp
+index 0df590ad2..934d39920 100644
+--- a/src/expr/node_manager_template.cpp
++++ b/src/expr/node_manager_template.cpp
+@@ -1382,6 +1382,15 @@ Node NodeManager::mkGroundValue(const TypeNode& tn)
+   return *te;
+ }
+ 
++Node NodeManager::mkDummySkolem(const std::string& prefix,
++                                const TypeNode& type,
++                                const std::string& comment,
++                                SkolemFlags flags)
++{
++  NodeManager* nm = type.getNodeManager();
++  return nm->getSkolemManager()->mkDummySkolem(prefix, type, comment, flags);
++}
++
+ bool NodeManager::safeToReclaimZombies() const
+ {
+   // FIXME multithreading
+diff --git a/src/expr/node_manager_template.h b/src/expr/node_manager_template.h
+index 27a42b2e6..af70a9f10 100644
+--- a/src/expr/node_manager_template.h
++++ b/src/expr/node_manager_template.h
+@@ -27,6 +27,7 @@
+ #include <vector>
+ 
+ #include "base/check.h"
++#include "expr/internal_skolem_id.h"
+ #include "expr/kind.h"
+ #include "expr/node_builder.h"
+ #include "expr/node_value.h"
+@@ -607,6 +608,28 @@ class NodeManager
+    */
+   static Node mkGroundValue(const TypeNode& tn);
+ 
++  /**
++   * Create a skolem constant with the given name, type, and comment. This
++   * should only be used if the definition of the skolem does not matter.
++   * The definition of a skolem matters e.g. when the skolem is used in a
++   * proof.
++   *
++   * @param prefix the name of the new skolem variable is the prefix
++   * appended with a unique ID.  This way a family of skolem variables
++   * can be made with unique identifiers, used in dump, tracing, and
++   * debugging output.  Use SKOLEM_EXACT_NAME flag if you don't want
++   * a unique ID appended and use prefix as the name.
++   * @param type the type of the skolem variable to create
++   * @param comment a comment for dumping output; if declarations are
++   * being dumped, this is included in a comment before the declaration
++   * and can be quite useful for debugging
++   * @param flags an optional mask of bits from SkolemFlags to control
++   * skolem behavior
++   */
++  static Node mkDummySkolem(const std::string& prefix,
++                            const TypeNode& type,
++                            const std::string& comment = "",
++                            SkolemFlags flags = SkolemFlags::SKOLEM_DEFAULT);
+   /**
+    * Create an Node by applying an associative operator to the children.
+    * If <code>children.size()</code> is greater than the max arity for
+diff --git a/src/expr/skolem_manager.cpp b/src/expr/skolem_manager.cpp
+index 691b480d7..1349b10c5 100644
+--- a/src/expr/skolem_manager.cpp
++++ b/src/expr/skolem_manager.cpp
+@@ -234,7 +234,7 @@ InternalSkolemId SkolemManager::getInternalId(TNode k) const
+ Node SkolemManager::mkDummySkolem(const std::string& prefix,
+                                   const TypeNode& type,
+                                   const std::string& comment,
+-                                  int flags)
++                                  SkolemFlags flags)
+ {
+   return mkSkolemNode(Kind::DUMMY_SKOLEM, prefix, type, flags);
+ }
+@@ -347,19 +347,20 @@ Node SkolemManager::getUnpurifiedForm(Node k)
+ Node SkolemManager::mkSkolemNode(Kind k,
+                                  const std::string& prefix,
+                                  const TypeNode& type,
+-                                 int flags)
++                                 SkolemFlags flags)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+   Node n = NodeBuilder(nm, k);
+-  if ((flags & SKOLEM_EXACT_NAME) == 0)
++  if ((flags & SkolemFlags::SKOLEM_EXACT_NAME)
++      == SkolemFlags::SKOLEM_EXACT_NAME)
+   {
+-    std::stringstream name;
+-    name << prefix << '_' << ++d_skolemCounter;
+-    n.setAttribute(expr::VarNameAttr(), name.str());
++    n.setAttribute(expr::VarNameAttr(), prefix);
+   }
+   else
+   {
+-    n.setAttribute(expr::VarNameAttr(), prefix);
++    std::stringstream name;
++    name << prefix << '_' << ++d_skolemCounter;
++    n.setAttribute(expr::VarNameAttr(), name.str());
+   }
+   n.setAttribute(expr::TypeAttr(), type);
+   n.setAttribute(expr::TypeCheckedAttr(), true);
+diff --git a/src/expr/skolem_manager.h b/src/expr/skolem_manager.h
+index d4ffab605..20b675363 100644
+--- a/src/expr/skolem_manager.h
++++ b/src/expr/skolem_manager.h
+@@ -78,18 +78,6 @@ class SkolemManager
+  public:
+   SkolemManager();
+   ~SkolemManager() {}
+-
+-  /**
+-   * Optional flags used to control behavior of skolem creation.
+-   * They should be composed with a bitwise OR.
+-   */
+-  enum SkolemFlags
+-  {
+-    /** default behavior */
+-    SKOLEM_DEFAULT = 0,
+-    /** do not make the name unique by adding the id */
+-    SKOLEM_EXACT_NAME = 1,
+-  };
+   /**
+    * Make purification skolem. This skolem is unique for each t, which we
+    * implement via an attribute on t. This attribute is used to ensure to
+@@ -204,7 +192,7 @@ class SkolemManager
+   Node mkDummySkolem(const std::string& prefix,
+                      const TypeNode& type,
+                      const std::string& comment = "",
+-                     int flags = SKOLEM_DEFAULT);
++                     SkolemFlags flags = SkolemFlags::SKOLEM_DEFAULT);
+   /** Returns true if n is a skolem that stands for an abstract value */
+   bool isAbstractValue(TNode n) const;
+   /**
+@@ -270,7 +258,7 @@ class SkolemManager
+   Node mkSkolemNode(Kind k,
+                     const std::string& prefix,
+                     const TypeNode& type,
+-                    int flags = SKOLEM_DEFAULT);
++                    SkolemFlags flags = SkolemFlags::SKOLEM_DEFAULT);
+   /** Get type for skolem */
+   TypeNode getTypeFor(SkolemId id, const std::vector<Node>& cacheVals);
+ };
+diff --git a/src/preprocessing/passes/sygus_inference.cpp b/src/preprocessing/passes/sygus_inference.cpp
+index 5abb0d1dc..afa03d2be 100644
+--- a/src/preprocessing/passes/sygus_inference.cpp
++++ b/src/preprocessing/passes/sygus_inference.cpp
+@@ -281,7 +281,8 @@ bool SygusInference::solveSygus(const std::vector<Node>& assertions,
+   // sygus attribute to mark the conjecture as a sygus conjecture
+   Trace("sygus-infer") << "Make outer sygus conjecture..." << std::endl;
+ 
+-  body = quantifiers::SygusUtils::mkSygusConjecture(ff_vars, body);
++  body =
++      quantifiers::SygusUtils::mkSygusConjecture(nodeManager(), ff_vars, body);
+ 
+   Trace("sygus-infer") << "*** Return sygus inference : " << body << std::endl;
+ 
+diff --git a/src/smt/sygus_solver.cpp b/src/smt/sygus_solver.cpp
+index 6a5d44372..952f71408 100644
+--- a/src/smt/sygus_solver.cpp
++++ b/src/smt/sygus_solver.cpp
+@@ -315,7 +315,8 @@ SynthResult SygusSolver::checkSynth(bool isNext)
+     }
+     if (!ntrivSynthFuns.empty())
+     {
+-      body = quantifiers::SygusUtils::mkSygusConjecture(ntrivSynthFuns, body);
++      body = quantifiers::SygusUtils::mkSygusConjecture(
++          nodeManager(), ntrivSynthFuns, body);
+     }
+     Trace("smt-debug") << "...constructed forall " << body << std::endl;
+ 
+diff --git a/src/theory/quantifiers/quantifiers_attributes.cpp b/src/theory/quantifiers/quantifiers_attributes.cpp
+index 929145515..e19e082c6 100644
+--- a/src/theory/quantifiers/quantifiers_attributes.cpp
++++ b/src/theory/quantifiers/quantifiers_attributes.cpp
+@@ -492,9 +492,8 @@ bool QuantAttributes::getInstantiationLevel(const Node& n, uint64_t& level)
+ Node mkNamedQuant(Kind k, Node bvl, Node body, const std::string& name)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  Node v = sm->mkDummySkolem(
+-      name, nm->booleanType(), "", SkolemManager::SKOLEM_EXACT_NAME);
++  Node v = NodeManager::mkDummySkolem(
++      name, nm->booleanType(), "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node attr = nm->mkConst(String("qid"));
+   Node ip = nm->mkNode(Kind::INST_ATTRIBUTE, attr, v);
+   Node ipl = nm->mkNode(Kind::INST_PATTERN_LIST, ip);
+diff --git a/src/theory/quantifiers/sygus/example_infer.cpp b/src/theory/quantifiers/sygus/example_infer.cpp
+index 463df1d95..108bb8c94 100644
+--- a/src/theory/quantifiers/sygus/example_infer.cpp
++++ b/src/theory/quantifiers/sygus/example_infer.cpp
+@@ -24,7 +24,8 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace quantifiers {
+ 
+-ExampleInfer::ExampleInfer(TermDbSygus* tds) : d_tds(tds)
++ExampleInfer::ExampleInfer(NodeManager* nm, TermDbSygus* tds)
++    : d_nm(nm), d_tds(tds)
+ {
+   d_isExamples = false;
+ }
+@@ -96,7 +97,6 @@ bool ExampleInfer::collectExamples(
+     return true;
+   }
+   visited[cacheIndex].insert(n);
+-  NodeManager* nm = n.getNodeManager();
+   Node neval;
+   Node n_output;
+   bool neval_is_evalapp = false;
+@@ -105,7 +105,7 @@ bool ExampleInfer::collectExamples(
+     neval = n;
+     if (hasPol)
+     {
+-      n_output = nm->mkConst(pol);
++      n_output = d_nm->mkConst(pol);
+     }
+     neval_is_evalapp = true;
+   }
+diff --git a/src/theory/quantifiers/sygus/example_infer.h b/src/theory/quantifiers/sygus/example_infer.h
+index 0f3c6e29a..c085f9548 100644
+--- a/src/theory/quantifiers/sygus/example_infer.h
++++ b/src/theory/quantifiers/sygus/example_infer.h
+@@ -40,7 +40,7 @@ namespace quantifiers {
+ class ExampleInfer
+ {
+  public:
+-  ExampleInfer(TermDbSygus* tds);
++  ExampleInfer(NodeManager* nm, TermDbSygus* tds);
+   ~ExampleInfer();
+   /** initialize
+    *
+@@ -110,6 +110,8 @@ class ExampleInfer
+       std::map<std::pair<bool, bool>, std::unordered_set<Node>>& visited,
+       bool hasPol,
+       bool pol);
++  /** Pointer to the node manager */
++  NodeManager* d_nm;
+   /** Pointer to the sygus term database */
+   TermDbSygus* d_tds;
+   /** is this an examples conjecture for all functions-to-synthesize? */
+diff --git a/src/theory/quantifiers/sygus/rcons_obligation.cpp b/src/theory/quantifiers/sygus/rcons_obligation.cpp
+index b4c722ab1..8e9bb1d76 100644
+--- a/src/theory/quantifiers/sygus/rcons_obligation.cpp
++++ b/src/theory/quantifiers/sygus/rcons_obligation.cpp
+@@ -18,7 +18,6 @@
+ #include <sstream>
+ 
+ #include "expr/node_algorithm.h"
+-#include "expr/skolem_manager.h"
+ #include "theory/datatypes/sygus_datatype_utils.h"
+ 
+ namespace cvc5::internal {
+@@ -27,8 +26,7 @@ namespace quantifiers {
+ 
+ RConsObligation::RConsObligation(TypeNode stn, Node t) : d_ts({t})
+ {
+-  SkolemManager* sm = t.getNodeManager()->getSkolemManager();
+-  d_k = sm->mkDummySkolem("sygus_rcons", stn);
++  d_k = NodeManager::mkDummySkolem("sygus_rcons", stn);
+ }
+ 
+ TypeNode RConsObligation::getType() const { return d_k.getType(); }
+diff --git a/src/theory/quantifiers/sygus/sygus_abduct.cpp b/src/theory/quantifiers/sygus/sygus_abduct.cpp
+index 9c38c212c..fbb72ac71 100644
+--- a/src/theory/quantifiers/sygus/sygus_abduct.cpp
++++ b/src/theory/quantifiers/sygus/sygus_abduct.cpp
+@@ -179,7 +179,7 @@ Node SygusAbduct::mkAbductionConjecture(NodeManager* nm,
+   // the abducts A we procedure must be consistent with our axioms.
+ 
+   // forall A. exists x. ~( A( x ) => ~input( x ) )
+-  res = SygusUtils::mkSygusConjecture({abd}, res, {instAttr});
++  res = SygusUtils::mkSygusConjecture(nm, {abd}, res, {instAttr});
+   Trace("sygus-abduct-debug") << "...finish" << std::endl;
+ 
+   Trace("sygus-abduct") << "Generate: " << res << std::endl;
+diff --git a/src/theory/quantifiers/sygus/sygus_explain.cpp b/src/theory/quantifiers/sygus/sygus_explain.cpp
+index 7a54c3c69..38be6da4d 100644
+--- a/src/theory/quantifiers/sygus/sygus_explain.cpp
++++ b/src/theory/quantifiers/sygus/sygus_explain.cpp
+@@ -93,7 +93,7 @@ Node TermRecBuild::getChild(unsigned i)
+   return d_children[curr][i + o];
+ }
+ 
+-Node TermRecBuild::build(NodeManager* nm, unsigned d)
++Node TermRecBuild::build(unsigned d)
+ {
+   Assert(d_pos.size() + 1 == d_term.size());
+   Assert(d < d_term.size());
+@@ -105,7 +105,7 @@ Node TermRecBuild::build(NodeManager* nm, unsigned d)
+     Node nc;
+     if (p + o == i)
+     {
+-      nc = build(nm, d + 1);
++      nc = build(d + 1);
+     }
+     else
+     {
+@@ -113,7 +113,7 @@ Node TermRecBuild::build(NodeManager* nm, unsigned d)
+     }
+     children.push_back(nc);
+   }
+-  return nm->mkNode(d_kind[d], children);
++  return d_nm->mkNode(d_kind[d], children);
+ }
+ 
+ SygusExplain::SygusExplain(Env& env, TermDbSygus* tdb) : EnvObj(env), d_tdb(tdb)
+@@ -216,7 +216,7 @@ void SygusExplain::getExplanationFor(TermRecBuild& trb,
+     TypeNode xtn = vn[i].getType();
+     Node x = d_tdb->getFreeVarInc(xtn, var_count);
+     trb.replaceChild(i, x);
+-    Node nvn = trb.build(n.getNodeManager());
++    Node nvn = trb.build();
+     Assert(nvn.getKind() == Kind::APPLY_CONSTRUCTOR);
+     if (et.is_invariant(d_tdb, nvn, x))
+     {
+@@ -310,7 +310,7 @@ void SygusExplain::getExplanationFor(Node n,
+   // return getExplanationForEquality( n, vn, exp );
+ 
+   // set up the recursion object;
+-  TermRecBuild trb;
++  TermRecBuild trb(nodeManager());
+   trb.init(vn);
+   Node vnr_exp;
+   int sz_use = sz;
+@@ -353,7 +353,7 @@ void SygusExplain::getExplanationFor(Node n,
+     var_count[vtn]--;
+   }
+   int sz = -1;
+-  TermRecBuild trb;
++  TermRecBuild trb(nodeManager());
+   trb.init(vn);
+   Node vnr;
+   Node vnr_exp;
+diff --git a/src/theory/quantifiers/sygus/sygus_explain.h b/src/theory/quantifiers/sygus/sygus_explain.h
+index 68a8869c7..9d8e9be81 100644
+--- a/src/theory/quantifiers/sygus/sygus_explain.h
++++ b/src/theory/quantifiers/sygus/sygus_explain.h
+@@ -44,7 +44,7 @@ class TermDbSygus;
+ class TermRecBuild
+ {
+  public:
+-  TermRecBuild() {}
++  TermRecBuild(NodeManager* nm) : d_nm(nm) {}
+   /** set the initial term to n
+    *
+    * The context initially empty, that is,
+@@ -71,9 +71,11 @@ class TermRecBuild
+   /** build the (modified) version of the term
+    * we initialized via the call to init().
+    */
+-  Node build(NodeManager* nm, unsigned p = 0);
++  Node build(unsigned p = 0);
+ 
+  private:
++  /** Pointer to the node manager */
++  NodeManager* d_nm;
+   /** stack of active terms */
+   std::vector<Node> d_term;
+   /** stack of children of active terms
+diff --git a/src/theory/quantifiers/sygus/sygus_unif_rl.cpp b/src/theory/quantifiers/sygus/sygus_unif_rl.cpp
+index 8c87e53dc..8df3b6b8e 100644
+--- a/src/theory/quantifiers/sygus/sygus_unif_rl.cpp
++++ b/src/theory/quantifiers/sygus/sygus_unif_rl.cpp
+@@ -501,22 +501,25 @@ void SygusUnifRl::registerConditionalEnumerator(Node f,
+     d_cenum_to_stratpt[cond].clear();
+   }
+   // register that this strategy node has a decision tree construction
+-  d_stratpt_to_dt[e].initialize(cond, this, &d_strategy.at(f), strategy_index);
++  d_stratpt_to_dt[e].initialize(
++      nodeManager(), cond, this, &d_strategy.at(f), strategy_index);
+   // associate conditional enumerator with strategy node
+   d_cenum_to_stratpt[cond].push_back(e);
+ }
+ 
+-void SygusUnifRl::DecisionTreeInfo::initialize(Node cond_enum,
++void SygusUnifRl::DecisionTreeInfo::initialize(NodeManager* nm,
++                                               Node cond_enum,
+                                                SygusUnifRl* unif,
+                                                SygusUnifStrategy* strategy,
+                                                unsigned strategy_index)
+ {
++  d_nm = nm;
+   d_cond_enum = cond_enum;
+   d_unif = unif;
+   d_strategy = strategy;
+   d_strategy_index = strategy_index;
+-  d_true = cond_enum.getNodeManager()->mkConst(true);
+-  d_false = cond_enum.getNodeManager()->mkConst(false);
++  d_true = d_nm->mkConst(true);
++  d_false = d_nm->mkConst(false);
+   // Retrieve template
+   EnumInfo& eiv = d_strategy->getEnumInfo(d_cond_enum);
+   d_template = NodePair(eiv.d_template, eiv.d_template_arg);
+@@ -643,7 +646,6 @@ Node SygusUnifRl::DecisionTreeInfo::buildSolAllCond(Node cons,
+ Node SygusUnifRl::DecisionTreeInfo::buildSolMinCond(Node cons,
+                                                     std::vector<Node>& lemmas)
+ {
+-  NodeManager* nm = cons.getNodeManager();
+   // model values for evaluation heads
+   std::map<Node, Node> hd_mv;
+   // the current explanation of why there has not yet been a separation conflict
+@@ -863,7 +865,7 @@ Node SygusUnifRl::DecisionTreeInfo::buildSolMinCond(Node cons,
+         AlwaysAssert(ith != d_unif->d_hd_to_pt.end());
+         cechildren.insert(
+             cechildren.end(), ith->second.begin(), ith->second.end());
+-        Node cea = nm->mkNode(Kind::DT_SYGUS_EVAL, cechildren);
++        Node cea = d_nm->mkNode(Kind::DT_SYGUS_EVAL, cechildren);
+         Trace("sygus-unif-sol-sym")
+             << "Sep conflict app #" << r << " : " << cea << std::endl;
+         std::vector<Node> tmpExp;
+@@ -908,7 +910,7 @@ Node SygusUnifRl::DecisionTreeInfo::buildSolMinCond(Node cons,
+   }
+   if (exp_conflict)
+   {
+-    Node lemma = exp.size() == 1 ? exp[0] : nm->mkNode(Kind::AND, exp);
++    Node lemma = d_nm->mkAnd(exp);
+     lemma = lemma.negate();
+     Trace("sygus-unif-sol") << "  ......conflict is " << lemma << std::endl;
+     lemmas.push_back(lemma);
+@@ -927,14 +929,13 @@ Node SygusUnifRl::DecisionTreeInfo::extractSol(Node cons,
+   {
+     recomputeSolHeuristically(hd_mv);
+   }
+-  return d_pt_sep.extractSol(cons, hd_mv);
++  return d_pt_sep.extractSol(d_nm, cons, hd_mv);
+ }
+ 
+ Node SygusUnifRl::DecisionTreeInfo::PointSeparator::extractSol(
+-    Node cons, std::map<Node, Node>& hd_mv)
++    NodeManager* nm, Node cons, std::map<Node, Node>& hd_mv)
+ {
+   // Traverse trie and build ITE with cons
+-  NodeManager* nm = cons.getNodeManager();
+   std::map<IndTriePair, Node> cache;
+   std::map<IndTriePair, Node>::iterator it;
+   std::vector<IndTriePair> visit;
+diff --git a/src/theory/quantifiers/sygus/sygus_unif_rl.h b/src/theory/quantifiers/sygus/sygus_unif_rl.h
+index eeadaf96d..b5dc306de 100644
+--- a/src/theory/quantifiers/sygus/sygus_unif_rl.h
++++ b/src/theory/quantifiers/sygus/sygus_unif_rl.h
+@@ -208,12 +208,16 @@ class SygusUnifRl : public SygusUnif
+   {
+    public:
+     DecisionTreeInfo()
+-        : d_unif(nullptr), d_strategy(nullptr), d_strategy_index(0)
++        : d_unif(nullptr),
++          d_nm(nullptr),
++          d_strategy(nullptr),
++          d_strategy_index(0)
+     {
+     }
+     ~DecisionTreeInfo() {}
+     /** initializes this class */
+-    void initialize(Node cond_enum,
++    void initialize(NodeManager* nm,
++                    Node cond_enum,
+                     SygusUnifRl* unif,
+                     SygusUnifStrategy* strategy,
+                     unsigned strategy_index);
+@@ -264,6 +268,8 @@ class SygusUnifRl : public SygusUnif
+                        const std::vector<Node>& conds);
+ 
+    private:
++    /** Pointer to node manager */
++    NodeManager* d_nm;
+     /** true and false nodes */
+     Node d_true;
+     Node d_false;
+@@ -375,7 +381,7 @@ class SygusUnifRl : public SygusUnif
+       /** the lazy trie for building the separation classes */
+       LazyTrieMulti d_trie;
+       /** extracts solution from decision tree built */
+-      Node extractSol(Node cons, std::map<Node, Node>& hd_mv);
++      Node extractSol(NodeManager* nm, Node cons, std::map<Node, Node>& hd_mv);
+       /** computes the result of applying cond on the respective point of hd
+        *
+        * If for example cond is (\lambda xy. x < y) and hd is an evaluation head
+diff --git a/src/theory/quantifiers/sygus/sygus_utils.cpp b/src/theory/quantifiers/sygus/sygus_utils.cpp
+index 5a1168767..58bb37ad6 100644
+--- a/src/theory/quantifiers/sygus/sygus_utils.cpp
++++ b/src/theory/quantifiers/sygus/sygus_utils.cpp
+@@ -58,15 +58,14 @@ struct SygusSynthFunVarListAttributeId
+ typedef expr::Attribute<SygusSynthFunVarListAttributeId, Node>
+     SygusSynthFunVarListAttribute;
+ 
+-Node SygusUtils::mkSygusConjecture(const std::vector<Node>& fs,
++Node SygusUtils::mkSygusConjecture(NodeManager* nm,
++                                   const std::vector<Node>& fs,
+                                    Node conj,
+                                    const std::vector<Node>& iattrs)
+ {
+   Assert(!fs.empty());
+-  NodeManager* nm = conj.getNodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   SygusAttribute ca;
+-  Node sygusVar = sm->mkDummySkolem("sygus", nm->booleanType());
++  Node sygusVar = NodeManager::mkDummySkolem("sygus", conj.getType());
+   sygusVar.setAttribute(ca, true);
+   std::vector<Node> ipls{nm->mkNode(Kind::INST_ATTRIBUTE, sygusVar)};
+   // insert the remaining instantiation attributes
+@@ -76,32 +75,35 @@ Node SygusUtils::mkSygusConjecture(const std::vector<Node>& fs,
+   return nm->mkNode(Kind::FORALL, bvl, conj, ipl);
+ }
+ 
+-Node SygusUtils::mkSygusConjecture(const std::vector<Node>& fs, Node conj)
++Node SygusUtils::mkSygusConjecture(NodeManager* nm,
++                                   const std::vector<Node>& fs,
++                                   Node conj)
+ {
+   std::vector<Node> iattrs;
+-  return mkSygusConjecture(fs, conj, iattrs);
++  return mkSygusConjecture(nm, fs, conj, iattrs);
+ }
+ 
+-Node SygusUtils::mkSygusConjecture(const std::vector<Node>& fs,
++Node SygusUtils::mkSygusConjecture(NodeManager* nm,
++                                   const std::vector<Node>& fs,
+                                    Node conj,
+                                    const Subs& solvedf)
+ {
+   Assert(!fs.empty());
+-  NodeManager* nm = conj.getNodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
++  Assert(conj.getType().isBoolean());
+   std::vector<Node> iattrs;
+   // take existing properties, without the previous solves
+   SygusSolutionAttribute ssa;
++  TypeNode btn = nm->booleanType();
+   // add the current solves, which should be a superset of the previous ones
+   for (size_t i = 0, nsolved = solvedf.size(); i < nsolved; i++)
+   {
+     Node eq = solvedf.getEquality(i);
+-    Node var = sm->mkDummySkolem("solved", nm->booleanType());
++    Node var = NodeManager::mkDummySkolem("solved", btn);
+     var.setAttribute(ssa, eq);
+     Node ipv = nm->mkNode(Kind::INST_ATTRIBUTE, var);
+     iattrs.push_back(ipv);
+   }
+-  return mkSygusConjecture(fs, conj, iattrs);
++  return mkSygusConjecture(nm, fs, conj, iattrs);
+ }
+ 
+ void SygusUtils::decomposeSygusConjecture(Node q,
+@@ -161,10 +163,10 @@ void SygusUtils::setSygusArgumentList(Node f, const Node& bvl)
+ 
+ Node SygusUtils::getOrMkSygusArgumentList(Node f)
+ {
++  NodeManager* nm = f.getNodeManager();
+   Node sfvl = f.getAttribute(SygusSynthFunVarListAttribute());
+   if (sfvl.isNull() && f.getType().isFunction())
+   {
+-    NodeManager* nm = f.getNodeManager();
+     std::vector<TypeNode> argTypes = f.getType().getArgTypes();
+     // make default variable list if none was specified by input
+     std::vector<Node> bvs;
+diff --git a/src/theory/quantifiers/sygus/sygus_utils.h b/src/theory/quantifiers/sygus/sygus_utils.h
+index 911b08175..40ecf8398 100644
+--- a/src/theory/quantifiers/sygus/sygus_utils.h
++++ b/src/theory/quantifiers/sygus/sygus_utils.h
+@@ -42,11 +42,14 @@ class SygusUtils
+    * require the "sygus attribute" marker, which is automatically generated
+    * by this method.
+    */
+-  static Node mkSygusConjecture(const std::vector<Node>& fs,
++  static Node mkSygusConjecture(NodeManager* nm,
++                                const std::vector<Node>& fs,
+                                 Node conj,
+                                 const std::vector<Node>& iattrs);
+   /** Same as above, without auxiliary instantiation attributes */
+-  static Node mkSygusConjecture(const std::vector<Node>& fs, Node conj);
++  static Node mkSygusConjecture(NodeManager* nm,
++                                const std::vector<Node>& fs,
++                                Node conj);
+ 
+   /**
+    * Make conjecture, with a set of solved functions. In particular,
+@@ -56,7 +59,8 @@ class SygusUtils
+    * In the implementation, solutions for solved functions are stored
+    * in the instantiation attribute list of the returned conjecture.
+    */
+-  static Node mkSygusConjecture(const std::vector<Node>& fs,
++  static Node mkSygusConjecture(NodeManager* nm,
++                                const std::vector<Node>& fs,
+                                 Node conj,
+                                 const Subs& solvedf);
+   /**
+diff --git a/src/theory/quantifiers/sygus/synth_conjecture.cpp b/src/theory/quantifiers/sygus/synth_conjecture.cpp
+index 585daba84..d44daa00a 100644
+--- a/src/theory/quantifiers/sygus/synth_conjecture.cpp
++++ b/src/theory/quantifiers/sygus/synth_conjecture.cpp
+@@ -68,7 +68,7 @@ SynthConjecture::SynthConjecture(Env& env,
+       d_ceg_proc(new SynthConjectureProcess(env)),
+       d_embConv(new EmbeddingConverter(env, d_tds, this)),
+       d_sygus_rconst(new SygusRepairConst(env, qim, d_tds)),
+-      d_exampleInfer(new ExampleInfer(d_tds)),
++      d_exampleInfer(new ExampleInfer(nodeManager(), d_tds)),
+       d_ceg_pbe(new SygusPbe(env, qs, qim, d_tds, this)),
+       d_ceg_cegis(new Cegis(env, qs, qim, d_tds, this)),
+       d_ceg_cegisUnif(new CegisUnif(env, qs, qim, d_tds, this)),
+diff --git a/test/unit/node/node_black.cpp b/test/unit/node/node_black.cpp
+index 1bb4b029c..85f2401a7 100644
+--- a/test/unit/node/node_black.cpp
++++ b/test/unit/node/node_black.cpp
+@@ -538,13 +538,13 @@ TEST_F(TestNodeBlackNode, toString)
+   TypeNode booleanType = d_nodeManager->booleanType();
+ 
+   Node w = d_skolemManager->mkDummySkolem(
+-      "w", booleanType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "w", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node x = d_skolemManager->mkDummySkolem(
+-      "x", booleanType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "x", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node y = d_skolemManager->mkDummySkolem(
+-      "y", booleanType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "y", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node z = d_skolemManager->mkDummySkolem(
+-      "z", booleanType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "z", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node m = NodeBuilder() << w << x << Kind::OR;
+   Node n = NodeBuilder() << m << y << z << Kind::AND;
+ 
+@@ -556,13 +556,13 @@ TEST_F(TestNodeBlackNode, toStream)
+   TypeNode booleanType = d_nodeManager->booleanType();
+ 
+   Node w = d_skolemManager->mkDummySkolem(
+-      "w", booleanType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "w", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node x = d_skolemManager->mkDummySkolem(
+-      "x", booleanType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "x", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node y = d_skolemManager->mkDummySkolem(
+-      "y", booleanType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "y", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node z = d_skolemManager->mkDummySkolem(
+-      "z", booleanType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "z", booleanType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node m = NodeBuilder() << x << y << Kind::OR;
+   Node n = NodeBuilder() << w << m << z << Kind::AND;
+   Node o = NodeBuilder() << n << n << Kind::XOR;
+@@ -629,13 +629,13 @@ TEST_F(TestNodeBlackNode, dagifier)
+   TypeNode fnType = d_nodeManager->mkFunctionType(intType, intType);
+ 
+   Node x = d_skolemManager->mkDummySkolem(
+-      "x", intType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "x", intType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node y = d_skolemManager->mkDummySkolem(
+-      "y", intType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "y", intType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node f = d_skolemManager->mkDummySkolem(
+-      "f", fnType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "f", fnType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node g = d_skolemManager->mkDummySkolem(
+-      "g", fnType, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "g", fnType, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   Node fx = d_nodeManager->mkNode(Kind::APPLY_UF, f, x);
+   Node fy = d_nodeManager->mkNode(Kind::APPLY_UF, f, y);
+   Node gx = d_nodeManager->mkNode(Kind::APPLY_UF, g, x);
+diff --git a/test/unit/node/node_manager_black.cpp b/test/unit/node/node_manager_black.cpp
+index 879de0251..96f8b53c2 100644
+--- a/test/unit/node/node_manager_black.cpp
++++ b/test/unit/node/node_manager_black.cpp
+@@ -121,7 +121,7 @@ TEST_F(TestNodeBlackNodeManager, mkNode_vector_of_tnode)
+ TEST_F(TestNodeBlackNodeManager, mkSkolem_with_name)
+ {
+   Node x = d_skolemManager->mkDummySkolem(
+-      "x", *d_boolTypeNode, "", SkolemManager::SKOLEM_EXACT_NAME);
++      "x", *d_boolTypeNode, "", SkolemFlags::SKOLEM_EXACT_NAME);
+   ASSERT_EQ(x.getKind(), Kind::DUMMY_SKOLEM);
+   ASSERT_EQ(x.getNumChildren(), 0u);
+   ASSERT_EQ(x.getAttribute(VarNameAttr()), "x");
+diff --git a/test/unit/theory/theory_arith_coverings_white.cpp b/test/unit/theory/theory_arith_coverings_white.cpp
+index d7757f0c8..6c149f041 100644
+--- a/test/unit/theory/theory_arith_coverings_white.cpp
++++ b/test/unit/theory/theory_arith_coverings_white.cpp
+@@ -114,13 +114,13 @@ Node make_real_variable(const std::string& s)
+ {
+   SkolemManager* sm = nodeManager->getSkolemManager();
+   return sm->mkDummySkolem(
+-      s, nodeManager->realType(), "", SkolemManager::SKOLEM_EXACT_NAME);
++      s, nodeManager->realType(), "", SkolemFlags::SKOLEM_EXACT_NAME);
+ }
+ Node make_int_variable(const std::string& s)
+ {
+   SkolemManager* sm = nodeManager->getSkolemManager();
+   return sm->mkDummySkolem(
+-      s, nodeManager->integerType(), "", SkolemManager::SKOLEM_EXACT_NAME);
++      s, nodeManager->integerType(), "", SkolemFlags::SKOLEM_EXACT_NAME);
+ }
+ 
+ TEST_F(TestTheoryWhiteArithCoverings, test_univariate_isolation)
+-- 
+2.47.1
+

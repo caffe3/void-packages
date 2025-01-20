@@ -1,0 +1,152 @@
+From 3f802e1b7b08f603f9e99116b95a8815edeae3ea Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 1 Nov 2024 15:23:57 -0500
+Subject: [PATCH 149/312] More improvements to final proof statistics (#11278)
+
+Breaks down theory lemmas per theory.
+
+Also fixes a spurious use of arguments to a trusted theory lemma.
+---
+ src/prop/prop_proof_manager.cpp               |  2 +-
+ src/smt/proof_final_callback.cpp              | 56 +++++++++++++++++--
+ src/smt/proof_final_callback.h                |  6 +-
+ .../printer/print_trusted_proof_steps.smt2    |  2 +-
+ 4 files changed, 58 insertions(+), 8 deletions(-)
+
+diff --git a/src/prop/prop_proof_manager.cpp b/src/prop/prop_proof_manager.cpp
+index 15d654748..5137f2bae 100644
+--- a/src/prop/prop_proof_manager.cpp
++++ b/src/prop/prop_proof_manager.cpp
+@@ -450,7 +450,7 @@ void PropPfManager::notifyExplainedPropagation(TrustNode trn)
+   // the d_proof, so that there are no non-input assumptions.
+   if (!proofLogging)
+   {
+-    d_proof.addTrustedStep(clauseExp, TrustId::THEORY_LEMMA, {}, {clauseExp});
++    d_proof.addTrustedStep(clauseExp, TrustId::THEORY_LEMMA, {}, {});
+   }
+ }
+ 
+diff --git a/src/smt/proof_final_callback.cpp b/src/smt/proof_final_callback.cpp
+index f4f72e8bf..d26dd4d51 100644
+--- a/src/smt/proof_final_callback.cpp
++++ b/src/smt/proof_final_callback.cpp
+@@ -46,9 +46,12 @@ ProofFinalCallback::ProofFinalCallback(Env& env)
+               "finalProof::theoryRewriteRuleCount")),
+       d_trustIds(statisticsRegistry().registerHistogram<TrustId>(
+           "finalProof::trustCount")),
+-      d_trustTheoryIdCount(
++      d_trustTheoryRewriteCount(
+           statisticsRegistry().registerHistogram<theory::TheoryId>(
+-              "finalProof::trustTheoryIdCount")),
++              "finalProof::trustTheoryRewriteCount")),
++      d_trustTheoryLemmaCount(
++          statisticsRegistry().registerHistogram<theory::TheoryId>(
++              "finalProof::trustTheoryLemmaCount")),
+       d_totalRuleCount(
+           statisticsRegistry().registerInt("finalProof::totalRuleCount")),
+       d_minPedanticLevel(
+@@ -137,6 +140,16 @@ bool ProofFinalCallback::shouldUpdate(std::shared_ptr<ProofNode> pn,
+     {
+       d_trustIds << id;
+       Trace("final-pf-hole") << " " << id;
++      if (id == TrustId::THEORY_LEMMA)
++      {
++        const std::vector<Node>& args = pn->getArguments();
++        TheoryId tid = THEORY_BUILTIN;
++        if (args.size() >= 3)
++        {
++          builtin::BuiltinProofRuleChecker::getTheoryId(args[2], tid);
++        }
++        d_trustTheoryLemmaCount << tid;
++      }
+     }
+     Trace("final-pf-hole") << ": " << pn->getResult() << std::endl;
+   }
+@@ -148,7 +161,7 @@ bool ProofFinalCallback::shouldUpdate(std::shared_ptr<ProofNode> pn,
+     builtin::BuiltinProofRuleChecker::getTheoryId(args[1], tid);
+     Trace("final-pf-hole") << "hole " << r << " " << tid << " : " << eq[0]
+                            << " ---> " << eq[1] << std::endl;
+-    d_trustTheoryIdCount << tid;
++    d_trustTheoryRewriteCount << tid;
+   }
+   else if (r == ProofRule::MACRO_REWRITE)
+   {
+@@ -178,11 +191,44 @@ bool ProofFinalCallback::shouldUpdate(std::shared_ptr<ProofNode> pn,
+         premises.push_back(pncc->getResult());
+       }
+       NodeManager* nm = nodeManager();
+-      Node query = nm->mkNode(Kind::IMPLIES, nm->mkAnd(premises), conc);
++      Node query = conc;
++      if (!premises.empty())
++      {
++        query = nm->mkNode(Kind::IMPLIES, nm->mkAnd(premises), query);
++      }
++      // print the trusted step information
+       if (isOutputOn(OutputTag::TRUSTED_PROOF_STEPS))
+       {
+         output(OutputTag::TRUSTED_PROOF_STEPS)
+-            << "(trusted-proof-step " << query << ")" << std::endl;
++            << "(trusted-proof-step " << query;
++        output(OutputTag::TRUSTED_PROOF_STEPS) << " :rule " << r;
++        TheoryId tid = THEORY_LAST;
++        if (r == ProofRule::TRUST)
++        {
++          TrustId id;
++          if (getTrustId(pn->getArguments()[0], id))
++          {
++            output(OutputTag::TRUSTED_PROOF_STEPS) << " :trust-id " << id;
++            if (id == TrustId::THEORY_LEMMA)
++            {
++              const std::vector<Node>& args = pn->getArguments();
++              if (args.size() >= 3)
++              {
++                builtin::BuiltinProofRuleChecker::getTheoryId(args[2], tid);
++              }
++            }
++          }
++        }
++        else if (r == ProofRule::TRUST_THEORY_REWRITE)
++        {
++          const std::vector<Node>& args = pn->getArguments();
++          builtin::BuiltinProofRuleChecker::getTheoryId(args[1], tid);
++        }
++        if (tid != THEORY_LAST)
++        {
++          output(OutputTag::TRUSTED_PROOF_STEPS) << " :theory " << tid;
++        }
++        output(OutputTag::TRUSTED_PROOF_STEPS) << ")" << std::endl;
+       }
+       if (options().proof.checkProofSteps)
+       {
+diff --git a/src/smt/proof_final_callback.h b/src/smt/proof_final_callback.h
+index 7e80a346b..5d438458f 100644
+--- a/src/smt/proof_final_callback.h
++++ b/src/smt/proof_final_callback.h
+@@ -73,7 +73,11 @@ class ProofFinalCallback : protected EnvObj, public ProofNodeUpdaterCallback
+   /**
+    * Counts number of theory ids in TRUST_THEORY_REWRITE steps.
+    */
+-  HistogramStat<theory::TheoryId> d_trustTheoryIdCount;
++  HistogramStat<theory::TheoryId> d_trustTheoryRewriteCount;
++  /**
++   * Counts number of theory ids in TRUST / THEORY_LEMMA steps.
++   */
++  HistogramStat<theory::TheoryId> d_trustTheoryLemmaCount;
+   /** Total number of postprocessed rule applications */
+   IntStat d_totalRuleCount;
+   /** The minimum pedantic level of any rule encountered */
+diff --git a/test/regress/cli/regress0/printer/print_trusted_proof_steps.smt2 b/test/regress/cli/regress0/printer/print_trusted_proof_steps.smt2
+index 953b30b77..e5fc28e6a 100644
+--- a/test/regress/cli/regress0/printer/print_trusted_proof_steps.smt2
++++ b/test/regress/cli/regress0/printer/print_trusted_proof_steps.smt2
+@@ -1,6 +1,6 @@
+ ; COMMAND-LINE: --dump-proofs -o trusted-proof-steps
+ ; SCRUBBER: grep -E '\(trusted-proof-step'
+-; EXPECT: (trusted-proof-step (=> true (= (= 0 1) false)))
++; EXPECT: (trusted-proof-step (= (= 0 1) false) :rule TRUST_THEORY_REWRITE :theory THEORY_ARITH)
+ (set-logic ALL)
+ (set-option :dump-proofs true)
+ (assert (= 0 1))
+-- 
+2.47.1
+

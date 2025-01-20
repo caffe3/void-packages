@@ -1,0 +1,1698 @@
+From 7075c4c3c7fdf7938e2b83e53d51b5cca4d88846 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Fri, 13 Dec 2024 11:27:18 -0600
+Subject: [PATCH 244/312] Eliminate some calls to
+ NodeManager::{currentNM,getSkolemManager} (#11436)
+
+---
+ src/expr/subs.cpp                             |  3 +-
+ src/expr/subtype_elim_node_converter.cpp      |  9 +++---
+ src/expr/sygus_term_enumerator.cpp            |  4 +--
+ src/preprocessing/passes/ackermann.cpp        |  4 +--
+ src/preprocessing/passes/fun_def_fmf.cpp      |  3 +-
+ src/preprocessing/passes/ho_elim.cpp          | 11 +++----
+ src/preprocessing/passes/int_to_bv.cpp        |  8 ++---
+ src/preprocessing/passes/miplib_trick.cpp     |  3 +-
+ src/preprocessing/passes/nl_ext_purify.cpp    |  8 ++---
+ src/preprocessing/passes/sep_skolem_emp.cpp   |  9 +++---
+ .../passes/unconstrained_simplifier.cpp       |  3 +-
+ src/preprocessing/util/ite_utilities.cpp      |  6 ++--
+ src/rewriter/rewrite_db_term_process.cpp      | 21 ++++++-------
+ src/smt/term_formula_removal.cpp              | 10 +++----
+ src/theory/arith/linear/callbacks.cpp         |  3 +-
+ src/theory/arith/linear/dio_solver.cpp        |  8 ++---
+ .../arith/linear/theory_arith_private.cpp     |  3 +-
+ src/theory/arith/nl/coverings_solver.cpp      |  3 +-
+ src/theory/bags/solver_state.cpp              |  4 +--
+ src/theory/bv/theory_bv_utils.cpp             |  8 ++---
+ src/theory/datatypes/sygus_extension.cpp      | 12 +++-----
+ src/theory/datatypes/theory_datatypes.cpp     |  5 ++--
+ src/theory/fp/fp_word_blaster.cpp             | 22 +++++++-------
+ src/theory/quantifiers/bv_inverter.cpp        |  3 +-
+ .../quantifiers/cegqi/ceg_bv_instantiator.cpp |  9 +++---
+ .../quantifiers/cegqi/inst_strategy_cegqi.cpp |  3 +-
+ .../quantifiers/conjecture_generator.cpp      |  3 +-
+ src/theory/quantifiers/dynamic_rewrite.cpp    |  4 +--
+ src/theory/quantifiers/expr_miner.cpp         |  4 +--
+ .../quantifiers/fmf/bounded_integers.cpp      | 10 +++----
+ .../quantifiers/fmf/first_order_model_fmc.cpp |  5 ++--
+ .../quantifiers/fmf/full_model_check.cpp      |  4 +--
+ .../quantifiers/quantifiers_rewriter.cpp      |  3 +-
+ .../quantifiers/single_inv_partition.cpp      |  3 +-
+ src/theory/quantifiers/skolemize.cpp          |  3 +-
+ .../sygus/ce_guided_single_inv.cpp            |  5 ++--
+ src/theory/quantifiers/sygus/cegis_unif.cpp   | 12 ++++----
+ .../quantifiers/sygus/rcons_type_info.cpp     |  6 ++--
+ src/theory/quantifiers/sygus/sygus_abduct.cpp |  3 +-
+ .../quantifiers/sygus/sygus_qe_preproc.cpp    |  5 ++--
+ .../sygus/sygus_random_enumerator.cpp         |  5 ++--
+ .../quantifiers/sygus/sygus_unif_rl.cpp       |  3 +-
+ .../quantifiers/sygus/sygus_unif_strat.cpp    |  9 +++---
+ .../quantifiers/sygus/synth_conjecture.cpp    |  2 +-
+ .../quantifiers/sygus/template_infer.cpp      |  3 +-
+ .../quantifiers/sygus/term_database_sygus.cpp |  6 ++--
+ .../sygus/transition_inference.cpp            |  9 ++----
+ src/theory/quantifiers/sygus_inst.cpp         |  3 +-
+ src/theory/sep/theory_sep.cpp                 | 30 ++++++++-----------
+ src/theory/sets/cardinality_extension.cpp     |  8 ++---
+ src/theory/sets/skolem_cache.cpp              |  5 ++--
+ src/theory/sets/theory_sets_rels.cpp          |  3 +-
+ src/theory/sort_inference.cpp                 | 18 +++++------
+ src/theory/strings/regexp_operation.cpp       |  5 ++--
+ src/theory/strings/skolem_cache.cpp           |  5 ++--
+ src/theory/uf/cardinality_extension.cpp       |  3 +-
+ src/theory/uf/ho_extension.cpp                |  5 ++--
+ 57 files changed, 154 insertions(+), 223 deletions(-)
+
+diff --git a/src/expr/subs.cpp b/src/expr/subs.cpp
+index 11935c65b..e370f445f 100644
+--- a/src/expr/subs.cpp
++++ b/src/expr/subs.cpp
+@@ -55,9 +55,8 @@ std::optional<Node> Subs::find(TNode v) const
+ 
+ void Subs::add(Node v)
+ {
+-  SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
+   // default, use a fresh skolem of the same type
+-  Node s = sm->mkDummySkolem("sk", v.getType());
++  Node s = NodeManager::mkDummySkolem("sk", v.getType());
+   add(v, s);
+ }
+ 
+diff --git a/src/expr/subtype_elim_node_converter.cpp b/src/expr/subtype_elim_node_converter.cpp
+index e6d865712..62a483599 100644
+--- a/src/expr/subtype_elim_node_converter.cpp
++++ b/src/expr/subtype_elim_node_converter.cpp
+@@ -54,7 +54,6 @@ Node SubtypeElimNodeConverter::postConvert(Node n)
+   // note that EQUAL is strictly typed so we don't need to handle it here
+   if (convertToRealChildren)
+   {
+-    NodeManager* nm = NodeManager::currentNM();
+     std::vector<Node> children;
+     bool childChanged = false;
+     for (const Node& nc : n)
+@@ -65,12 +64,12 @@ Node SubtypeElimNodeConverter::postConvert(Node n)
+         if (nc.isConst())
+         {
+           // we convert constant integers to constant reals
+-          children.push_back(nm->mkConstReal(nc.getConst<Rational>()));
++          children.push_back(d_nm->mkConstReal(nc.getConst<Rational>()));
+         }
+         else
+         {
+           // otherwise, use TO_REAL
+-          children.push_back(nm->mkNode(Kind::TO_REAL, nc));
++          children.push_back(d_nm->mkNode(Kind::TO_REAL, nc));
+         }
+       }
+       else
+@@ -82,13 +81,13 @@ Node SubtypeElimNodeConverter::postConvert(Node n)
+     {
+       return n;
+     }
+-    return nm->mkNode(k, children);
++    return d_nm->mkNode(k, children);
+   }
+   // convert skolems as well, e.g. the purify skolem for (> 1 0.0) becomes the
+   // purify skolem for (> 1.0 0.0).
+   if (n.isVar())
+   {
+-    SkolemManager* skm = NodeManager::currentNM()->getSkolemManager();
++    SkolemManager* skm = d_nm->getSkolemManager();
+     SkolemId id;
+     Node cacheVal;
+     if (skm->isSkolemFunction(n, id, cacheVal))
+diff --git a/src/expr/sygus_term_enumerator.cpp b/src/expr/sygus_term_enumerator.cpp
+index dc80b9e8a..cedfecf48 100644
+--- a/src/expr/sygus_term_enumerator.cpp
++++ b/src/expr/sygus_term_enumerator.cpp
+@@ -39,9 +39,7 @@ SygusTermEnumerator::SygusTermEnumerator(Env& env,
+   // grammar, which is important if the grammar involves terms that have
+   // user definitions in env.
+   theory::datatypes::utils::computeExpandedDefinitionForms(env, tn);
+-  NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  d_enum = sm->mkDummySkolem("enum", tn);
++  d_enum = NodeManager::mkDummySkolem("enum", tn);
+   d_internal->initialize(d_enum);
+   // ensure current is non-null
+   if (d_internal->getCurrent().isNull())
+diff --git a/src/preprocessing/passes/ackermann.cpp b/src/preprocessing/passes/ackermann.cpp
+index c98f870be..dda90e920 100644
+--- a/src/preprocessing/passes/ackermann.cpp
++++ b/src/preprocessing/passes/ackermann.cpp
+@@ -209,13 +209,11 @@ void collectUSortsToBV(NodeManager* nm,
+                        const USortToBVSizeMap& usortCardinality,
+                        SubstitutionMap& usVarsToBVVars)
+ {
+-  SkolemManager* sm = nm->getSkolemManager();
+-
+   for (TNode var : vars)
+   {
+     TypeNode type = var.getType();
+     size_t size = getBVSkolemSize(usortCardinality.at(type));
+-    Node skolem = sm->mkDummySkolem(
++    Node skolem = NodeManager::mkDummySkolem(
+         "ackermann.bv",
+         nm->mkBitVectorType(size),
+         "a variable created by the ackermannization "
+diff --git a/src/preprocessing/passes/fun_def_fmf.cpp b/src/preprocessing/passes/fun_def_fmf.cpp
+index d0fad4c16..c608b90d4 100644
+--- a/src/preprocessing/passes/fun_def_fmf.cpp
++++ b/src/preprocessing/passes/fun_def_fmf.cpp
+@@ -93,7 +93,6 @@ void FunDefFmf::process(AssertionPipeline* assertionsToPreprocess)
+   std::map<int, Node> subs_head;
+   // first pass : find defined functions, transform quantifiers
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   for (size_t i = 0, asize = assertions.size(); i < asize; i++)
+   {
+     Node n = QuantAttributes::getFunDefHead(assertions[i]);
+@@ -139,7 +138,7 @@ void FunDefFmf::process(AssertionPipeline* assertionsToPreprocess)
+           TypeNode typ = nm->mkFunctionType(iType, n[j].getType());
+           std::stringstream ssf;
+           ssf << f << "_arg_" << j;
+-          d_input_arg_inj[f].push_back(sm->mkDummySkolem(
++          d_input_arg_inj[f].push_back(NodeManager::mkDummySkolem(
+               ssf.str(), typ, "op created during fun def fmf"));
+         }
+ 
+diff --git a/src/preprocessing/passes/ho_elim.cpp b/src/preprocessing/passes/ho_elim.cpp
+index a3b00c29d..d2c58ae5a 100644
+--- a/src/preprocessing/passes/ho_elim.cpp
++++ b/src/preprocessing/passes/ho_elim.cpp
+@@ -42,7 +42,6 @@ HoElim::HoElim(PreprocessingPassContext* preprocContext)
+ Node HoElim::eliminateLambdaComplete(Node n, std::map<Node, Node>& newLambda)
+ {
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   std::unordered_map<Node, Node>::iterator it;
+   std::vector<Node> visit;
+   TNode cur;
+@@ -99,7 +98,7 @@ Node HoElim::eliminateLambdaComplete(Node n, std::map<Node, Node>& newLambda)
+         }
+         TypeNode rangeType = lam.getType().getRangeType();
+         TypeNode nft = nm->mkFunctionType(ftypes, rangeType);
+-        Node nf = sm->mkDummySkolem("ll", nft);
++        Node nf = NodeManager::mkDummySkolem("ll", nft);
+         Trace("ho-elim-ll")
+             << "...introduce: " << nf << " of type " << nft << std::endl;
+         newLambda[nf] = nlambda;
+@@ -160,7 +159,6 @@ Node HoElim::eliminateHo(Node n)
+ {
+   Trace("ho-elim-assert") << "Ho-elim assertion: " << n << std::endl;
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   std::unordered_map<Node, Node>::iterator it;
+   std::map<Node, Node> preReplace;
+   std::map<Node, Node>::iterator itr;
+@@ -197,7 +195,7 @@ Node HoElim::eliminateHo(Node n)
+             }
+             else
+             {
+-              ret = sm->mkDummySkolem("k", ut);
++              ret = NodeManager::mkDummySkolem("k", ut);
+             }
+             // must get the ho apply to ensure extensionality is applied
+             Node hoa = getHoApplyUf(tn);
+@@ -270,7 +268,7 @@ Node HoElim::eliminateHo(Node n)
+             {
+               Assert(!childrent.empty());
+               TypeNode newFType = nm->mkFunctionType(childrent, cur.getType());
+-              retOp = sm->mkDummySkolem("rf", newFType);
++              retOp = NodeManager::mkDummySkolem("rf", newFType);
+               d_visited_op[op] = retOp;
+             }
+             else
+@@ -513,13 +511,12 @@ Node HoElim::getHoApplyUf(TypeNode tnf, TypeNode tna, TypeNode tnr)
+   if (it == d_hoApplyUf.end())
+   {
+     NodeManager* nm = nodeManager();
+-    SkolemManager* sm = nm->getSkolemManager();
+ 
+     std::vector<TypeNode> hoTypeArgs;
+     hoTypeArgs.push_back(tnf);
+     hoTypeArgs.push_back(tna);
+     TypeNode tnh = nm->mkFunctionType(hoTypeArgs, tnr);
+-    Node k = sm->mkDummySkolem("ho", tnh);
++    Node k = NodeManager::mkDummySkolem("ho", tnh);
+     d_hoApplyUf[tnf] = k;
+     return k;
+   }
+diff --git a/src/preprocessing/passes/int_to_bv.cpp b/src/preprocessing/passes/int_to_bv.cpp
+index db3c7fb5d..22b2c60ab 100644
+--- a/src/preprocessing/passes/int_to_bv.cpp
++++ b/src/preprocessing/passes/int_to_bv.cpp
+@@ -111,7 +111,6 @@ Node IntToBV::intToBV(TNode n, NodeMap& cache)
+   AlwaysAssert(!options().base.incrementalSolving);
+ 
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   NodeMap binaryCache;
+   Node n_binary = intToBVMakeBinary(nm, n, binaryCache);
+ 
+@@ -236,9 +235,10 @@ Node IntToBV::intToBV(TNode n, NodeMap& cache)
+       {
+         if (current.getType() == nm->integerType())
+         {
+-          result = sm->mkDummySkolem("__intToBV_var",
+-                                     nm->mkBitVectorType(size),
+-                                     "Variable introduced in intToBV pass");
++          result =
++              NodeManager::mkDummySkolem("__intToBV_var",
++                                         nm->mkBitVectorType(size),
++                                         "Variable introduced in intToBV pass");
+           /**
+            * Correctly convert signed/unsigned BV values to Integers as follows
+            * x < 0 ? -nat(-x) : nat(x)
+diff --git a/src/preprocessing/passes/miplib_trick.cpp b/src/preprocessing/passes/miplib_trick.cpp
+index 66af5994b..47f78f8ee 100644
+--- a/src/preprocessing/passes/miplib_trick.cpp
++++ b/src/preprocessing/passes/miplib_trick.cpp
+@@ -209,7 +209,6 @@ PreprocessingPassResult MipLibTrick::applyInternal(
+   SubstitutionMap& top_level_substs = tlsm.get();
+ 
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   Node zero = nm->mkConstInt(Rational(0)), one = nm->mkConstInt(Rational(1));
+   Node trueNode = nm->mkConst(true);
+ 
+@@ -523,7 +522,7 @@ PreprocessingPassResult MipLibTrick::applyInternal(
+             {
+               stringstream ss;
+               ss << "mipvar_" << *ii;
+-              Node newVar = sm->mkDummySkolem(
++              Node newVar = NodeManager::mkDummySkolem(
+                   ss.str(),
+                   nm->integerType(),
+                   "a variable introduced due to scrubbing a miplib encoding");
+diff --git a/src/preprocessing/passes/nl_ext_purify.cpp b/src/preprocessing/passes/nl_ext_purify.cpp
+index ad6b30372..228e7cd86 100644
+--- a/src/preprocessing/passes/nl_ext_purify.cpp
++++ b/src/preprocessing/passes/nl_ext_purify.cpp
+@@ -35,7 +35,6 @@ Node NlExtPurify::purifyNlTerms(TNode n,
+                                 bool beneathMult)
+ {
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   if (beneathMult)
+   {
+     NodeMap::iterator find = bcache.find(n);
+@@ -72,9 +71,10 @@ Node NlExtPurify::purifyNlTerms(TNode n,
+       else
+       {
+         // new variable
+-        ret = sm->mkDummySkolem("__purifyNl_var",
+-                                n.getType(),
+-                                "Variable introduced in purifyNl pass");
++        ret =
++            NodeManager::mkDummySkolem("__purifyNl_var",
++                                       n.getType(),
++                                       "Variable introduced in purifyNl pass");
+         Node np = purifyNlTerms(n, cache, bcache, var_eq, false);
+         var_eq.push_back(np.eqNode(ret));
+         Trace("nl-ext-purify") << "Purify : " << ret << " -> " << np
+diff --git a/src/preprocessing/passes/sep_skolem_emp.cpp b/src/preprocessing/passes/sep_skolem_emp.cpp
+index 20bbd60b1..ad040100c 100644
+--- a/src/preprocessing/passes/sep_skolem_emp.cpp
++++ b/src/preprocessing/passes/sep_skolem_emp.cpp
+@@ -47,7 +47,6 @@ Node preSkolemEmp(NodeManager* nm,
+   std::map<Node, Node>::iterator it = visited[pol].find(n);
+   if (it == visited[pol].end())
+   {
+-    SkolemManager* sm = nm->getSkolemManager();
+     Trace("sep-preprocess") << "Pre-skolem emp " << n << " with pol " << pol
+                             << std::endl;
+     Node ret = n;
+@@ -55,10 +54,10 @@ Node preSkolemEmp(NodeManager* nm,
+     {
+       if (!pol)
+       {
+-        Node x =
+-            sm->mkDummySkolem("ex", locType, "skolem location for negated emp");
+-        Node y =
+-            sm->mkDummySkolem("ey", dataType, "skolem data for negated emp");
++        Node x = NodeManager::mkDummySkolem(
++            "ex", locType, "skolem location for negated emp");
++        Node y = NodeManager::mkDummySkolem(
++            "ey", dataType, "skolem data for negated emp");
+         return nm
+             ->mkNode(Kind::SEP_STAR,
+                      nm->mkNode(Kind::SEP_PTO, x, y),
+diff --git a/src/preprocessing/passes/unconstrained_simplifier.cpp b/src/preprocessing/passes/unconstrained_simplifier.cpp
+index 4dfc485a4..7935b559c 100644
+--- a/src/preprocessing/passes/unconstrained_simplifier.cpp
++++ b/src/preprocessing/passes/unconstrained_simplifier.cpp
+@@ -126,8 +126,7 @@ void UnconstrainedSimplifier::visitAll(TNode assertion)
+ 
+ Node UnconstrainedSimplifier::newUnconstrainedVar(TypeNode t, TNode var)
+ {
+-  SkolemManager* sm = nodeManager()->getSkolemManager();
+-  Node n = sm->mkDummySkolem(
++  Node n = NodeManager::mkDummySkolem(
+       "unconstrained",
+       t,
+       "a new var introduced because of unconstrained variable "
+diff --git a/src/preprocessing/util/ite_utilities.cpp b/src/preprocessing/util/ite_utilities.cpp
+index 6be35a3b0..e6e0c6842 100644
+--- a/src/preprocessing/util/ite_utilities.cpp
++++ b/src/preprocessing/util/ite_utilities.cpp
+@@ -346,8 +346,7 @@ Node ITECompressor::push_back_boolean(Node original, Node compressed)
+   else
+   {
+     NodeManager* nm = nodeManager();
+-    SkolemManager* sm = nm->getSkolemManager();
+-    Node skolem = sm->mkDummySkolem("compress", nm->booleanType());
++    Node skolem = NodeManager::mkDummySkolem("compress", nm->booleanType());
+     d_compressed[rewritten] = skolem;
+     d_compressed[original] = skolem;
+     d_compressed[compressed] = skolem;
+@@ -1362,8 +1361,7 @@ Node ITESimplifier::getSimpVar(TypeNode t)
+   {
+     return (*it).second;
+   }
+-  SkolemManager* sm = nodeManager()->getSkolemManager();
+-  Node var = sm->mkDummySkolem(
++  Node var = NodeManager::mkDummySkolem(
+       "iteSimp", t, "is a variable resulting from ITE simplification");
+   d_simpVars[t] = var;
+   return var;
+diff --git a/src/rewriter/rewrite_db_term_process.cpp b/src/rewriter/rewrite_db_term_process.cpp
+index f0016e70a..03bf9d319 100644
+--- a/src/rewriter/rewrite_db_term_process.cpp
++++ b/src/rewriter/rewrite_db_term_process.cpp
+@@ -47,7 +47,6 @@ Node RewriteDbNodeConverter::postConvert(Node n)
+   Kind k = n.getKind();
+   if (k == Kind::CONST_STRING)
+   {
+-    NodeManager* nm = NodeManager::currentNM();
+     // "ABC" is (str.++ "A" "B" "C")
+     const std::vector<unsigned>& vec = n.getConst<String>().getVec();
+     if (vec.size() <= 1)
+@@ -59,9 +58,9 @@ Node RewriteDbNodeConverter::postConvert(Node n)
+     {
+       std::vector<unsigned> tmp;
+       tmp.push_back(c);
+-      children.push_back(nm->mkConst(String(tmp)));
++      children.push_back(d_nm->mkConst(String(tmp)));
+     }
+-    Node ret = nm->mkNode(Kind::STRING_CONCAT, children);
++    Node ret = d_nm->mkNode(Kind::STRING_CONCAT, children);
+     recordProofStep(n, ret, ProofRule::EVALUATE);
+     return ret;
+   }
+@@ -74,12 +73,12 @@ Node RewriteDbNodeConverter::postConvert(Node n)
+   else if (k == Kind::CONST_BITVECTOR)
+   {
+     // (_ bv N M) is (bv N M)
+-    NodeManager* nm = NodeManager::currentNM();
+     std::vector<Node> children;
+     children.push_back(
+-        nm->mkConstInt(Rational(n.getConst<BitVector>().toInteger())));
+-    children.push_back(nm->mkConstInt(Rational(theory::bv::utils::getSize(n))));
+-    Node ret = nm->mkNode(Kind::CONST_BITVECTOR_SYMBOLIC, children);
++        d_nm->mkConstInt(Rational(n.getConst<BitVector>().toInteger())));
++    children.push_back(
++        d_nm->mkConstInt(Rational(theory::bv::utils::getSize(n))));
++    Node ret = d_nm->mkNode(Kind::CONST_BITVECTOR_SYMBOLIC, children);
+     recordProofStep(n, ret, ProofRule::EVALUATE);
+     return ret;
+   }
+@@ -95,8 +94,7 @@ Node RewriteDbNodeConverter::postConvert(Node n)
+     // ignore annotation
+     if (n.getNumChildren() == 3)
+     {
+-      NodeManager* nm = NodeManager::currentNM();
+-      Node ret = nm->mkNode(Kind::FORALL, n[0], n[1]);
++      Node ret = d_nm->mkNode(Kind::FORALL, n[0], n[1]);
+       recordProofStep(n, ret, ProofRule::ENCODE_EQ_INTRO);
+       return ret;
+     }
+@@ -136,12 +134,11 @@ Node RewriteDbNodeConverter::postConvert(Node n)
+   // convert indexed operators to symbolic
+   if (GenericOp::isNumeralIndexedOperatorKind(k))
+   {
+-    NodeManager* nm = NodeManager::currentNM();
+     std::vector<Node> indices =
+         GenericOp::getIndicesForOperator(k, n.getOperator());
+-    indices.insert(indices.begin(), nm->mkConst(GenericOp(k)));
++    indices.insert(indices.begin(), d_nm->mkConst(GenericOp(k)));
+     indices.insert(indices.end(), n.begin(), n.end());
+-    Node ret = nm->mkNode(Kind::APPLY_INDEXED_SYMBOLIC, indices);
++    Node ret = d_nm->mkNode(Kind::APPLY_INDEXED_SYMBOLIC, indices);
+     recordProofStep(n, ret, ProofRule::ENCODE_EQ_INTRO);
+     return ret;
+   }
+diff --git a/src/smt/term_formula_removal.cpp b/src/smt/term_formula_removal.cpp
+index be9abd6d6..4744e9b42 100644
+--- a/src/smt/term_formula_removal.cpp
++++ b/src/smt/term_formula_removal.cpp
+@@ -130,7 +130,7 @@ TrustNode RemoveTermFormulas::runLemma(
+ Node RemoveTermFormulas::runInternal(TNode assertion,
+                                      std::vector<theory::SkolemLemma>& output)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   TCtxStack ctx(&d_rtfc);
+   std::vector<bool> processedChildren;
+   ctx.pushInitial(assertion);
+@@ -271,8 +271,7 @@ Node RemoveTermFormulas::runCurrentInternal(TNode node,
+                                             TConvProofGenerator* pg)
+ {
+   AlwaysAssert (node.getKind()!=Kind::WITNESS) << "WITNESS should never appear in asserted terms";
+-  NodeManager *nodeManager = NodeManager::currentNM();
+-  SkolemManager* sm = nodeManager->getSkolemManager();
++  SkolemManager* sm = nodeManager()->getSkolemManager();
+ 
+   TypeNode nodeType = node.getType();
+   Node skolem;
+@@ -310,7 +309,7 @@ Node RemoveTermFormulas::runCurrentInternal(TNode node,
+       // of the lemma is used.
+ 
+       // The new assertion
+-      newAssertion = nodeManager->mkNode(
++      newAssertion = nodeManager()->mkNode(
+           Kind::ITE, node[0], skolem.eqNode(node[1]), skolem.eqNode(node[2]));
+ 
+       // we justify it internally
+@@ -444,11 +443,10 @@ Node RemoveTermFormulas::getSkolemForNode(Node k) const
+ 
+ Node RemoveTermFormulas::getAxiomFor(Node n)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   Kind k = n.getKind();
+   if (k == Kind::ITE)
+   {
+-    return nm->mkNode(Kind::ITE, n[0], n.eqNode(n[1]), n.eqNode(n[2]));
++    return NodeManager::mkNode(Kind::ITE, n[0], n.eqNode(n[1]), n.eqNode(n[2]));
+   }
+   return Node::null();
+ }
+diff --git a/src/theory/arith/linear/callbacks.cpp b/src/theory/arith/linear/callbacks.cpp
+index f50a57427..12615c125 100644
+--- a/src/theory/arith/linear/callbacks.cpp
++++ b/src/theory/arith/linear/callbacks.cpp
+@@ -48,8 +48,7 @@ TempVarMalloc::TempVarMalloc(TheoryArithPrivate& ta)
+ {}
+ ArithVar TempVarMalloc::request(){
+   NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  Node skolem = sm->mkDummySkolem("tmpVar", nm->realType());
++  Node skolem = NodeManager::mkDummySkolem("tmpVar", nm->realType());
+   return d_ta.requestArithVar(skolem, false, true);
+ }
+ void TempVarMalloc::release(ArithVar v){
+diff --git a/src/theory/arith/linear/dio_solver.cpp b/src/theory/arith/linear/dio_solver.cpp
+index f1cf0308f..45281277c 100644
+--- a/src/theory/arith/linear/dio_solver.cpp
++++ b/src/theory/arith/linear/dio_solver.cpp
+@@ -32,10 +32,10 @@ namespace arith::linear {
+ 
+ inline Node makeIntegerVariable(NodeManager* nm)
+ {
+-  SkolemManager* sm = nm->getSkolemManager();
+-  return sm->mkDummySkolem("intvar",
+-                           nm->integerType(),
+-                           "is an integer variable created by the dio solver");
++  return NodeManager::mkDummySkolem(
++      "intvar",
++      nm->integerType(),
++      "is an integer variable created by the dio solver");
+ }
+ 
+ DioSolver::DioSolver(Env& env)
+diff --git a/src/theory/arith/linear/theory_arith_private.cpp b/src/theory/arith/linear/theory_arith_private.cpp
+index 04de2797a..dbe7c6043 100644
+--- a/src/theory/arith/linear/theory_arith_private.cpp
++++ b/src/theory/arith/linear/theory_arith_private.cpp
+@@ -1823,8 +1823,7 @@ void TheoryArithPrivate::outputPropagate(TNode lit) {
+ void TheoryArithPrivate::outputRestart() {
+   Trace("arith::channel") << "Arith restart!" << std::endl;
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  Node restartVar = sm->mkDummySkolem(
++  Node restartVar = NodeManager::mkDummySkolem(
+       "restartVar",
+       nm->booleanType(),
+       "A boolean variable asserted to be true to force a restart");
+diff --git a/src/theory/arith/nl/coverings_solver.cpp b/src/theory/arith/nl/coverings_solver.cpp
+index 0e2375771..b18e5bf86 100644
+--- a/src/theory/arith/nl/coverings_solver.cpp
++++ b/src/theory/arith/nl/coverings_solver.cpp
+@@ -43,8 +43,7 @@ CoveringsSolver::CoveringsSolver(Env& env, InferenceManager& im, NlModel& model)
+       d_eqsubs(env)
+ {
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  d_ranVariable = sm->mkDummySkolem("__z", nm->realType(), "");
++  d_ranVariable = NodeManager::mkDummySkolem("__z", nm->realType(), "");
+ }
+ 
+ CoveringsSolver::~CoveringsSolver() {}
+diff --git a/src/theory/bags/solver_state.cpp b/src/theory/bags/solver_state.cpp
+index a8c6d4147..c82d6886b 100644
+--- a/src/theory/bags/solver_state.cpp
++++ b/src/theory/bags/solver_state.cpp
+@@ -176,8 +176,8 @@ void SolverState::checkInjectivity(Node n)
+   }
+ 
+   TypeNode domainType = f.getType().getArgTypes()[0];
+-  Node x = sm->mkDummySkolem("x", domainType);
+-  Node y = sm->mkDummySkolem("y", domainType);
++  Node x = NodeManager::mkDummySkolem("x", domainType);
++  Node y = NodeManager::mkDummySkolem("y", domainType);
+   Node f_x = d_nm->mkNode(Kind::APPLY_UF, f, x);
+   Node f_y = d_nm->mkNode(Kind::APPLY_UF, f, y);
+   Node f_x_equals_f_y = f_x.eqNode(f_y);
+diff --git a/src/theory/bv/theory_bv_utils.cpp b/src/theory/bv/theory_bv_utils.cpp
+index b7dd12ff7..636225c6f 100644
+--- a/src/theory/bv/theory_bv_utils.cpp
++++ b/src/theory/bv/theory_bv_utils.cpp
+@@ -276,10 +276,10 @@ Node mkConst(const BitVector& value)
+ Node mkVar(unsigned size)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  return sm->mkDummySkolem("BVSKOLEM$$",
+-                           nm->mkBitVectorType(size),
+-                           "is a variable created by the theory of bitvectors");
++  return NodeManager::mkDummySkolem(
++      "BVSKOLEM$$",
++      nm->mkBitVectorType(size),
++      "is a variable created by the theory of bitvectors");
+ }
+ 
+ /* ------------------------------------------------------------------------- */
+diff --git a/src/theory/datatypes/sygus_extension.cpp b/src/theory/datatypes/sygus_extension.cpp
+index 9bf20222c..c172de454 100644
+--- a/src/theory/datatypes/sygus_extension.cpp
++++ b/src/theory/datatypes/sygus_extension.cpp
+@@ -458,11 +458,10 @@ Node SygusExtension::getTraversalPredicate(TypeNode tn, Node n, bool isPre)
+     return itt->second;
+   }
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   std::vector<TypeNode> types;
+   types.push_back(tn);
+   TypeNode ptn = nm->mkPredicateType(types);
+-  Node pred = sm->mkDummySkolem(isPre ? "pre" : "post", ptn);
++  Node pred = NodeManager::mkDummySkolem(isPre ? "pre" : "post", ptn);
+   d_traversal_pred[index][tn][n] = pred;
+   return pred;
+ }
+@@ -470,7 +469,6 @@ Node SygusExtension::getTraversalPredicate(TypeNode tn, Node n, bool isPre)
+ Node SygusExtension::eliminateTraversalPredicates(Node n)
+ {
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   std::unordered_map<TNode, Node> visited;
+   std::unordered_map<TNode, Node>::iterator it;
+   std::map<Node, Node>::iterator ittb;
+@@ -496,7 +494,7 @@ Node SygusExtension::eliminateTraversalPredicates(Node n)
+         {
+           std::stringstream ss;
+           ss << "v_" << cur;
+-          ret = sm->mkDummySkolem(ss.str(), cur.getType());
++          ret = NodeManager::mkDummySkolem(ss.str(), cur.getType());
+           d_traversal_bool[cur] = ret;
+         }
+         else
+@@ -1769,8 +1767,7 @@ Node SygusExtension::SygusSizeDecisionStrategy::getOrMkMeasureValue()
+   if (d_measure_value.isNull())
+   {
+     NodeManager* nm = nodeManager();
+-    SkolemManager* sm = nm->getSkolemManager();
+-    d_measure_value = sm->mkDummySkolem("mt", nm->integerType());
++    d_measure_value = NodeManager::mkDummySkolem("mt", nm->integerType());
+     Node mtlem =
+         nm->mkNode(Kind::GEQ, d_measure_value, nm->mkConstInt(Rational(0)));
+     d_im.lemma(mtlem, InferenceId::DATATYPES_SYGUS_MT_POS);
+@@ -1784,8 +1781,7 @@ Node SygusExtension::SygusSizeDecisionStrategy::getOrMkActiveMeasureValue(
+   if (mkNew)
+   {
+     NodeManager* nm = nodeManager();
+-    SkolemManager* sm = nm->getSkolemManager();
+-    Node new_mt = sm->mkDummySkolem("mt", nm->integerType());
++    Node new_mt = NodeManager::mkDummySkolem("mt", nm->integerType());
+     Node mtlem = nm->mkNode(Kind::GEQ, new_mt, nm->mkConstInt(Rational(0)));
+     d_measure_value_active = new_mt;
+     d_im.lemma(mtlem, InferenceId::DATATYPES_SYGUS_MT_POS);
+diff --git a/src/theory/datatypes/theory_datatypes.cpp b/src/theory/datatypes/theory_datatypes.cpp
+index 57806821e..176e5091e 100644
+--- a/src/theory/datatypes/theory_datatypes.cpp
++++ b/src/theory/datatypes/theory_datatypes.cpp
+@@ -1121,7 +1121,6 @@ Node TheoryDatatypes::getCodatatypesValue( Node n, std::map< Node, Node >& eqc_c
+ 
+ Node TheoryDatatypes::getSingletonLemma( TypeNode tn, bool pol ) {
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   int index = pol ? 0 : 1;
+   std::map< TypeNode, Node >::iterator it = d_singleton_lemma[index].find( tn );
+   if( it==d_singleton_lemma[index].end() ){
+@@ -1133,8 +1132,8 @@ Node TheoryDatatypes::getSingletonLemma( TypeNode tn, bool pol ) {
+                      nm->mkNode(Kind::BOUND_VAR_LIST, v1, v2),
+                      v1.eqNode(v2));
+     }else{
+-      Node v1 = sm->mkDummySkolem("k1", tn);
+-      Node v2 = sm->mkDummySkolem("k2", tn);
++      Node v1 = NodeManager::mkDummySkolem("k1", tn);
++      Node v2 = NodeManager::mkDummySkolem("k2", tn);
+       a = v1.eqNode( v2 ).negate();
+       //send out immediately as lemma
+       d_im.lemma(a, InferenceId::DATATYPES_REC_SINGLETON_FORCE_DEQ);
+diff --git a/src/theory/fp/fp_word_blaster.cpp b/src/theory/fp/fp_word_blaster.cpp
+index 3eb94618a..2a51b8e20 100644
+--- a/src/theory/fp/fp_word_blaster.cpp
++++ b/src/theory/fp/fp_word_blaster.cpp
+@@ -260,7 +260,7 @@ symbolicRoundingMode::symbolicRoundingMode(const symbolicRoundingMode& old)
+ 
+ symbolicProposition symbolicRoundingMode::valid(void) const
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = getNodeManager();
+   Node zero(nm->mkConst(BitVector(SYMFPU_NUMBER_OF_ROUNDING_MODES, 0u)));
+ 
+   // Is there a better encoding of this?
+@@ -290,7 +290,7 @@ template <bool isSigned>
+ Node symbolicBitVector<isSigned>::boolNodeToBV(Node node) const
+ {
+   Assert(node.getType().isBoolean());
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = getNodeManager();
+   return nm->mkNode(Kind::ITE,
+                     node,
+                     nm->mkConst(BitVector(1U, 1U)),
+@@ -302,7 +302,7 @@ Node symbolicBitVector<isSigned>::BVToBoolNode(Node node) const
+ {
+   Assert(node.getType().isBitVector());
+   Assert(node.getType().getBitVectorSize() == 1);
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = getNodeManager();
+   return nm->mkNode(Kind::EQUAL, node, nm->mkConst(BitVector(1U, 1U)));
+ }
+ 
+@@ -630,8 +630,8 @@ symbolicBitVector<false> symbolicBitVector<isSigned>::toUnsigned(void) const
+ template <>
+ symbolicBitVector<true> symbolicBitVector<true>::extend(bwt extension) const
+ {
+-  NodeBuilder construct(NodeManager::currentNM(), Kind::BITVECTOR_SIGN_EXTEND);
+-  construct << NodeManager::currentNM()->mkConst<BitVectorSignExtend>(
++  NodeBuilder construct(getNodeManager(), Kind::BITVECTOR_SIGN_EXTEND);
++  construct << getNodeManager()->mkConst<BitVectorSignExtend>(
+       BitVectorSignExtend(extension))
+             << *this;
+ 
+@@ -641,8 +641,8 @@ symbolicBitVector<true> symbolicBitVector<true>::extend(bwt extension) const
+ template <>
+ symbolicBitVector<false> symbolicBitVector<false>::extend(bwt extension) const
+ {
+-  NodeBuilder construct(NodeManager::currentNM(), Kind::BITVECTOR_ZERO_EXTEND);
+-  construct << NodeManager::currentNM()->mkConst<BitVectorZeroExtend>(
++  NodeBuilder construct(getNodeManager(), Kind::BITVECTOR_ZERO_EXTEND);
++  construct << getNodeManager()->mkConst<BitVectorZeroExtend>(
+       BitVectorZeroExtend(extension))
+             << *this;
+ 
+@@ -655,8 +655,8 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::contract(
+ {
+   Assert(this->getWidth() > reduction);
+ 
+-  NodeBuilder construct(NodeManager::currentNM(), Kind::BITVECTOR_EXTRACT);
+-  construct << NodeManager::currentNM()->mkConst<BitVectorExtract>(
++  NodeBuilder construct(getNodeManager(), Kind::BITVECTOR_EXTRACT);
++  construct << getNodeManager()->template mkConst<BitVectorExtract>(
+       BitVectorExtract((this->getWidth() - 1) - reduction, 0))
+             << *this;
+ 
+@@ -706,8 +706,8 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::extract(
+ {
+   Assert(upper >= lower);
+ 
+-  NodeBuilder construct(NodeManager::currentNM(), Kind::BITVECTOR_EXTRACT);
+-  construct << NodeManager::currentNM()->mkConst<BitVectorExtract>(
++  NodeBuilder construct(getNodeManager(), Kind::BITVECTOR_EXTRACT);
++  construct << getNodeManager()->template mkConst<BitVectorExtract>(
+       BitVectorExtract(upper, lower))
+             << *this;
+ 
+diff --git a/src/theory/quantifiers/bv_inverter.cpp b/src/theory/quantifiers/bv_inverter.cpp
+index 4b2aa4d23..b8eb5deac 100644
+--- a/src/theory/quantifiers/bv_inverter.cpp
++++ b/src/theory/quantifiers/bv_inverter.cpp
+@@ -43,8 +43,7 @@ Node BvInverter::getSolveVariable(TypeNode tn)
+   std::map<TypeNode, Node>::iterator its = d_solve_var.find(tn);
+   if (its == d_solve_var.end())
+   {
+-    SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
+-    Node k = sm->mkDummySkolem("slv", tn);
++    Node k = NodeManager::mkDummySkolem("slv", tn);
+     d_solve_var[tn] = k;
+     return k;
+   }
+diff --git a/src/theory/quantifiers/cegqi/ceg_bv_instantiator.cpp b/src/theory/quantifiers/cegqi/ceg_bv_instantiator.cpp
+index 4a577745b..2e55809a9 100644
+--- a/src/theory/quantifiers/cegqi/ceg_bv_instantiator.cpp
++++ b/src/theory/quantifiers/cegqi/ceg_bv_instantiator.cpp
+@@ -645,7 +645,6 @@ void BvInstantiatorPreprocess::registerCounterexampleLemma(
+   if (d_opts.quantifiers.cegqiBvRmExtract)
+   {
+     NodeManager* nm = NodeManager::currentNM();
+-    SkolemManager* sm = nm->getSkolemManager();
+     Trace("cegqi-bv-pp") << "-----remove extracts..." << std::endl;
+     // map from terms to bitvector extracts applied to that term
+     std::map<Node, std::vector<Node> > extract_map;
+@@ -694,10 +693,10 @@ void BvInstantiatorPreprocess::registerCounterexampleLemma(
+         Assert(boundaries[i - 1] > 0);
+         Node ex = bv::utils::mkExtract(
+             es.first, boundaries[i - 1] - 1, boundaries[i]);
+-        Node var =
+-            sm->mkDummySkolem("ek",
+-                              ex.getType(),
+-                              "variable to represent disjoint extract region");
++        Node var = NodeManager::mkDummySkolem(
++            "ek",
++            ex.getType(),
++            "variable to represent disjoint extract region");
+         children.push_back(var);
+         vars.push_back(var);
+       }
+diff --git a/src/theory/quantifiers/cegqi/inst_strategy_cegqi.cpp b/src/theory/quantifiers/cegqi/inst_strategy_cegqi.cpp
+index 0c222f064..4520b3217 100644
+--- a/src/theory/quantifiers/cegqi/inst_strategy_cegqi.cpp
++++ b/src/theory/quantifiers/cegqi/inst_strategy_cegqi.cpp
+@@ -491,8 +491,7 @@ Node InstStrategyCegqi::getCounterexampleLiteral(Node q)
+     return it->second;
+   }
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  Node g = sm->mkDummySkolem("g", nm->booleanType());
++  Node g = NodeManager::mkDummySkolem("g", nm->booleanType());
+   // ensure that it is a SAT literal
+   Node ceLit = d_qstate.getValuation().ensureLiteral(g);
+   d_ce_lit[q] = ceLit;
+diff --git a/src/theory/quantifiers/conjecture_generator.cpp b/src/theory/quantifiers/conjecture_generator.cpp
+index 697412066..3c0b2ada9 100644
+--- a/src/theory/quantifiers/conjecture_generator.cpp
++++ b/src/theory/quantifiers/conjecture_generator.cpp
+@@ -1116,9 +1116,8 @@ Node ConjectureGenerator::getPredicateForType( TypeNode tn ) {
+   std::map< TypeNode, Node >::iterator it = d_typ_pred.find( tn );
+   if( it==d_typ_pred.end() ){
+     NodeManager* nm = NodeManager::currentNM();
+-    SkolemManager* sm = nm->getSkolemManager();
+     TypeNode op_tn = nm->mkFunctionType(tn, nm->booleanType());
+-    Node op = sm->mkDummySkolem(
++    Node op = NodeManager::mkDummySkolem(
+         "PE", op_tn, "was created by conjecture ground term enumerator.");
+     d_typ_pred[tn] = op;
+     return op;
+diff --git a/src/theory/quantifiers/dynamic_rewrite.cpp b/src/theory/quantifiers/dynamic_rewrite.cpp
+index 639fd7421..004e590bd 100644
+--- a/src/theory/quantifiers/dynamic_rewrite.cpp
++++ b/src/theory/quantifiers/dynamic_rewrite.cpp
+@@ -149,7 +149,6 @@ Node DynamicRewriter::toExternal(Node ai)
+ Node DynamicRewriter::OpInternalSymTrie::getSymbol(Node n)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+   std::vector<TypeNode> ctypes;
+   for (const Node& cn : n)
+   {
+@@ -181,7 +180,8 @@ Node DynamicRewriter::OpInternalSymTrie::getSymbol(Node n)
+   {
+     utype = nm->mkFunctionType(ctypes);
+   }
+-  Node f = sm->mkDummySkolem("ufd", utype, "internal op for dynamic_rewriter");
++  Node f = NodeManager::mkDummySkolem(
++      "ufd", utype, "internal op for dynamic_rewriter");
+   curr->d_sym = f;
+   return f;
+ }
+diff --git a/src/theory/quantifiers/expr_miner.cpp b/src/theory/quantifiers/expr_miner.cpp
+index 46dc994be..e8aa916ca 100644
+--- a/src/theory/quantifiers/expr_miner.cpp
++++ b/src/theory/quantifiers/expr_miner.cpp
+@@ -39,13 +39,11 @@ Node ExprMiner::convertToSkolem(Node n)
+ {
+   if (d_skolems.empty())
+   {
+-    NodeManager* nm = nodeManager();
+-    SkolemManager* sm = nm->getSkolemManager();
+     for (const Node& v : d_vars)
+     {
+       std::stringstream ss;
+       ss << "k_" << v;
+-      Node sk = sm->mkDummySkolem(ss.str(), v.getType());
++      Node sk = NodeManager::mkDummySkolem(ss.str(), v.getType());
+       d_skolems.push_back(sk);
+       d_fv_to_skolem[v] = sk;
+     }
+diff --git a/src/theory/quantifiers/fmf/bounded_integers.cpp b/src/theory/quantifiers/fmf/bounded_integers.cpp
+index 0c29787e2..29a5e491f 100644
+--- a/src/theory/quantifiers/fmf/bounded_integers.cpp
++++ b/src/theory/quantifiers/fmf/bounded_integers.cpp
+@@ -50,8 +50,8 @@ BoundedIntegers::IntRangeDecisionHeuristic::IntRangeDecisionHeuristic(
+   // we require a proxy if the term is set.card
+   if (options().quantifiers.fmfBoundLazy || r.getKind() == Kind::SET_CARD)
+   {
+-    SkolemManager* sm = nodeManager()->getSkolemManager();
+-    d_proxy_range = isProxy ? r : sm->mkDummySkolem("pbir", r.getType());
++    d_proxy_range =
++        isProxy ? r : NodeManager::mkDummySkolem("pbir", r.getType());
+   }
+   else
+   {
+@@ -397,7 +397,6 @@ void BoundedIntegers::checkOwnership(Node f)
+   }
+ 
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+ 
+   bool success;
+   do{
+@@ -565,7 +564,7 @@ void BoundedIntegers::checkOwnership(Node f)
+         {
+           // introduce a new bound
+           Node new_range =
+-              sm->mkDummySkolem("bir", r.getType(), "bound for term");
++              NodeManager::mkDummySkolem("bir", r.getType(), "bound for term");
+           d_nground_range[f][v] = r;
+           d_range[f][v] = new_range;
+           r = new_range;
+@@ -978,8 +977,7 @@ Node BoundedIntegers::mkBoundedForall(NodeManager* nm, Node bvl, Node body)
+   }
+   else
+   {
+-    SkolemManager* sm = nm->getSkolemManager();
+-    qvar = sm->mkDummySkolem("qinternal", nm->booleanType());
++    qvar = NodeManager::mkDummySkolem("qinternal", nm->booleanType());
+     // this dummy variable marks that the quantified formula is internal
+     qvar.setAttribute(BoundedQuantAttribute(), true);
+     // remember the dummy variable
+diff --git a/src/theory/quantifiers/fmf/first_order_model_fmc.cpp b/src/theory/quantifiers/fmf/first_order_model_fmc.cpp
+index b4f004f0e..9be1bf8a4 100644
+--- a/src/theory/quantifiers/fmf/first_order_model_fmc.cpp
++++ b/src/theory/quantifiers/fmf/first_order_model_fmc.cpp
+@@ -92,9 +92,8 @@ Node FirstOrderModelFmc::getStar(TypeNode tn)
+   {
+     return it->second;
+   }
+-  SkolemManager* sm = nodeManager()->getSkolemManager();
+-  Node st =
+-      sm->mkDummySkolem("star", tn, "skolem created for full-model checking");
++  Node st = NodeManager::mkDummySkolem(
++      "star", tn, "skolem created for full-model checking");
+   d_type_star[tn] = st;
+   st.setAttribute(IsStarAttribute(), true);
+   return st;
+diff --git a/src/theory/quantifiers/fmf/full_model_check.cpp b/src/theory/quantifiers/fmf/full_model_check.cpp
+index 52a5a84f6..5eb214ec6 100644
+--- a/src/theory/quantifiers/fmf/full_model_check.cpp
++++ b/src/theory/quantifiers/fmf/full_model_check.cpp
+@@ -1494,7 +1494,6 @@ void FullModelChecker::registerQuantifiedFormula(Node q)
+     return;
+   }
+   NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+   std::vector<TypeNode> types;
+   for (const Node& v : q[0])
+   {
+@@ -1509,7 +1508,8 @@ void FullModelChecker::registerQuantifiedFormula(Node q)
+     types.push_back(tn);
+   }
+   TypeNode typ = nm->mkFunctionType(types, nm->booleanType());
+-  Node op = sm->mkDummySkolem("qfmc", typ, "op for full-model checking");
++  Node op =
++      NodeManager::mkDummySkolem("qfmc", typ, "op for full-model checking");
+   d_quant_cond[q] = op;
+ }
+ 
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index cb05619fb..9770a1742 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -2013,8 +2013,7 @@ Node QuantifiersRewriter::mkForall(const std::vector<Node>& args,
+   children.push_back(body);
+   if (marked)
+   {
+-    SkolemManager* sm = nm->getSkolemManager();
+-    Node avar = sm->mkDummySkolem("id", nm->booleanType());
++    Node avar = NodeManager::mkDummySkolem("id", nm->booleanType());
+     QuantIdNumAttribute ida;
+     avar.setAttribute(ida, 0);
+     iplc.push_back(nm->mkNode(Kind::INST_ATTRIBUTE, avar));
+diff --git a/src/theory/quantifiers/single_inv_partition.cpp b/src/theory/quantifiers/single_inv_partition.cpp
+index e0a451e97..96f648cd6 100644
+--- a/src/theory/quantifiers/single_inv_partition.cpp
++++ b/src/theory/quantifiers/single_inv_partition.cpp
+@@ -185,7 +185,6 @@ bool SingleInvocationPartition::init(std::vector<Node>& funcs,
+   Assert(d_input_funcs.empty());
+   Assert(d_si_vars.empty());
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   d_has_input_funcs = has_funcs;
+   d_arg_types.insert(d_arg_types.end(), typs.begin(), typs.end());
+   d_input_funcs.insert(d_input_funcs.end(), funcs.begin(), funcs.end());
+@@ -200,7 +199,7 @@ bool SingleInvocationPartition::init(std::vector<Node>& funcs,
+   Assert(d_si_vars.size() == d_arg_types.size());
+   for (const Node& inf : d_input_funcs)
+   {
+-    Node sk = sm->mkDummySkolem("_sik", inf.getType());
++    Node sk = NodeManager::mkDummySkolem("_sik", inf.getType());
+     d_input_func_sks.push_back(sk);
+   }
+   Trace("si-prt") << "SingleInvocationPartition::process " << n << std::endl;
+diff --git a/src/theory/quantifiers/skolemize.cpp b/src/theory/quantifiers/skolemize.cpp
+index 661c14a70..b49e66c1e 100644
+--- a/src/theory/quantifiers/skolemize.cpp
++++ b/src/theory/quantifiers/skolemize.cpp
+@@ -197,7 +197,6 @@ Node Skolemize::mkSkolemizedBodyInduction(const Options& opts,
+   {
+     argTypes.push_back(v.getType());
+   }
+-  SkolemManager* sm = nm->getSkolemManager();
+   Assert(sk.empty() || sk.size() == f[0].getNumChildren());
+   // calculate the variables and substitution
+   std::vector<TNode> ind_vars;
+@@ -228,7 +227,7 @@ Node Skolemize::mkSkolemizedBodyInduction(const Options& opts,
+       else
+       {
+         TypeNode typ = nm->mkFunctionType(argTypes, f[0][i].getType());
+-        Node op = sm->mkDummySkolem(
++        Node op = NodeManager::mkDummySkolem(
+             "skop", typ, "op created during pre-skolemization");
+         // DOTHIS: set attribute on op, marking that it should not be selected
+         // as trigger
+diff --git a/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp b/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp
+index eca3a5def..dab0d0cc7 100644
+--- a/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp
++++ b/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp
+@@ -143,7 +143,6 @@ void CegSingleInv::finishInit(bool syntaxRestricted)
+     return;
+   }
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   d_single_inv = d_sip->getSingleInvocation();
+   d_single_inv = TermUtil::simpleNegate(d_single_inv);
+   std::vector<Node> func_vars;
+@@ -159,8 +158,8 @@ void CegSingleInv::finishInit(bool syntaxRestricted)
+   d_sip->getSingleInvocationVariables(sivars);
+   for (unsigned i = 0, size = sivars.size(); i < size; i++)
+   {
+-    Node v =
+-        sm->mkDummySkolem("a", sivars[i].getType(), "single invocation arg");
++    Node v = NodeManager::mkDummySkolem(
++        "a", sivars[i].getType(), "single invocation arg");
+     d_single_inv_arg_sk.push_back(v);
+   }
+   d_single_inv = d_single_inv.substitute(sivars.begin(),
+diff --git a/src/theory/quantifiers/sygus/cegis_unif.cpp b/src/theory/quantifiers/sygus/cegis_unif.cpp
+index 4ea4b6b90..f2fe2008b 100644
+--- a/src/theory/quantifiers/sygus/cegis_unif.cpp
++++ b/src/theory/quantifiers/sygus/cegis_unif.cpp
+@@ -423,8 +423,7 @@ CegisUnifEnumDecisionStrategy::CegisUnifEnumDecisionStrategy(
+ Node CegisUnifEnumDecisionStrategy::mkLiteral(unsigned n)
+ {
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  Node newLit = sm->mkDummySkolem("G_cost", nm->booleanType());
++  Node newLit = NodeManager::mkDummySkolem("G_cost", nm->booleanType());
+   unsigned new_size = n + 1;
+ 
+   // allocate an enumerator for each candidate
+@@ -432,13 +431,13 @@ Node CegisUnifEnumDecisionStrategy::mkLiteral(unsigned n)
+   {
+     Node c = ci.first;
+     TypeNode ct = c.getType();
+-    Node eu = sm->mkDummySkolem("eu", ct);
++    Node eu = NodeManager::mkDummySkolem("eu", ct);
+     Node ceu;
+     if (!d_useCondPool && !ci.second.d_enums[0].empty())
+     {
+       // make a new conditional enumerator as well, starting the
+       // second type around
+-      ceu = sm->mkDummySkolem("cu", ci.second.d_ce_type);
++      ceu = NodeManager::mkDummySkolem("cu", ci.second.d_ce_type);
+     }
+     // register the new enumerators
+     for (unsigned index = 0; index < 2; index++)
+@@ -474,7 +473,7 @@ Node CegisUnifEnumDecisionStrategy::mkLiteral(unsigned n)
+           NodeManager::mkBoundVar("_virtual_enum_grammar", nm->integerType());
+       SygusGrammar g({}, {a});
+       g.addRules(a, {nm->mkConstInt(Rational(1)), nm->mkNode(Kind::ADD, a, a)});
+-      d_virtual_enum = sm->mkDummySkolem("_ve", g.resolve());
++      d_virtual_enum = NodeManager::mkDummySkolem("_ve", g.resolve());
+       d_tds->registerEnumerator(
+           d_virtual_enum, Node::null(), d_parent, ROLE_ENUM_CONSTRAINED);
+     }
+@@ -517,7 +516,6 @@ void CegisUnifEnumDecisionStrategy::initialize(
+   }
+   // initialize type information for candidates
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   for (const Node& e : es)
+   {
+     Trace("cegis-unif-enum-debug") << "...adding strategy point " << e << "\n";
+@@ -563,7 +561,7 @@ void CegisUnifEnumDecisionStrategy::initialize(
+     // allocate a condition enumerator for each candidate
+     for (std::pair<const Node, StrategyPtInfo>& ci : d_ce_info)
+     {
+-      Node ceu = sm->mkDummySkolem("cu", ci.second.d_ce_type);
++      Node ceu = NodeManager::mkDummySkolem("cu", ci.second.d_ce_type);
+       setUpEnumerator(ceu, ci.second, 1);
+     }
+   }
+diff --git a/src/theory/quantifiers/sygus/rcons_type_info.cpp b/src/theory/quantifiers/sygus/rcons_type_info.cpp
+index ad80aafd6..b1497732d 100644
+--- a/src/theory/quantifiers/sygus/rcons_type_info.cpp
++++ b/src/theory/quantifiers/sygus/rcons_type_info.cpp
+@@ -33,16 +33,14 @@ void RConsTypeInfo::initialize(Env& env,
+                                TypeNode stn,
+                                const std::vector<Node>& builtinVars)
+ {
+-  NodeManager* nm = env.getNodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   // create a terms enumerator
+   d_enumerators.push_back(
+       std::make_unique<SygusEnumerator>(env, tds, nullptr, &s, false));
+-  d_enumerators[0]->initialize(sm->mkDummySkolem("sygus_rcons", stn));
++  d_enumerators[0]->initialize(NodeManager::mkDummySkolem("sygus_rcons", stn));
+   // create a patterns enumerator
+   d_enumerators.push_back(
+       std::make_unique<SygusEnumerator>(env, tds, nullptr, &s, true));
+-  d_enumerators[1]->initialize(sm->mkDummySkolem("sygus_rcons", stn));
++  d_enumerators[1]->initialize(NodeManager::mkDummySkolem("sygus_rcons", stn));
+   d_crd.reset(new CandidateRewriteDatabase(env, true, false, false));
+ 
+   // since initial samples are not always useful for equivalence checks, set
+diff --git a/src/theory/quantifiers/sygus/sygus_abduct.cpp b/src/theory/quantifiers/sygus/sygus_abduct.cpp
+index fbb72ac71..0ee24218e 100644
+--- a/src/theory/quantifiers/sygus/sygus_abduct.cpp
++++ b/src/theory/quantifiers/sygus/sygus_abduct.cpp
+@@ -42,7 +42,6 @@ Node SygusAbduct::mkAbductionConjecture(NodeManager* nm,
+                                         const std::vector<Node>& axioms,
+                                         TypeNode abdGType)
+ {
+-  SkolemManager* sm = nm->getSkolemManager();
+   std::unordered_set<Node> symset;
+   for (size_t i = 0, size = asserts.size(); i < size; i++)
+   {
+@@ -170,7 +169,7 @@ Node SygusAbduct::mkAbductionConjecture(NodeManager* nm,
+     Node vbvl = nm->mkNode(Kind::BOUND_VAR_LIST, vars);
+     sc = nm->mkNode(Kind::EXISTS, vbvl, sc);
+   }
+-  Node sygusScVar = sm->mkDummySkolem("sygus_sc", nm->booleanType());
++  Node sygusScVar = NodeManager::mkDummySkolem("sygus_sc", nm->booleanType());
+   sygusScVar.setAttribute(theory::SygusSideConditionAttribute(), sc);
+   Node instAttr = nm->mkNode(Kind::INST_ATTRIBUTE, sygusScVar);
+   // build in the side condition
+diff --git a/src/theory/quantifiers/sygus/sygus_qe_preproc.cpp b/src/theory/quantifiers/sygus/sygus_qe_preproc.cpp
+index e5e64983f..39683020e 100644
+--- a/src/theory/quantifiers/sygus/sygus_qe_preproc.cpp
++++ b/src/theory/quantifiers/sygus/sygus_qe_preproc.cpp
+@@ -36,7 +36,6 @@ Node SygusQePreproc::preprocess(Node q)
+     body = body[0][1];
+   }
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   Trace("cegqi-qep") << "Compute single invocation for " << q << "..."
+                      << std::endl;
+   quantifiers::SingleInvocationPartition sip(d_env);
+@@ -86,7 +85,7 @@ Node SygusQePreproc::preprocess(Node q)
+   // skolemize non-qe variables
+   for (unsigned i = 0, size = nqe_vars.size(); i < size; i++)
+   {
+-    Node k = sm->mkDummySkolem(
++    Node k = NodeManager::mkDummySkolem(
+         "k", nqe_vars[i].getType(), "qe for non-ground single invocation");
+     orig.push_back(nqe_vars[i]);
+     subs.push_back(k);
+@@ -102,7 +101,7 @@ Node SygusQePreproc::preprocess(Node q)
+     Node fv = sip.getFirstOrderVariableForFunction(f);
+     Assert(!fi.isNull());
+     orig.push_back(fi);
+-    Node k = sm->mkDummySkolem(
++    Node k = NodeManager::mkDummySkolem(
+         "k", fv.getType(), "qe for function in non-ground single invocation");
+     subs.push_back(k);
+     Trace("cegqi-qep") << "  subs : " << fi << " -> " << k << std::endl;
+diff --git a/src/theory/quantifiers/sygus/sygus_random_enumerator.cpp b/src/theory/quantifiers/sygus/sygus_random_enumerator.cpp
+index afa8b96b2..14fbdb8f7 100644
+--- a/src/theory/quantifiers/sygus/sygus_random_enumerator.cpp
++++ b/src/theory/quantifiers/sygus/sygus_random_enumerator.cpp
+@@ -73,11 +73,10 @@ bool SygusRandomEnumerator::increment()
+ Node SygusRandomEnumerator::incrementH()
+ {
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nodeManager()->getSkolemManager();
+   Random& rnd = Random::getRandom();
+   double p = options().quantifiers.sygusEnumRandomP;
+ 
+-  Node mainSkolem = sm->mkDummySkolem("sygus_rand", d_tn);
++  Node mainSkolem = NodeManager::mkDummySkolem("sygus_rand", d_tn);
+   // List of skolems with no corresponding constructor.
+   std::vector<Node> remainingSkolems;
+   remainingSkolems.push_back(mainSkolem);
+@@ -125,7 +124,7 @@ Node SygusRandomEnumerator::incrementH()
+     for (size_t i = 0, n = skolemCons[currSkolem]->getNumArgs(); i < n; ++i)
+     {
+       TypeNode subSkolemType = skolemCons[currSkolem]->getArgType(i);
+-      Node subSkolem = sm->mkDummySkolem("sygus_rand", subSkolemType);
++      Node subSkolem = NodeManager::mkDummySkolem("sygus_rand", subSkolemType);
+       remainingSkolems.push_back(subSkolem);
+       subSkolems[currSkolem].push_back(subSkolem);
+     }
+diff --git a/src/theory/quantifiers/sygus/sygus_unif_rl.cpp b/src/theory/quantifiers/sygus/sygus_unif_rl.cpp
+index 8df3b6b8e..51656ae4b 100644
+--- a/src/theory/quantifiers/sygus/sygus_unif_rl.cpp
++++ b/src/theory/quantifiers/sygus/sygus_unif_rl.cpp
+@@ -138,7 +138,6 @@ Node SygusUnifRl::purifyLemma(Node n,
+   bool childChanged = false;
+   std::vector<Node> children;
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   for (unsigned i = 0; i < size; ++i)
+   {
+     if (i == 0 && fapp)
+@@ -188,7 +187,7 @@ Node SygusUnifRl::purifyLemma(Node n,
+       // Build purified head with fresh skolem and recreate node
+       std::stringstream ss;
+       ss << nb[0] << "_" << d_cand_to_hd_count[nb[0]]++;
+-      Node new_f = sm->mkDummySkolem(
++      Node new_f = NodeManager::mkDummySkolem(
+           ss.str(), nb[0].getType(), "head of unif evaluation point");
+       // Adds new enumerator to map from candidate
+       Trace("sygus-unif-rl-purify")
+diff --git a/src/theory/quantifiers/sygus/sygus_unif_strat.cpp b/src/theory/quantifiers/sygus/sygus_unif_strat.cpp
+index 576865cb9..085edb68d 100644
+--- a/src/theory/quantifiers/sygus/sygus_unif_strat.cpp
++++ b/src/theory/quantifiers/sygus/sygus_unif_strat.cpp
+@@ -173,7 +173,6 @@ void SygusUnifStrategy::registerStrategyPoint(Node et,
+ void SygusUnifStrategy::buildStrategyGraph(TypeNode tn, NodeRole nrole)
+ {
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   if (d_tinfo.find(tn) == d_tinfo.end())
+   {
+     // register type
+@@ -196,7 +195,7 @@ void SygusUnifStrategy::buildStrategyGraph(TypeNode tn, NodeRole nrole)
+   std::map<EnumRole, Node>::iterator iten = eti.d_enum.find(erole);
+   if (iten == eti.d_enum.end())
+   {
+-    ee = sm->mkDummySkolem("ee", tn);
++    ee = NodeManager::mkDummySkolem("ee", tn);
+     eti.d_enum[erole] = ee;
+     Trace("sygus-unif-debug")
+         << "...enumerator " << ee << " for " << tn.getDType().getName()
+@@ -247,7 +246,7 @@ void SygusUnifStrategy::buildStrategyGraph(TypeNode tn, NodeRole nrole)
+     for (unsigned k = 0, nargs = dt[j].getNumArgs(); k < nargs; k++)
+     {
+       TypeNode ttn = dt[j][k].getRangeType();
+-      Node kv = sm->mkDummySkolem("ut", ttn);
++      Node kv = NodeManager::mkDummySkolem("ut", ttn);
+       sks.push_back(kv);
+       cop_to_sks[cop].push_back(kv);
+       sktns.push_back(ttn);
+@@ -305,7 +304,7 @@ void SygusUnifStrategy::buildStrategyGraph(TypeNode tn, NodeRole nrole)
+                                    << std::endl;
+         Node esk = nm->mkNode(Kind::DT_SYGUS_EVAL, echildren);
+         vs.push_back(esk);
+-        Node tvar = sm->mkDummySkolem("templ", esk.getType());
++        Node tvar = NodeManager::mkDummySkolem("templ", esk.getType());
+         templ_var_index[tvar] = k;
+         Trace("sygus-unif-debug2") << "* template inference : looking for "
+                                    << tvar << " for arg " << k << std::endl;
+@@ -576,7 +575,7 @@ void SygusUnifStrategy::buildStrategyGraph(TypeNode tn, NodeRole nrole)
+           if (cop_to_child_templ[cop].find(j) != cop_to_child_templ[cop].end())
+           {
+             // it is templated, allocate a fresh variable
+-            et = sm->mkDummySkolem("et", ct);
++            et = NodeManager::mkDummySkolem("et", ct);
+             Trace("sygus-unif-debug") << "...enumerate " << et << " of type "
+                                       << ct.getDType().getName();
+             Trace("sygus-unif-debug") << " for arg " << j << " of "
+diff --git a/src/theory/quantifiers/sygus/synth_conjecture.cpp b/src/theory/quantifiers/sygus/synth_conjecture.cpp
+index d44daa00a..e21f50e42 100644
+--- a/src/theory/quantifiers/sygus/synth_conjecture.cpp
++++ b/src/theory/quantifiers/sygus/synth_conjecture.cpp
+@@ -244,7 +244,7 @@ void SynthConjecture::assign(Node q)
+   {
+     for (const Node& v : d_checkBody[0][0])
+     {
+-      Node sk = sm->mkDummySkolem("rsk", v.getType());
++      Node sk = NodeManager::mkDummySkolem("rsk", v.getType());
+       bsubs.add(v, sk);
+       d_innerVars.push_back(v);
+       d_innerSks.push_back(sk);
+diff --git a/src/theory/quantifiers/sygus/template_infer.cpp b/src/theory/quantifiers/sygus/template_infer.cpp
+index 523958d8d..e34d93d7d 100644
+--- a/src/theory/quantifiers/sygus/template_infer.cpp
++++ b/src/theory/quantifiers/sygus/template_infer.cpp
+@@ -87,7 +87,6 @@ void SygusTemplateInfer::initialize(Node q)
+   }
+   Assert(prog == q[0][0]);
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   // map the program back via non-single invocation map
+   std::vector<Node> prog_templ_vars;
+   d_ti.getVariables(prog_templ_vars);
+@@ -102,7 +101,7 @@ void SygusTemplateInfer::initialize(Node q)
+   {
+     atn = atn.getRangeType();
+   }
+-  d_templ_arg[prog] = sm->mkDummySkolem("I", atn);
++  d_templ_arg[prog] = NodeManager::mkDummySkolem("I", atn);
+ 
+   // construct template
+   Node templ;
+diff --git a/src/theory/quantifiers/sygus/term_database_sygus.cpp b/src/theory/quantifiers/sygus/term_database_sygus.cpp
+index 5e997633d..54b30c357 100644
+--- a/src/theory/quantifiers/sygus/term_database_sygus.cpp
++++ b/src/theory/quantifiers/sygus/term_database_sygus.cpp
+@@ -102,8 +102,7 @@ Node TermDbSygus::getProxyVariable(TypeNode tn, Node c)
+     Node k;
+     if (anyC == -1)
+     {
+-      SkolemManager* sm = nm->getSkolemManager();
+-      k = sm->mkDummySkolem("sy", tn, "sygus proxy");
++      k = NodeManager::mkDummySkolem("sy", tn, "sygus proxy");
+       SygusPrintProxyAttribute spa;
+       k.setAttribute(spa, c);
+     }
+@@ -517,9 +516,8 @@ void TermDbSygus::registerEnumerator(Node e,
+   // populate a pool of terms, or (some cases) of when it is actively generated.
+   if (isActiveGen || erole == ROLE_ENUM_POOL)
+   {
+-    SkolemManager* sm = nm->getSkolemManager();
+     // make the guard
+-    Node ag = sm->mkDummySkolem("eG", nm->booleanType());
++    Node ag = NodeManager::mkDummySkolem("eG", nm->booleanType());
+     // must ensure it is a literal immediately here
+     ag = d_qstate.getValuation().ensureLiteral(ag);
+     // must ensure that it is asserted as a literal before we begin solving
+diff --git a/src/theory/quantifiers/sygus/transition_inference.cpp b/src/theory/quantifiers/sygus/transition_inference.cpp
+index 7e70d3247..f5fc8d1fb 100644
+--- a/src/theory/quantifiers/sygus/transition_inference.cpp
++++ b/src/theory/quantifiers/sygus/transition_inference.cpp
+@@ -199,7 +199,6 @@ void TransitionInference::process(Node n, Node f)
+ void TransitionInference::process(Node n)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+   d_complete = true;
+   d_trivial = true;
+   std::vector<Node> n_check;
+@@ -279,7 +278,7 @@ void TransitionInference::process(Node n)
+       {
+         for (unsigned j = 0, nchild = next.getNumChildren(); j < nchild; j++)
+         {
+-          Node v = sm->mkDummySkolem(
++          Node v = NodeManager::mkDummySkolem(
+               "ir", next[j].getType(), "template inference rev argument");
+           d_prime_vars.push_back(v);
+         }
+@@ -428,12 +427,10 @@ bool TransitionInference::processDisjunct(
+       d_trivial = false;
+       d_func = op;
+       Trace("cegqi-inv-debug") << "Use " << op << " with args ";
+-      NodeManager* nm = NodeManager::currentNM();
+-      SkolemManager* sm = nm->getSkolemManager();
+       for (const Node& l : lit)
+       {
+-        Node v =
+-            sm->mkDummySkolem("i", l.getType(), "template inference argument");
++        Node v = NodeManager::mkDummySkolem(
++            "i", l.getType(), "template inference argument");
+         d_vars.push_back(v);
+         Trace("cegqi-inv-debug") << v << " ";
+       }
+diff --git a/src/theory/quantifiers/sygus_inst.cpp b/src/theory/quantifiers/sygus_inst.cpp
+index 24af5118d..793a62b31 100644
+--- a/src/theory/quantifiers/sygus_inst.cpp
++++ b/src/theory/quantifiers/sygus_inst.cpp
+@@ -503,8 +503,7 @@ Node SygusInst::getCeLiteral(Node q)
+   }
+ 
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+-  Node sk = sm->mkDummySkolem("CeLiteral", nm->booleanType());
++  Node sk = NodeManager::mkDummySkolem("CeLiteral", nm->booleanType());
+   Node lit = d_qstate.getValuation().ensureLiteral(sk);
+   d_ce_lits[q] = lit;
+   return lit;
+diff --git a/src/theory/sep/theory_sep.cpp b/src/theory/sep/theory_sep.cpp
+index a3086b4d8..bbe42d6e1 100644
+--- a/src/theory/sep/theory_sep.cpp
++++ b/src/theory/sep/theory_sep.cpp
+@@ -340,7 +340,6 @@ void TheorySep::reduceFact(TNode atom, bool polarity, TNode fact)
+   TNode satom = atom.getKind() == Kind::SEP_LABEL ? atom[0] : atom;
+   TNode slbl = atom.getKind() == Kind::SEP_LABEL ? atom[1] : TNode::null();
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   if (slbl.isNull())
+   {
+     Trace("sep-lemma-debug")
+@@ -446,8 +445,8 @@ void TheorySep::reduceFact(TNode atom, bool polarity, TNode fact)
+       else
+       {
+         Assert(!d_type_ref.isNull());
+-        Node kl = sm->mkDummySkolem("loc", d_type_ref);
+-        Node kd = sm->mkDummySkolem("data", d_type_data);
++        Node kl = NodeManager::mkDummySkolem("loc", d_type_ref);
++        Node kd = NodeManager::mkDummySkolem("data", d_type_data);
+         Node econc = nm->mkNode(
+             Kind::SEP_LABEL,
+             nm->mkNode(
+@@ -479,7 +478,7 @@ void TheorySep::reduceFact(TNode atom, bool polarity, TNode fact)
+     Trace("sep-lemma-debug")
+         << "Negated spatial constraint asserted to sep theory: " << fact
+         << std::endl;
+-    Node g = sm->mkDummySkolem("G", nm->booleanType());
++    Node g = NodeManager::mkDummySkolem("G", nm->booleanType());
+     d_neg_guard_strategy[g].reset(new DecisionStrategySingleton(
+         d_env, "sep_neg_guard", g, getValuation()));
+     DecisionStrategySingleton* ds = d_neg_guard_strategy[g].get();
+@@ -520,7 +519,6 @@ void TheorySep::postCheck(Effort level)
+     return;
+   }
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   Trace("sep-process") << "Checking heap at full effort..." << std::endl;
+   d_label_model.clear();
+   d_tmodel.clear();
+@@ -836,7 +834,7 @@ void TheorySep::postCheck(Effort level)
+       {
+         Trace("sep-process") << "Must witness label : " << ll
+                              << ", data type is " << d_type_data << std::endl;
+-        Node dsk = sm->mkDummySkolem(
++        Node dsk = NodeManager::mkDummySkolem(
+             "dsk", d_type_data, "pto-data for implicit location");
+         // if location is in the heap, then something must point to it
+         Node lem = nm->mkNode(
+@@ -1122,8 +1120,6 @@ void TheorySep::initializeBounds() {
+   {
+     return;
+   }
+-  NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   Trace("sep-bound") << "Initialize bounds for " << d_type_ref << "..."
+                      << std::endl;
+   size_t n_emp = 0;
+@@ -1144,7 +1140,7 @@ void TheorySep::initializeBounds() {
+                      << std::endl;
+   for (size_t r = 0; r < n_emp; r++)
+   {
+-    Node e = sm->mkDummySkolem(
++    Node e = NodeManager::mkDummySkolem(
+         "e", d_type_ref, "cardinality bound element for seplog");
+     d_type_references_card.push_back(e);
+     d_type_ref_card_id[e] = r;
+@@ -1158,19 +1154,18 @@ Node TheorySep::getBaseLabel()
+     return d_base_label;
+   }
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   initializeBounds();
+   Trace("sep") << "Make base label for " << d_type_ref << std::endl;
+   std::stringstream ss;
+   ss << "__Lb";
+   TypeNode ltn = nm->mkSetType(d_type_ref);
+-  Node n_lbl = sm->mkDummySkolem(ss.str(), ltn, "base label");
++  Node n_lbl = NodeManager::mkDummySkolem(ss.str(), ltn, "base label");
+   d_base_label = n_lbl;
+   // make reference bound
+   Trace("sep") << "Make reference bound label for " << d_type_ref << std::endl;
+   std::stringstream ss2;
+   ss2 << "__Lu";
+-  d_reference_bound = sm->mkDummySkolem(ss2.str(), ltn, "");
++  d_reference_bound = NodeManager::mkDummySkolem(ss2.str(), ltn, "");
+ 
+   // check whether monotonic (elements can be added to tn without effecting
+   // satisfiability)
+@@ -1280,17 +1275,18 @@ Node TheorySep::mkUnion( TypeNode tn, std::vector< Node >& locs ) {
+ 
+ Node TheorySep::getLabel( Node atom, int child, Node lbl ) {
+   std::map< int, Node >::iterator it = d_label_map[atom][lbl].find( child );
+-  if( it==d_label_map[atom][lbl].end() ){
+-    NodeManager* nm = nodeManager();
+-    SkolemManager* sm = nm->getSkolemManager();
++  if (it == d_label_map[atom][lbl].end())
++  {
+     Assert(!d_type_ref.isNull());
+     std::stringstream ss;
+     ss << "__Lc" << child;
+     TypeNode ltn = nodeManager()->mkSetType(d_type_ref);
+-    Node n_lbl = sm->mkDummySkolem(ss.str(), ltn, "sep label");
++    Node n_lbl = NodeManager::mkDummySkolem(ss.str(), ltn, "sep label");
+     d_label_map[atom][lbl][child] = n_lbl;
+     return n_lbl;
+-  }else{
++  }
++  else
++  {
+     return (*it).second;
+   }
+ }
+diff --git a/src/theory/sets/cardinality_extension.cpp b/src/theory/sets/cardinality_extension.cpp
+index 3a400b939..486494b88 100644
+--- a/src/theory/sets/cardinality_extension.cpp
++++ b/src/theory/sets/cardinality_extension.cpp
+@@ -1063,7 +1063,6 @@ void CardinalityExtension::mkModelValueElementsFor(
+       std::uint32_t vu = v.getConst<Rational>().getNumerator().toUnsignedInt();
+       Assert(els.size() <= vu);
+       NodeManager* nm = nodeManager();
+-      SkolemManager* sm = nm->getSkolemManager();
+       if (elementTypeFinite)
+       {
+         // get all members of this finite type
+@@ -1083,7 +1082,7 @@ void CardinalityExtension::mkModelValueElementsFor(
+           // slack elements for the leaves without worrying about conflicts with
+           // the current members of this finite type.
+ 
+-          Node slack = sm->mkDummySkolem("slack", elementType);
++          Node slack = NodeManager::mkDummySkolem("slack", elementType);
+           Node singleton = nm->mkNode(Kind::SET_SINGLETON, slack);
+           els.push_back(singleton);
+           d_finite_type_slack_elements[elementType].push_back(slack);
+@@ -1092,8 +1091,9 @@ void CardinalityExtension::mkModelValueElementsFor(
+         }
+         else
+         {
+-          els.push_back(nm->mkNode(Kind::SET_SINGLETON,
+-                                   sm->mkDummySkolem("msde", elementType)));
++          els.push_back(
++              nm->mkNode(Kind::SET_SINGLETON,
++                         NodeManager::mkDummySkolem("msde", elementType)));
+         }
+       }
+     }
+diff --git a/src/theory/sets/skolem_cache.cpp b/src/theory/sets/skolem_cache.cpp
+index d5e61f672..c5af14a27 100644
+--- a/src/theory/sets/skolem_cache.cpp
++++ b/src/theory/sets/skolem_cache.cpp
+@@ -49,7 +49,7 @@ Node SkolemCache::mkTypedSkolemCached(
+     }
+     else
+     {
+-      sk = sm->mkDummySkolem(c, tn, "sets skolem");
++      sk = NodeManager::mkDummySkolem(c, tn, "sets skolem");
+     }
+     d_skolemCache[a][b][id] = sk;
+     d_allSkolems.insert(sk);
+@@ -67,8 +67,7 @@ Node SkolemCache::mkTypedSkolemCached(TypeNode tn,
+ 
+ Node SkolemCache::mkTypedSkolem(TypeNode tn, const char* c)
+ {
+-  SkolemManager* sm = d_nm->getSkolemManager();
+-  Node n = sm->mkDummySkolem(c, tn, "sets skolem");
++  Node n = NodeManager::mkDummySkolem(c, tn, "sets skolem");
+   d_allSkolems.insert(n);
+   return n;
+ }
+diff --git a/src/theory/sets/theory_sets_rels.cpp b/src/theory/sets/theory_sets_rels.cpp
+index c66c4f63b..cc1f55d3c 100644
+--- a/src/theory/sets/theory_sets_rels.cpp
++++ b/src/theory/sets/theory_sets_rels.cpp
+@@ -432,7 +432,6 @@ void TheorySetsRels::check(Theory::Effort level)
+       }
+     }
+     NodeManager* nm = nodeManager();
+-    SkolemManager* sm = nm->getSkolemManager();
+     Node reason = exp;
+     Node conclusion = d_trueNode;
+     std::vector< Node > distinct_skolems;
+@@ -443,7 +442,7 @@ void TheorySetsRels::check(Theory::Effort level)
+           Kind::AND, reason, nm->mkNode(Kind::EQUAL, exp[1], join_image_term));
+     }
+     for( unsigned int i = 0; i < min_card; i++ ) {
+-      Node skolem = sm->mkDummySkolem(
++      Node skolem = NodeManager::mkDummySkolem(
+           "jig", join_image_rel.getType()[0].getTupleTypes()[0]);
+       distinct_skolems.push_back( skolem );
+       conclusion = nm->mkNode(
+diff --git a/src/theory/sort_inference.cpp b/src/theory/sort_inference.cpp
+index 82f3372a8..4dd895956 100644
+--- a/src/theory/sort_inference.cpp
++++ b/src/theory/sort_inference.cpp
+@@ -604,9 +604,8 @@ TypeNode SortInference::getTypeForId( int t ){
+   }
+ }
+ 
+-Node SortInference::getNewSymbol( Node old, TypeNode tn ){
+-  NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
++Node SortInference::getNewSymbol(Node old, TypeNode tn)
++{
+   // if no sort was inferred for this node, return original
+   if (tn.isNull() || tn == old.getType())
+   {
+@@ -618,7 +617,7 @@ Node SortInference::getNewSymbol( Node old, TypeNode tn ){
+     if( d_const_map[tn].find( old )==d_const_map[tn].end() ){
+       std::stringstream ss;
+       ss << "ic_" << tn << "_" << old;
+-      d_const_map[tn][old] = sm->mkDummySkolem(
++      d_const_map[tn][old] = NodeManager::mkDummySkolem(
+           ss.str(),
+           tn,
+           "constant created during sort inference");  // use mkConst???
+@@ -633,7 +632,8 @@ Node SortInference::getNewSymbol( Node old, TypeNode tn ){
+   }
+   std::stringstream ss;
+   ss << "i_" << old;
+-  return sm->mkDummySkolem(ss.str(), tn, "created during sort inference");
++  return NodeManager::mkDummySkolem(
++      ss.str(), tn, "created during sort inference");
+ }
+ 
+ Node SortInference::simplifyNode(
+@@ -648,7 +648,6 @@ Node SortInference::simplifyNode(
+     return itv->second;
+   }else{
+     NodeManager* nm = nodeManager();
+-    SkolemManager* sm = nm->getSkolemManager();
+     Trace("sort-inference-debug2") << "Simplify " << n << ", type context=" << tnn << std::endl;
+     std::vector< Node > children;
+     std::map< Node, std::map< TypeNode, Node > > new_visited;
+@@ -758,7 +757,7 @@ Node SortInference::simplifyNode(
+           std::stringstream ss;
+           ss << "io_" << op;
+           TypeNode typ = nm->mkFunctionType(argTypes, retType);
+-          d_symbol_map[op] = sm->mkDummySkolem(
++          d_symbol_map[op] = NodeManager::mkDummySkolem(
+               ss.str(), typ, "op created during sort inference");
+           Trace("setp-model") << "Function " << op << " is replaced with " << d_symbol_map[op] << std::endl;
+           model_replace_f[op] = d_symbol_map[op];
+@@ -813,12 +812,11 @@ Node SortInference::simplifyNode(
+ 
+ Node SortInference::mkInjection( TypeNode tn1, TypeNode tn2 ) {
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   std::vector< TypeNode > tns;
+   tns.push_back( tn1 );
+   TypeNode typ = nm->mkFunctionType(tns, tn2);
+-  Node f =
+-      sm->mkDummySkolem("inj", typ, "injection for monotonicity constraint");
++  Node f = NodeManager::mkDummySkolem(
++      "inj", typ, "injection for monotonicity constraint");
+   Trace("sort-inference") << "-> Make injection " << f << " from " << tn1 << " to " << tn2 << std::endl;
+   Node v1 = NodeManager::mkBoundVar("?x", tn1);
+   Node v2 = NodeManager::mkBoundVar("?y", tn1);
+diff --git a/src/theory/strings/regexp_operation.cpp b/src/theory/strings/regexp_operation.cpp
+index a4f7154ff..a8f50ad17 100644
+--- a/src/theory/strings/regexp_operation.cpp
++++ b/src/theory/strings/regexp_operation.cpp
+@@ -275,7 +275,6 @@ int RegExpOpr::derivativeS(Node r, cvc5::internal::String c, Node& retNode)
+   int ret = 1;
+   retNode = d_emptyRegexp;
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+ 
+   PairNodeStr dv = std::make_pair( r, c );
+   if( d_deriv_cache.find( dv ) != d_deriv_cache.end() ) {
+@@ -362,8 +361,8 @@ int RegExpOpr::derivativeS(Node r, cvc5::internal::String c, Node& retNode)
+             }
+           }
+           if(ret == 0) {
+-            Node sk =
+-                sm->mkDummySkolem("rsp", nm->stringType(), "Split RegExp");
++            Node sk = NodeManager::mkDummySkolem(
++                "rsp", nm->stringType(), "Split RegExp");
+             retNode = nm->mkNode(Kind::STRING_TO_REGEXP, sk);
+             if(!rest.isNull()) {
+               retNode = rewrite(nm->mkNode(Kind::REGEXP_CONCAT, retNode, rest));
+diff --git a/src/theory/strings/skolem_cache.cpp b/src/theory/strings/skolem_cache.cpp
+index 835ea2ad8..b58320a7a 100644
+--- a/src/theory/strings/skolem_cache.cpp
++++ b/src/theory/strings/skolem_cache.cpp
+@@ -132,7 +132,7 @@ Node SkolemCache::mkTypedSkolemCached(
+     {
+       Trace("skolem-cache")
+           << "Don't know how to handle Skolem ID " << id << std::endl;
+-      sk = sm->mkDummySkolem(c, tn, "string skolem");
++      sk = NodeManager::mkDummySkolem(c, tn, "string skolem");
+     }
+     break;
+   }
+@@ -152,8 +152,7 @@ Node SkolemCache::mkTypedSkolemCached(TypeNode tn,
+ Node SkolemCache::mkSkolem(const char* c)
+ {
+   // TODO: eliminate this
+-  SkolemManager* sm = d_nm->getSkolemManager();
+-  Node n = sm->mkDummySkolem(c, d_strType, "string skolem");
++  Node n = NodeManager::mkDummySkolem(c, d_strType, "string skolem");
+   d_allSkolems.insert(n);
+   return n;
+ }
+diff --git a/src/theory/uf/cardinality_extension.cpp b/src/theory/uf/cardinality_extension.cpp
+index 96586e34c..38330dbf1 100644
+--- a/src/theory/uf/cardinality_extension.cpp
++++ b/src/theory/uf/cardinality_extension.cpp
+@@ -1135,7 +1135,6 @@ void SortModel::debugPrint( const char* c ){
+ bool SortModel::checkLastCall()
+ {
+   NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+   TheoryModel* m = d_state.getModel();
+   if( TraceIsOn("uf-ss-warn") ){
+     std::vector< Node > eqcs;
+@@ -1173,7 +1172,7 @@ bool SortModel::checkLastCall()
+       {
+         std::stringstream ss;
+         ss << "r_" << d_type << "_";
+-        Node nn = sm->mkDummySkolem(
++        Node nn = NodeManager::mkDummySkolem(
+             ss.str(), d_type, "enumeration to meet negative card constraint");
+         d_fresh_aloc_reps.push_back( nn );
+       }
+diff --git a/src/theory/uf/ho_extension.cpp b/src/theory/uf/ho_extension.cpp
+index a3b673017..0d648a76d 100644
+--- a/src/theory/uf/ho_extension.cpp
++++ b/src/theory/uf/ho_extension.cpp
+@@ -209,7 +209,6 @@ Node HoExtension::getApplyUfForHoApply(Node node)
+   Node f = TheoryUfRewriter::decomposeHoApply(node, args, true);
+   Node new_f = f;
+   NodeManager* nm = nodeManager();
+-  SkolemManager* sm = nm->getSkolemManager();
+   if (!TheoryUfRewriter::canUseAsApplyUfOperator(f))
+   {
+     NodeNodeMap::const_iterator itus = d_uf_std_skolem.find(f);
+@@ -237,7 +236,7 @@ Node HoExtension::getApplyUfForHoApply(Node node)
+ 
+         newTypes.insert(newTypes.end(), argTypes.begin(), argTypes.end());
+         TypeNode nft = nm->mkFunctionType(newTypes, rangeType);
+-        new_f = sm->mkDummySkolem("app_uf", nft);
++        new_f = NodeManager::mkDummySkolem("app_uf", nft);
+         for (const Node& v : vs)
+         {
+           new_f = nm->mkNode(Kind::HO_APPLY, new_f, v);
+@@ -251,7 +250,7 @@ Node HoExtension::getApplyUfForHoApply(Node node)
+       else
+       {
+         // introduce skolem to make a standard APPLY_UF
+-        new_f = sm->mkDummySkolem("app_uf", f.getType());
++        new_f = NodeManager::mkDummySkolem("app_uf", f.getType());
+         lem = new_f.eqNode(f);
+       }
+       Trace("uf-ho-lemma")
+-- 
+2.47.1
+

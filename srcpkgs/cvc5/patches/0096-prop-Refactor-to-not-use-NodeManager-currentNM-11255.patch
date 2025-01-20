@@ -1,0 +1,86 @@
+From bf05b153dcc30c0dd15dc2ec7fa972818346a97e Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Wed, 2 Oct 2024 10:23:43 -0500
+Subject: [PATCH 096/312] prop: Refactor to not use NodeManager::currentNM()
+ (#11255)
+
+---
+ src/prop/cadical.cpp            | 2 +-
+ src/prop/lemma_inprocess.cpp    | 2 +-
+ src/prop/prop_proof_manager.cpp | 6 +++---
+ src/prop/theory_proxy.cpp       | 2 +-
+ 4 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/src/prop/cadical.cpp b/src/prop/cadical.cpp
+index 2eb33662d..9bda8a6c8 100644
+--- a/src/prop/cadical.cpp
++++ b/src/prop/cadical.cpp
+@@ -1307,7 +1307,7 @@ std::pair<ProofRule, std::vector<Node>> CadicalSolver::getProofSketch()
+ {
+   Assert(d_logProofs);
+   d_solver->flush_proof_trace();
+-  std::vector<Node> args = {NodeManager::currentNM()->mkConst(String(d_pfFile))};
++  std::vector<Node> args = {nodeManager()->mkConst(String(d_pfFile))};
+   // The proof is DRAT_REFUTATION whose premises is all inputs + theory lemmas.
+   // The DRAT file is an argument to the file proof.
+   return std::pair<ProofRule, std::vector<Node>>(ProofRule::DRAT_REFUTATION,
+diff --git a/src/prop/lemma_inprocess.cpp b/src/prop/lemma_inprocess.cpp
+index 7ce3bfe9b..936357874 100644
+--- a/src/prop/lemma_inprocess.cpp
++++ b/src/prop/lemma_inprocess.cpp
+@@ -52,7 +52,7 @@ TrustNode LemmaInprocess::inprocessLemma(TrustNode& trn)
+ Node LemmaInprocess::processInternal(const Node& lem)
+ {
+   std::vector<Node> eqLitLemmas;
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   std::unordered_map<TNode, Node> visited;
+   std::unordered_map<TNode, Node>::iterator it;
+   std::vector<TNode> visit;
+diff --git a/src/prop/prop_proof_manager.cpp b/src/prop/prop_proof_manager.cpp
+index 56b89daca..5e8da5c83 100644
+--- a/src/prop/prop_proof_manager.cpp
++++ b/src/prop/prop_proof_manager.cpp
+@@ -263,7 +263,7 @@ bool PropPfManager::reproveUnsatCore(const std::unordered_set<Node>& cset,
+   std::vector<SatLiteral> csma;
+   std::map<SatLiteral, Node> litToNode;
+   std::map<SatLiteral, Node> litToNodeAbs;
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   TypeNode bt = nm->booleanType();
+   TypeNode ft = nm->mkFunctionType({bt}, bt);
+   SkolemManager* skm = nm->getSkolemManager();
+@@ -399,7 +399,7 @@ std::shared_ptr<ProofNode> PropPfManager::getProof(bool connectCnf)
+     // set up a proof and get the internal proof
+     CDProof cdp(d_env);
+     getProofInternal(&cdp);
+-    Node falsen = NodeManager::currentNM()->mkConst(false);
++    Node falsen = nodeManager()->mkConst(false);
+     conflictProof = cdp.getProofFor(falsen);
+   }
+ 
+@@ -508,7 +508,7 @@ void PropPfManager::getProofInternal(CDProof* cdp)
+   // contained ProofNode proving false. This method adds a step to cdp
+   // based on a set of computed assumptions, possibly relying on the internal
+   // proof.
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   Node falsen = nm->mkConst(false);
+   std::vector<Node> clauses;
+   // deduplicate assumptions
+diff --git a/src/prop/theory_proxy.cpp b/src/prop/theory_proxy.cpp
+index 60f8e277a..e6dd65ee3 100644
+--- a/src/prop/theory_proxy.cpp
++++ b/src/prop/theory_proxy.cpp
+@@ -354,7 +354,7 @@ void TheoryProxy::notifySatClause(const SatClause& clause)
+       clauseNodes.push_back(it->second);
+     }
+   }
+-  Node cln = NodeManager::currentNM()->mkOr(clauseNodes);
++  Node cln = nodeManager()->mkOr(clauseNodes);
+   // get the sharable form of cln
+   Node clns = d_env.getSharableFormula(cln);
+   if (!clns.isNull())
+-- 
+2.47.1
+

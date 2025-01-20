@@ -1,0 +1,137 @@
+From 7fc37ae58f0857ce28a2b27678c82c216b1b9e4b Mon Sep 17 00:00:00 2001
+From: yoni206 <yoni206@users.noreply.github.com>
+Date: Thu, 21 Nov 2024 22:40:00 +0200
+Subject: [PATCH 194/312] Clarifying documentation for interpolation (#11380)
+
+This PR clarifies in the documentation that the interpolant is computed
+only if the implication between `A` and `B` is valid.
+
+---------
+
+Co-authored-by: Yoni Zohar <yonizohar@Yonis-MacBook-Pro.local>
+---
+ include/cvc5/c/cvc5.h                   | 10 ++++++++--
+ include/cvc5/cvc5.h                     | 19 +++++++++++++------
+ src/api/java/io/github/cvc5/Solver.java | 14 +++++++++++---
+ src/api/python/cvc5.pxi                 |  8 ++++++--
+ 4 files changed, 38 insertions(+), 13 deletions(-)
+
+diff --git a/include/cvc5/c/cvc5.h b/include/cvc5/c/cvc5.h
+index a93f35e4d..e65c4bc2c 100644
+--- a/include/cvc5/c/cvc5.h
++++ b/include/cvc5/c/cvc5.h
+@@ -4833,7 +4833,10 @@ CVC5_EXPORT void cvc5_add_plugin(Cvc5* cvc5, Cvc5Plugin* plugin);
+ /**
+  * Get an interpolant.
+  *
+- * This determines a term @f$I@f$ such that @f$A \rightarrow I@f$ and
++ * Given that @f$A \rightarrow B@f$ is valid,
++ * this function determines a term @f$I@f$ 
++ * over the shared variables of @f$A@f$ and @f$B@f$,
++ * such that @f$A \rightarrow I@f$ and
+  * @f$I \rightarrow B@f$ are valid, if such a term exits. @f$A@f$ is the
+  * current set of assertions and @f$B@f$ is the conjecture, given as `conj`.
+  *
+@@ -4862,7 +4865,10 @@ CVC5_EXPORT Cvc5Term cvc5_get_interpolant(Cvc5* cvc5, Cvc5Term conj);
+ /**
+  * Get an interpolant
+  *
+- * This determines a term @f$I@f$, with respect to a given grammar, such that
++ * Given that @f$A \rightarrow B@f$ is valid,
++ * this function determines a term @f$I@f$ 
++ * over the shared variables of @f$A@f$ and @f$B@f$, 
++ * with respect to a given grammar, such that
+  * @f$A \rightarrow I@f$ and @f$I \rightarrow B@f$ are valid, if such a term
+  * exits. @f$A@f$ is the current set of assertions and @f$B@f$ is the
+  * conjecture, given as `conj`.
+diff --git a/include/cvc5/cvc5.h b/include/cvc5/cvc5.h
+index 347d80722..011fdd575 100644
+--- a/include/cvc5/cvc5.h
++++ b/include/cvc5/cvc5.h
+@@ -6405,8 +6405,10 @@ class CVC5_EXPORT Solver
+   /**
+    * Get an interpolant.
+    *
+-   * This determines a term @f$I@f$ such that @f$A \rightarrow I@f$ and
+-   * @f$I \rightarrow B@f$ are valid, if such a term exits. @f$A@f$ is the
++   * Given that @f$A\rightarrow B@f$ is valid, this function
++   * determines a term @f$I@f$ over the shared variables of
++   * @f$A@f$ and @f$B@f$, such that @f$A \rightarrow I@f$ and
++   * @f$I \rightarrow B@f$ are valid. @f$A@f$ is the
+    * current set of assertions and @f$B@f$ is the conjecture, given as `conj`.
+    *
+    * SMT-LIB:
+@@ -6433,10 +6435,15 @@ class CVC5_EXPORT Solver
+   /**
+    * Get an interpolant.
+    *
+-   * This determines a term @f$I@f$, with respect to a given grammar, such
+-   * that @f$A \rightarrow I@f$ and @f$I \rightarrow B@f$ are valid, if such a
+-   * term exits. @f$A@f$ is the current set of assertions and @f$B@f$ is the
+-   * conjecture, given as `conj`.
++   *
++   *
++   * Given that @f$A\rightarrow B@f$ is valid, this function
++   * determines a term @f$I@f$ over the shared variables of
++   * @f$A@f$ and @f$B@f$, such that @f$A \rightarrow I@f$ and
++   * @f$I \rightarrow B@f$ are valid. 
++   * @f$I@f$ is constructed from the given grammar.
++   * @f$A@f$ is the
++   * current set of assertions and @f$B@f$ is the conjecture, given as `conj`.
+    *
+    * SMT-LIB:
+    *
+diff --git a/src/api/java/io/github/cvc5/Solver.java b/src/api/java/io/github/cvc5/Solver.java
+index 9f7b78484..0e197dd6b 100644
+--- a/src/api/java/io/github/cvc5/Solver.java
++++ b/src/api/java/io/github/cvc5/Solver.java
+@@ -3122,8 +3122,12 @@ public class Solver extends AbstractPointer
+    * Get an interpolant.
+    *
+    * <p>
+-   * This determines a term {@code I} such that {@code A->I} and {@code I->B}
+-   * are valid, if such a term exits. {@code A} is the current set of
++   * Given that {@code A->B} is valid,
++   * this function determines a term {@code I} 
++   * over the shared variables of {@code A} and
++   * {@code B},
++   * such that {@code A->I} and {@code I->B}
++   * are valid. {@code A} is the current set of
+    * assertions and {@code B} is the conjecture, given as {@code conj}.
+    * </p>
+    *
+@@ -3154,7 +3158,11 @@ public class Solver extends AbstractPointer
+    * Get an interpolant.
+    *
+    * <p>
+-   * This determines a term {@code I}, with respect to a given grammar, such
++   * Given that {@code A->B} is valid,
++   * this function determines a term {@code I}, 
++   * over the shared variables of {@code A} and
++   * {@code B},
++   * with respect to a given grammar, such
+    * that {@code A->I} and {@code I->B} are valid, if such a term exits.
+    * {@code A} is the current set of assertions and {@code B} is the
+    * conjecture, given as {@code conj}.
+diff --git a/src/api/python/cvc5.pxi b/src/api/python/cvc5.pxi
+index ce806e578..86b54c877 100644
+--- a/src/api/python/cvc5.pxi
++++ b/src/api/python/cvc5.pxi
+@@ -4312,8 +4312,12 @@ cdef class Solver:
+     def getInterpolant(self, Term conj, Grammar grammar=None):
+         """
+             Get an interpolant.
+-
+-            This determines a term :math:`I`, optionally with respect to a
++	    Assuming that :math:`A \\rightarrow B` is valid,
++	    this function
++            determines a term :math:`I`
++	    over the shared variables of 
++            :math:`A` and :math:`B`,
++	    optionally with respect to a
+             a given grammar, such that :math:`A \\rightarrow I` and
+             :math:`I \\rightarrow B` are valid, if such a term exits.
+             :math:`A` is the current set of assertions and :math:`B` is the
+-- 
+2.47.1
+

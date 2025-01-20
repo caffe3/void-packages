@@ -1,0 +1,110 @@
+From 786dee7acb7a3847b92e5789e206e9e343ac7c80 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 27 Sep 2024 15:32:36 -0500
+Subject: [PATCH 083/312] More cases to proof elimination of mixed arithmetic
+ (#11234)
+
+---
+ src/expr/subtype_elim_node_converter.cpp          | 15 ++++++++++++++-
+ test/regress/cli/CMakeLists.txt                   |  2 ++
+ .../cli/regress0/proofs/subtype-elim-1.smt2       |  8 ++++++++
+ .../cli/regress0/proofs/subtype-elim-2.smt2       | 12 ++++++++++++
+ 4 files changed, 36 insertions(+), 1 deletion(-)
+ create mode 100644 test/regress/cli/regress0/proofs/subtype-elim-1.smt2
+ create mode 100644 test/regress/cli/regress0/proofs/subtype-elim-2.smt2
+
+diff --git a/src/expr/subtype_elim_node_converter.cpp b/src/expr/subtype_elim_node_converter.cpp
+index 8b50032c6..e6d865712 100644
+--- a/src/expr/subtype_elim_node_converter.cpp
++++ b/src/expr/subtype_elim_node_converter.cpp
+@@ -35,10 +35,17 @@ Node SubtypeElimNodeConverter::postConvert(Node n)
+ {
+   Kind k = n.getKind();
+   bool convertToRealChildren = false;
+-  if (k == Kind::ADD || k == Kind::MULT || k == Kind::NONLINEAR_MULT)
++  if (k == Kind::ADD || k == Kind::MULT || k == Kind::NONLINEAR_MULT
++      || k == Kind::SUB)
+   {
+     convertToRealChildren = isRealTypeStrict(n.getType());
+   }
++  else if (k == Kind::DIVISION || k == Kind::DIVISION_TOTAL
++           || k == Kind::TO_INTEGER || k == Kind::IS_INTEGER)
++  {
++    // always ensure that the arguments of these operators are Real
++    convertToRealChildren = true;
++  }
+   else if (k == Kind::GEQ || k == Kind::GT || k == Kind::LEQ || k == Kind::LT)
+   {
+     convertToRealChildren =
+@@ -49,10 +56,12 @@ Node SubtypeElimNodeConverter::postConvert(Node n)
+   {
+     NodeManager* nm = NodeManager::currentNM();
+     std::vector<Node> children;
++    bool childChanged = false;
+     for (const Node& nc : n)
+     {
+       if (nc.getType().isInteger())
+       {
++        childChanged = true;
+         if (nc.isConst())
+         {
+           // we convert constant integers to constant reals
+@@ -69,6 +78,10 @@ Node SubtypeElimNodeConverter::postConvert(Node n)
+         children.push_back(nc);
+       }
+     }
++    if (!childChanged)
++    {
++      return n;
++    }
+     return nm->mkNode(k, children);
+   }
+   // convert skolems as well, e.g. the purify skolem for (> 1 0.0) becomes the
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 08ab3d0a6..ceb55e3dd 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1365,6 +1365,8 @@ set(regress_0_tests
+   regress0/proofs/qgu-fuzz-5-bool-open-sat.smt2
+   regress0/proofs/RF-11-aci-norm-ndet.smt2
+   regress0/proofs/scope.smt2
++  regress0/proofs/subtype-elim-1.smt2
++  regress0/proofs/subtype-elim-2.smt2
+   regress0/proofs/str-term-276-indexof-eval.smt2
+   regress0/proofs/t1-difficulty-filter.smt2
+   regress0/proofs/tricky-sat-assumption-incremental-bookeeping.smt2
+diff --git a/test/regress/cli/regress0/proofs/subtype-elim-1.smt2 b/test/regress/cli/regress0/proofs/subtype-elim-1.smt2
+new file mode 100644
+index 000000000..0fbb2927b
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/subtype-elim-1.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-option :simplification none)
++(set-logic UFLRA)
++(declare-fun f (Real) Real)
++(declare-const y Real)
++(declare-const x Real)
++(assert (not (not (and (= (/ 1.0 2.0) (/ 1.0 2.0)) (and (<= x y) (and (<= y x) (distinct (f x) (f y))))))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/subtype-elim-2.smt2 b/test/regress/cli/regress0/proofs/subtype-elim-2.smt2
+new file mode 100644
+index 000000000..fe5154788
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/subtype-elim-2.smt2
+@@ -0,0 +1,12 @@
++; EXPECT: unsat
++(set-option :simplification none)
++(set-logic LRA)
++(declare-const a Real)
++(declare-const b Real)
++(declare-const c Real)
++(assert (< (- (+ a b) c) 3.0))
++(assert (< c (- 10.0)))
++(assert (< 5.0 b))
++(assert (< 0.0 a))
++(assert (not false))
++(check-sat)
+-- 
+2.47.1
+

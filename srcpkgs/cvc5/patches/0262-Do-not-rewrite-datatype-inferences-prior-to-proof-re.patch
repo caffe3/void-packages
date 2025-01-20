@@ -1,0 +1,67 @@
+From 96a35d7cc97ee375e263ab43a2ed9ba03cc32858 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 20 Dec 2024 13:34:40 -0600
+Subject: [PATCH 262/312] Do not rewrite datatype inferences prior to proof
+ reconstruction (#11465)
+
+It is not clear why this was done, it makes proof reconstruction fail in
+rare cases, added a regression for this.
+---
+ src/theory/datatypes/inference_manager.cpp        |  5 -----
+ test/regress/cli/CMakeLists.txt                   |  1 +
+ .../regress0/quantifiers/dd_SA10-027-dt-ipc.smt2  | 15 +++++++++++++++
+ 3 files changed, 16 insertions(+), 5 deletions(-)
+ create mode 100644 test/regress/cli/regress0/quantifiers/dd_SA10-027-dt-ipc.smt2
+
+diff --git a/src/theory/datatypes/inference_manager.cpp b/src/theory/datatypes/inference_manager.cpp
+index 6b3e3e48b..38b1532a7 100644
+--- a/src/theory/datatypes/inference_manager.cpp
++++ b/src/theory/datatypes/inference_manager.cpp
+@@ -150,11 +150,6 @@ Node InferenceManager::prepareDtInference(Node conc,
+ {
+   Trace("dt-lemma-debug") << "prepareDtInference : " << conc << " via " << exp
+                           << " by " << id << std::endl;
+-  if (conc.getKind() == Kind::EQUAL && conc[0].getType().isBoolean())
+-  {
+-    // must turn (= conc false) into (not conc)
+-    conc = rewrite(conc);
+-  }
+   if (isProofEnabled())
+   {
+     Assert(ipc != nullptr);
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index f02fec093..175c419f4 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1461,6 +1461,7 @@ set(regress_0_tests
+   regress0/quantifiers/cond-var-elim-binary.smt2
+   regress0/quantifiers/dd_german169_semi_eval.smt2
+   regress0/quantifiers/dd_spark2014-pat.smt2
++  regress0/quantifiers/dd_SA10-027-dt-ipc.smt2
+   regress0/quantifiers/dd.german169-ieval.smt2
+   regress0/quantifiers/dd.german169-lemma-inp.smt2
+   regress0/quantifiers/dd.ho-matching-enum.smt2
+diff --git a/test/regress/cli/regress0/quantifiers/dd_SA10-027-dt-ipc.smt2 b/test/regress/cli/regress0/quantifiers/dd_SA10-027-dt-ipc.smt2
+new file mode 100644
+index 000000000..19723e2c7
+--- /dev/null
++++ b/test/regress/cli/regress0/quantifiers/dd_SA10-027-dt-ipc.smt2
+@@ -0,0 +1,15 @@
++; EXPECT: unsat
++; DISABLE-TESTER: cpc
++; Disabled cpc due to congruence on overloaded user functions.
++(set-logic ALL)
++(declare-sort i 0)
++(declare-sort s 0)
++(declare-datatypes ((u 0)) (((us (r Bool) (e Int) (c s)))))
++(declare-datatypes ((us_ 0)) (((us (c i) (e u)))))
++(declare-datatypes ((_r 0)) (((s_ (_s us_)))))
++(declare-fun s_ (s) _r)
++(declare-fun us (_r) s)
++(assert (forall ((x _r)) (= x (s_ (us x)))))
++(declare-const n u)
++(assert (exists ((x_ us_)) (not (=> (r n) (= (s_ x_) (s_ (c (us false 0 (us (s_ (us (c (_s (s_ (c n)))) n))))))) (forall ((o u)) (or (forall ((x us_)) (or (forall ((o u)) (or (forall ((x us_)) (or (forall ((o u)) (or (forall ((x us_)) (or (exists ((t u)) (= (r o) (= (r o) (r (e (_s (s_ (c t)))))))) (= (s_ x_) (s_ (c (us false 0 (us (s_ (us (c (_s (s_ (c o)))) (us (r (e (_s (s_ (c (us false 0 (us (s_ x_)))))))) (e (e (_s (s_ (c o))))) (us (s_ x_))))))))))))))))))))))))))
++(check-sat)
+-- 
+2.47.1
+

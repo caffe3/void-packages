@@ -1,0 +1,45 @@
+From 7edc7bb3a18629bc0b441f868b55f1094a34427b Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Thu, 9 Jan 2025 14:23:38 -0600
+Subject: [PATCH 286/312] ci: Update cibuildwheel to v2.22.0 (#11505)
+
+This update introduces Python wheels for Python 3.13, the latest version
+of Python. Additionally, this PR removes cvc5 wheels for CPython 3.7 and
+PyPy 3.7 for the Linux ARM64 architecture. Since GitHub runners do not
+have native support for Linux ARM64 on the free plan, we currently build
+the wheels for Linux ARM64 through emulation, which leads to timeouts on
+CI. Removing these two Python versions, which have reached end-of-life,
+should help keep the build runtime within limits.
+---
+ .github/workflows/package_pypi.yml | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/.github/workflows/package_pypi.yml b/.github/workflows/package_pypi.yml
+index d921e9f30..6da5ac691 100644
+--- a/.github/workflows/package_pypi.yml
++++ b/.github/workflows/package_pypi.yml
+@@ -30,6 +30,7 @@ jobs:
+             os: ubuntu-latest
+             arch: aarch64
+             shell: bash
++            cibw_skip: "cp37-* pp37-*"
+           - name: macos-x86_64
+             os: macos-13
+             macos-target: 10.13
+@@ -101,11 +102,11 @@ jobs:
+       run: echo "bin=$(cygpath -m $(dirname $(which gcc)))" >> $GITHUB_OUTPUT
+ 
+     - name: Build wheels
+-      uses: pypa/cibuildwheel@v2.17.0
++      uses: pypa/cibuildwheel@v2.22.0
+       with:
+         package-dir: ./build/src/api/python/
+       env:
+-        CIBW_SKIP: "cp36-* pp*-win* *-win32 *-manylinux_i686 *-musllinux_*"
++        CIBW_SKIP: "cp36-* pp*-win* *-win32 *-manylinux_i686 *-musllinux_* ${{ matrix.cibw_skip }}"
+         CIBW_ARCHS_LINUX: "${{ matrix.arch }}"
+         CIBW_BEFORE_ALL_LINUX: bash ./contrib/cibw/before_all_linux.sh ${{ matrix.gpl }}
+         CIBW_BEFORE_ALL_MACOS: bash ./contrib/cibw/before_all_macos.sh ${{ matrix.gpl }}
+-- 
+2.47.1
+

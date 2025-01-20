@@ -1,0 +1,166 @@
+From 6e346afbbc0a051a60483304735121e75af6366f Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Wed, 15 Jan 2025 13:27:18 -0600
+Subject: [PATCH 308/312] proof_node_to_sexpr: Refactor to not use
+ NodeManager::currentNM() (#11528)
+
+---
+ src/proof/proof_node.cpp          |  2 +-
+ src/proof/proof_node_to_sexpr.cpp | 32 +++++++++++--------------------
+ src/proof/proof_node_to_sexpr.h   |  4 +++-
+ 3 files changed, 15 insertions(+), 23 deletions(-)
+
+diff --git a/src/proof/proof_node.cpp b/src/proof/proof_node.cpp
+index db8cfb872..9917534bd 100644
+--- a/src/proof/proof_node.cpp
++++ b/src/proof/proof_node.cpp
+@@ -59,7 +59,7 @@ void ProofNode::setValue(
+ void ProofNode::printDebug(std::ostream& os, bool printConclusion) const
+ {
+   // convert to sexpr and print
+-  ProofNodeToSExpr pnts;
++  ProofNodeToSExpr pnts(NodeManager::currentNM());
+   Node ps = pnts.convertToSExpr(this, printConclusion);
+   os << ps;
+ }
+diff --git a/src/proof/proof_node_to_sexpr.cpp b/src/proof/proof_node_to_sexpr.cpp
+index 38ab84f70..f63d6147e 100644
+--- a/src/proof/proof_node_to_sexpr.cpp
++++ b/src/proof/proof_node_to_sexpr.cpp
+@@ -27,9 +27,8 @@ using namespace cvc5::internal::kind;
+ 
+ namespace cvc5::internal {
+ 
+-ProofNodeToSExpr::ProofNodeToSExpr()
++ProofNodeToSExpr::ProofNodeToSExpr(NodeManager* nm) : d_nm(nm)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   // use raw symbols so that `:args` is not converted to `|:args|`
+   d_conclusionMarker = NodeManager::mkRawSymbol(":conclusion", nm->sExprType());
+   d_argsMarker = NodeManager::mkRawSymbol(":args", nm->sExprType());
+@@ -37,7 +36,6 @@ ProofNodeToSExpr::ProofNodeToSExpr()
+ 
+ Node ProofNodeToSExpr::convertToSExpr(const ProofNode* pn, bool printConclusion)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   std::map<const ProofNode*, Node>::iterator it;
+   std::vector<const ProofNode*> visit;
+   std::vector<const ProofNode*> traversing;
+@@ -104,10 +102,10 @@ Node ProofNodeToSExpr::convertToSExpr(const ProofNode* pn, bool printConclusion)
+           Node av = getArgument(args[i], f);
+           argsPrint.push_back(av);
+         }
+-        Node argsC = nm->mkNode(Kind::SEXPR, argsPrint);
++        Node argsC = d_nm->mkNode(Kind::SEXPR, argsPrint);
+         children.push_back(argsC);
+       }
+-      d_pnMap[cur] = nm->mkNode(Kind::SEXPR, children);
++      d_pnMap[cur] = d_nm->mkNode(Kind::SEXPR, children);
+     }
+   } while (!visit.empty());
+   Assert(d_pnMap.find(pn) != d_pnMap.end());
+@@ -124,8 +122,7 @@ Node ProofNodeToSExpr::getOrMkProofRuleVariable(ProofRule r)
+   }
+   std::stringstream ss;
+   ss << r;
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), d_nm->sExprType());
+   d_pfrMap[r] = var;
+   return var;
+ }
+@@ -145,8 +142,7 @@ Node ProofNodeToSExpr::getOrMkKindVariable(TNode n)
+   }
+   std::stringstream ss;
+   ss << k;
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), d_nm->sExprType());
+   d_kindMap[k] = var;
+   return var;
+ }
+@@ -167,8 +163,7 @@ Node ProofNodeToSExpr::getOrMkTheoryIdVariable(TNode n)
+   }
+   std::stringstream ss;
+   ss << tid;
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), d_nm->sExprType());
+   d_tidMap[tid] = var;
+   return var;
+ }
+@@ -189,8 +184,7 @@ Node ProofNodeToSExpr::getOrMkMethodIdVariable(TNode n)
+   }
+   std::stringstream ss;
+   ss << mid;
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), d_nm->sExprType());
+   d_midMap[mid] = var;
+   return var;
+ }
+@@ -210,8 +204,7 @@ Node ProofNodeToSExpr::getOrMkTrustIdVariable(TNode n)
+   }
+   std::stringstream ss;
+   ss << tid;
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), d_nm->sExprType());
+   d_tridMap[tid] = var;
+   return var;
+ }
+@@ -231,8 +224,7 @@ Node ProofNodeToSExpr::getOrMkInferenceIdVariable(TNode n)
+   }
+   std::stringstream ss;
+   ss << iid;
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), d_nm->sExprType());
+   d_iidMap[iid] = var;
+   return var;
+ }
+@@ -253,8 +245,7 @@ Node ProofNodeToSExpr::getOrMkDslRewriteVariable(TNode n)
+   }
+   std::stringstream ss;
+   ss << rid;
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), d_nm->sExprType());
+   d_dslrMap[rid] = var;
+   return var;
+ }
+@@ -268,8 +259,7 @@ Node ProofNodeToSExpr::getOrMkNodeVariable(TNode n)
+   }
+   std::stringstream ss;
+   ss << n;
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node var = NodeManager::mkBoundVar(ss.str(), nm->sExprType());
++  Node var = NodeManager::mkBoundVar(ss.str(), d_nm->sExprType());
+   d_nodeMap[n] = var;
+   return var;
+ }
+diff --git a/src/proof/proof_node_to_sexpr.h b/src/proof/proof_node_to_sexpr.h
+index a96f0d812..6d577b7ac 100644
+--- a/src/proof/proof_node_to_sexpr.h
++++ b/src/proof/proof_node_to_sexpr.h
+@@ -37,7 +37,7 @@ class ProofNode;
+ class ProofNodeToSExpr
+ {
+  public:
+-  ProofNodeToSExpr();
++  ProofNodeToSExpr(NodeManager* nm);
+   ~ProofNodeToSExpr() {}
+   /** Convert the given proof node to an s-expression
+    *
+@@ -80,6 +80,8 @@ class ProofNodeToSExpr
+   Node getArgument(Node arg, ArgFormat f);
+ 
+  private:
++  /** the associated node manager */
++  NodeManager* d_nm;
+   /** map proof rules to a variable */
+   std::map<ProofRule, Node> d_pfrMap;
+   /** map kind to a variable displaying the kind they represent */
+-- 
+2.47.1
+

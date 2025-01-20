@@ -1,0 +1,1466 @@
+From ad769793292bbbf322e9b9cb7ad2488d67323bb5 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 27 Sep 2024 10:07:07 -0500
+Subject: [PATCH 082/312] Disable support for experimental theories when
+ safe-options is set (#11162)
+
+This adds options that guard the usage of "experimental" theories or
+extensions thereof when `--safe-options` is enabled.
+
+This includes bags, finite fields, separation logic, higher-order logic,
+and extensions of arithmetic (including transcendentals, iand and pow2).
+
+The options `--sets-exp` (renamed from `--sets-ext` in this PR) and
+`--fp-exp` continue to be disabled by default, thus do not need to
+change.
+
+Similar to other expert options, these theories can still be used with
+`safe-options` if they are enabled prior to setting `safe-options`, e.g.
+`--ho-exp --safe-options ...` allows HOL to be used. The options
+configuration will only override the setting of `*-exp` options if not
+set by user.
+
+This does not impact the behavior of cvc5 when `--safe-options` is not
+set.
+
+FYI @alex-ozdemir @mudathirmahgoub @yoni206 .
+---
+ NEWS.md                                       | 12 ++++++++++++
+ examples/api/c/relations.c                    |  2 +-
+ examples/api/cpp/relations.cpp                |  2 +-
+ examples/api/java/Relations.java              |  2 +-
+ examples/api/python/relations.py              |  2 +-
+ examples/api/smtlib/relations.smt2            |  2 +-
+ src/CMakeLists.txt                            |  1 +
+ src/options/arith_options.toml                |  8 ++++++++
+ src/options/bags_options.toml                 | 10 ++++++++++
+ src/options/ff_options.toml                   |  8 ++++++++
+ src/options/sep_options.toml                  |  8 ++++++++
+ src/options/sets_options.toml                 |  6 +++---
+ src/options/uf_options.toml                   |  8 ++++++++
+ src/smt/set_defaults.cpp                      | 19 +++++++++++++++++++
+ src/theory/arith/theory_arith.cpp             |  8 ++++++++
+ src/theory/ff/theory_ff.cpp                   |  7 +++++++
+ src/theory/sep/theory_sep.cpp                 |  7 +++++++
+ src/theory/sets/solver_state.cpp              |  2 +-
+ src/theory/sets/theory_sets.cpp               | 10 +++++-----
+ src/theory/sets/theory_sets_private.cpp       |  2 +-
+ src/theory/uf/theory_uf.cpp                   |  7 +++++++
+ test/api/cpp/issues/proj-issue581.cpp         |  2 +-
+ test/api/cpp/issues/proj-issue600.cpp         |  2 +-
+ test/api/cpp/issues/proj-issue644.cpp         |  2 +-
+ .../cli/regress0/fmf/quant_real_univ.cvc.smt2 |  2 +-
+ .../fp/fp-set-comprehension-basic.smt2        |  2 +-
+ test/regress/cli/regress0/fp/issuepr650.smt2  |  2 +-
+ .../proj-issue477-fp-set-comprehension.smt2   |  2 +-
+ .../proj-issue509-fp-set-comprehension.smt2   |  2 +-
+ .../nl/nta/proj-issue460-pi-value.smt2        |  2 +-
+ .../regress0/nl/proj-issue552-narith-cee.smt2 |  2 +-
+ .../cli/regress0/rels/atom_univ2.cvc.smt2     |  2 +-
+ .../regress/cli/regress0/rels/iden_1.cvc.smt2 |  2 +-
+ .../cli/regress0/rels/joinImg_0.cvc.smt2      |  2 +-
+ .../seq/proj-issue604-reg-closure.smt2        |  2 +-
+ .../cli/regress0/sets/comp-qf-error.smt2      |  2 +-
+ .../cli/regress0/sets/complement.cvc.smt2     |  2 +-
+ .../cli/regress0/sets/complement2.cvc.smt2    |  2 +-
+ .../cli/regress0/sets/complement3.cvc.smt2    |  2 +-
+ .../regress0/sets/int-real-univ-unsat.smt2    |  2 +-
+ .../cli/regress0/sets/int-real-univ.smt2      |  2 +-
+ .../sets/issue5400-2-card-minus-univ.smt2     |  2 +-
+ .../sets/issue5400-card-minus-univ.smt2       |  2 +-
+ .../cli/regress0/sets/issue5402-1-card.smt2   |  2 +-
+ .../sets/issue5402-2-card-finite.smt2         |  2 +-
+ .../cli/regress0/sets/nonvar-univ.smt2        |  2 +-
+ .../cli/regress0/sets/pre-proc-univ.smt2      |  2 +-
+ .../sets/proj-issue493-choose-det.smt2        |  2 +-
+ .../proj-issue501-choose-bool-term-var.smt2   |  2 +-
+ .../cli/regress0/sets/proj-issue583.smt2      |  2 +-
+ .../cli/regress0/sets/proj-issue727.smt2      |  2 +-
+ .../cli/regress0/sets/proj-issue728.smt2      |  2 +-
+ .../sets/proj-issue730-sets-ipc-fail.smt2     |  2 +-
+ .../cli/regress0/sets/proj-issue731.smt2      |  2 +-
+ .../cli/regress0/sets/univset-simp.smt2       |  2 +-
+ .../regress1/proj-issue619-nconst-nl-mv.smt2  |  2 +-
+ .../regress1/quantifiers/proj-issue564.smt2   |  2 +-
+ .../regress1/quantifiers/proj-issue599.smt2   |  2 +-
+ .../cli/regress1/rels/iden_1_1.cvc.smt2       |  2 +-
+ .../cli/regress1/rels/joinImg_0_1.cvc.smt2    |  2 +-
+ .../cli/regress1/rels/joinImg_0_2.cvc.smt2    |  2 +-
+ .../cli/regress1/rels/joinImg_1.cvc.smt2      |  2 +-
+ .../cli/regress1/rels/joinImg_1_1.cvc.smt2    |  2 +-
+ .../cli/regress1/rels/joinImg_2.cvc.smt2      |  2 +-
+ .../cli/regress1/rels/joinImg_2_1.cvc.smt2    |  2 +-
+ .../cli/regress1/sets/comp-intersect.smt2     |  2 +-
+ test/regress/cli/regress1/sets/comp-odd.smt2  |  2 +-
+ .../cli/regress1/sets/comp-pos-member.smt2    |  2 +-
+ .../cli/regress1/sets/comp-positive.smt2      |  2 +-
+ .../sets/finite-type/sets-card-arrcolor.smt2  |  2 +-
+ .../sets/finite-type/sets-card-arrunit.smt2   |  2 +-
+ .../sets/finite-type/sets-card-bool-1.smt2    |  2 +-
+ .../sets/finite-type/sets-card-bool-2.smt2    |  2 +-
+ .../sets/finite-type/sets-card-bool-3.smt2    |  2 +-
+ .../sets/finite-type/sets-card-bool-4.smt2    |  2 +-
+ .../sets/finite-type/sets-card-bool-rec.smt2  |  2 +-
+ .../sets/finite-type/sets-card-bv-1.smt2      |  2 +-
+ .../sets/finite-type/sets-card-bv-2.smt2      |  2 +-
+ .../sets/finite-type/sets-card-bv-3.smt2      |  2 +-
+ .../sets/finite-type/sets-card-bv-4.smt2      |  2 +-
+ .../sets/finite-type/sets-card-color-sat.smt2 |  2 +-
+ .../sets/finite-type/sets-card-color.smt2     |  2 +-
+ .../finite-type/sets-card-datatype-1.smt2     |  2 +-
+ .../finite-type/sets-card-datatype-2.smt2     |  2 +-
+ .../sets-card-neg-mem-union-1.smt2            |  2 +-
+ .../sets-card-neg-mem-union-2.smt2            |  2 +-
+ .../infinite-type/sets-card-array-int-1.smt2  |  2 +-
+ .../infinite-type/sets-card-array-int-2.smt2  |  2 +-
+ .../sets/infinite-type/sets-card-int-1.smt2   |  2 +-
+ .../sets/infinite-type/sets-card-int-2.smt2   |  2 +-
+ test/regress/cli/regress1/sets/issue5342.smt2 |  2 +-
+ .../sets/issue5342_difference_version.smt2    |  2 +-
+ .../sets/proj-issue494-finite-leafof.smt2     |  2 +-
+ .../cli/regress1/sets/proj-issue610.smt2      |  2 +-
+ .../cli/regress1/sets/set-comp-sat.smt2       |  2 +-
+ .../regress1/sets/sets-tuple-poly.cvc.smt2    |  2 +-
+ .../cli/regress1/sets/univ-semantics.smt2     |  2 +-
+ .../cli/regress1/strings/proj-issue659.smt2   |  2 +-
+ .../regress4/sets-card-neg-mem-union-2.smt2   |  2 +-
+ 99 files changed, 196 insertions(+), 93 deletions(-)
+ create mode 100644 src/options/bags_options.toml
+
+diff --git a/NEWS.md b/NEWS.md
+index 4784ecece..440c19892 100644
+--- a/NEWS.md
++++ b/NEWS.md
+@@ -1,5 +1,17 @@
+ This file contains a summary of important user-visible changes.
+ 
++- The option `--safe-options` now disables experimental theories and their
++  extensions in cvc5. This includes the theory of bags, the theory of finite
++  fields, the theory of separation logic, higher-order extensions to the theory
++  of equality, as well as extensions of the theory of arithmetic for
++  transcendental functions, integer-and, and power functions. These theories
++  are still enabled by default and further more can be used in combination
++  with safe options by the options e.g. `--arith-exp` **prior** to setting
++  `--safe-options`.
++
++- Renamed the flag `--sets-ext` to `--sets-exp`, which enables non-standard
++  extensions of the sets theory.
++
+ cvc5 1.2.0
+ ==========
+ 
+diff --git a/examples/api/c/relations.c b/examples/api/c/relations.c
+index d17b35988..a6c0b3047 100644
+--- a/examples/api/c/relations.c
++++ b/examples/api/c/relations.c
+@@ -30,7 +30,7 @@ int main()
+   // quantified formulas
+   cvc5_set_option(slv, "finite-model-find", "true");
+   // we need sets extension to support set.universe operator
+-  cvc5_set_option(slv, "sets-ext", "true");
++  cvc5_set_option(slv, "sets-exp", "true");
+ 
+   // (declare-sort Person 0)
+   Cvc5Sort person_sort = cvc5_mk_uninterpreted_sort(tm, "Person");
+diff --git a/examples/api/cpp/relations.cpp b/examples/api/cpp/relations.cpp
+index c9749c05d..eb19e7759 100644
+--- a/examples/api/cpp/relations.cpp
++++ b/examples/api/cpp/relations.cpp
+@@ -33,7 +33,7 @@ int main()
+   // quantified formulas
+   solver.setOption("finite-model-find", "true");
+   // we need sets extension to support set.universe operator
+-  solver.setOption("sets-ext", "true");
++  solver.setOption("sets-exp", "true");
+ 
+   // (declare-sort Person 0)
+   Sort personSort = tm.mkUninterpretedSort("Person");
+diff --git a/examples/api/java/Relations.java b/examples/api/java/Relations.java
+index bc68da895..598917d63 100644
+--- a/examples/api/java/Relations.java
++++ b/examples/api/java/Relations.java
+@@ -33,7 +33,7 @@ public class Relations
+       // quantified formulas
+       solver.setOption("finite-model-find", "true");
+       // we need sets extension to support set.universe operator
+-      solver.setOption("sets-ext", "true");
++      solver.setOption("sets-exp", "true");
+ 
+       // (declare-sort Person 0)
+       Sort personSort = tm.mkUninterpretedSort("Person");
+diff --git a/examples/api/python/relations.py b/examples/api/python/relations.py
+index 952e08dff..98f91eca4 100644
+--- a/examples/api/python/relations.py
++++ b/examples/api/python/relations.py
+@@ -31,7 +31,7 @@ if __name__ == "__main__":
+     # quantified formulas
+     solver.setOption("finite-model-find", "true")
+     # we need sets extension to support set.universe operator
+-    solver.setOption("sets-ext", "true")
++    solver.setOption("sets-exp", "true")
+ 
+     integer = tm.getIntegerSort()
+     set_ = tm.mkSetSort(integer)
+diff --git a/examples/api/smtlib/relations.smt2 b/examples/api/smtlib/relations.smt2
+index 145260bce..18b2f092f 100644
+--- a/examples/api/smtlib/relations.smt2
++++ b/examples/api/smtlib/relations.smt2
+@@ -5,7 +5,7 @@
+ ; quantified formulas
+ (set-option :finite-model-find true)
+ ; we need sets extension to support set.universe operator
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ 
+ (declare-sort Person 0)
+ 
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 48ab352da..8251ed7d3 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -1315,6 +1315,7 @@ endif()
+ set(options_toml_files
+   options/arith_options.toml
+   options/arrays_options.toml
++  options/bags_options.toml
+   options/base_options.toml
+   options/booleans_options.toml
+   options/builtin_options.toml
+diff --git a/src/options/arith_options.toml b/src/options/arith_options.toml
+index 516a17b39..311a72e68 100644
+--- a/src/options/arith_options.toml
++++ b/src/options/arith_options.toml
+@@ -410,6 +410,14 @@ name   = "Arithmetic Theory"
+   default    = "false"
+   help       = "interleave tangent plane strategy for non-linear incremental linearization solver"
+ 
++[[option]]
++  name       = "arithExp"
++  category   = "expert"
++  long       = "arith-exp"
++  type       = "bool"
++  default    = "true"
++  help       = "enables non-standard extensions of the arithmetic solver"
++
+ [[option]]
+   name       = "nlExtTfTangentPlanes"
+   category   = "regular"
+diff --git a/src/options/bags_options.toml b/src/options/bags_options.toml
+new file mode 100644
+index 000000000..33e2e7999
+--- /dev/null
++++ b/src/options/bags_options.toml
+@@ -0,0 +1,10 @@
++id     = "BAGS"
++name   = "Bags Theory"
++
++[[option]]
++  name       = "bagsExp"
++  category   = "expert"
++  long       = "bags-exp"
++  type       = "bool"
++  default    = "false"
++  help       = "enables the bags solver"
+diff --git a/src/options/ff_options.toml b/src/options/ff_options.toml
+index f420def9e..0c92f66c3 100644
+--- a/src/options/ff_options.toml
++++ b/src/options/ff_options.toml
+@@ -32,6 +32,7 @@ name   = "Finite Field Theory"
+   type       = "bool"
+   default    = "false"
+   help       = "parse bitsums"
++
+ [[option]]
+   name       = "ffSolver"
+   category   = "expert"
+@@ -47,3 +48,10 @@ name   = "Finite Field Theory"
+   name = "split"
+   help = "use multiple groebner bases for partitions of the system"
+ 
++[[option]]
++  name       = "ffExp"
++  category   = "expert"
++  long       = "ff-exp"
++  type       = "bool"
++  default    = "true"
++  help       = "enables the finite field solver"
+diff --git a/src/options/sep_options.toml b/src/options/sep_options.toml
+index 22dd62b29..4c1b2571a 100644
+--- a/src/options/sep_options.toml
++++ b/src/options/sep_options.toml
+@@ -16,3 +16,11 @@ name   = "Separation Logic Theory"
+   type       = "bool"
+   default    = "false"
+   help       = "eliminate emp constraint at preprocess time"
++
++[[option]]
++  name       = "sepExp"
++  category   = "expert"
++  long       = "sep-exp"
++  type       = "bool"
++  default    = "true"
++  help       = "enables the separation logic solver"
+diff --git a/src/options/sets_options.toml b/src/options/sets_options.toml
+index f602fc03a..e125a458e 100644
+--- a/src/options/sets_options.toml
++++ b/src/options/sets_options.toml
+@@ -10,9 +10,9 @@ name   = "Sets Theory"
+   help       = "introduce proxy variables eagerly to shorten lemmas"
+ 
+ [[option]]
+-  name       = "setsExt"
+-  category   = "regular"
+-  long       = "sets-ext"
++  name       = "setsExp"
++  category   = "expert"
++  long       = "sets-exp"
+   type       = "bool"
+   default    = "false"
+   help       = "enable extended symbols such as complement and universe in theory of sets"
+diff --git a/src/options/uf_options.toml b/src/options/uf_options.toml
+index 2ae913875..4b521378a 100644
+--- a/src/options/uf_options.toml
++++ b/src/options/uf_options.toml
+@@ -90,3 +90,11 @@ name   = "Uninterpreted Functions Theory"
+   type       = "bool"
+   default    = "false"
+   help       = "model-based inferences for bit-vector to arithmetic conversions"
++
++[[option]]
++  name       = "hoExp"
++  category   = "expert"
++  long       = "ho-exp"
++  type       = "bool"
++  default    = "true"
++  help       = "enables the higher-order logic solver"
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index dfb1ef4d9..c32c993c0 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -20,11 +20,14 @@
+ #include "base/output.h"
+ #include "options/arith_options.h"
+ #include "options/arrays_options.h"
++#include "options/bags_options.h"
+ #include "options/base_options.h"
+ #include "options/booleans_options.h"
+ #include "options/bv_options.h"
+ #include "options/datatypes_options.h"
+ #include "options/decision_options.h"
++#include "options/ff_options.h"
++#include "options/fp_options.h"
+ #include "options/language.h"
+ #include "options/main_options.h"
+ #include "options/option_exception.h"
+@@ -35,6 +38,7 @@
+ #include "options/prop_options.h"
+ #include "options/quantifiers_options.h"
+ #include "options/sep_options.h"
++#include "options/sets_options.h"
+ #include "options/smt_options.h"
+ #include "options/strings_options.h"
+ #include "options/theory_options.h"
+@@ -116,6 +120,21 @@ void SetDefaults::setDefaults(LogicInfo& logic, Options& opts)
+ 
+ void SetDefaults::setDefaultsPre(Options& opts)
+ {
++  // safe options
++  if (options().base.safeOptions)
++  {
++    // all "experimental" theories that are enabled by default should be
++    // disabled here
++    SET_AND_NOTIFY_IF_NOT_USER(uf, hoExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(arith, arithExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(sep, sepExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(bags, bagsExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(ff, ffExp, false, "safe options");
++    // these are disabled by default but are listed here in case they are
++    // enabled by default later
++    SET_AND_NOTIFY_IF_NOT_USER(fp, fpExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(sets, setsExp, false, "safe options");
++  }
+   // implied options
+   if (opts.smt.debugCheckModels)
+   {
+diff --git a/src/theory/arith/theory_arith.cpp b/src/theory/arith/theory_arith.cpp
+index 92141a0ea..c2a19bf71 100644
+--- a/src/theory/arith/theory_arith.cpp
++++ b/src/theory/arith/theory_arith.cpp
+@@ -127,6 +127,14 @@ void TheoryArith::preRegisterTerm(TNode n)
+   // informative error message
+   if (isTransKind || k == Kind::IAND || k == Kind::POW2)
+   {
++    if (!options().arith.arithExp)
++    {
++      std::stringstream ss;
++      ss << "Support for arithmetic extensions (required for " << k
++         << ") not available in this configuration, try "
++            "--arith-exp.";
++      throw LogicException(ss.str());
++    }
+     if (d_nonlinearExtension == nullptr)
+     {
+       std::stringstream ss;
+diff --git a/src/theory/ff/theory_ff.cpp b/src/theory/ff/theory_ff.cpp
+index e55bb3407..1910aecdb 100644
+--- a/src/theory/ff/theory_ff.cpp
++++ b/src/theory/ff/theory_ff.cpp
+@@ -176,6 +176,13 @@ void TheoryFiniteFields::preRegisterTerm(TNode node)
+     Assert(node.getKind() == Kind::EQUAL);
+     fieldTy = node[0].getType();
+   }
++  else if (!options().ff.ffExp)
++  {
++    std::stringstream ss;
++    ss << "Finite fields not available in this configuration, try "
++          "--ff-exp.";
++    throw LogicException(ss.str());
++  }
+   if (d_subTheories.count(fieldTy) == 0)
+   {
+     d_subTheories.try_emplace(fieldTy, d_env, d_stats.get(), ty.getFfSize());
+diff --git a/src/theory/sep/theory_sep.cpp b/src/theory/sep/theory_sep.cpp
+index 3cfae3a16..443b80625 100644
+--- a/src/theory/sep/theory_sep.cpp
++++ b/src/theory/sep/theory_sep.cpp
+@@ -122,6 +122,13 @@ void TheorySep::preRegisterTerm(TNode n)
+   if (k == Kind::SEP_PTO || k == Kind::SEP_EMP || k == Kind::SEP_STAR
+       || k == Kind::SEP_WAND)
+   {
++    if (!options().sep.sepExp)
++    {
++      std::stringstream ss;
++      ss << "Separation logic not available in this configuration, try "
++            "--sep-exp.";
++      throw LogicException(ss.str());
++    }
+     ensureHeapTypesFor(n);
+   }
+ }
+diff --git a/src/theory/sets/solver_state.cpp b/src/theory/sets/solver_state.cpp
+index 32f55bfd5..ba463e2ae 100644
+--- a/src/theory/sets/solver_state.cpp
++++ b/src/theory/sets/solver_state.cpp
+@@ -124,7 +124,7 @@ void SolverState::registerTerm(Node r, TypeNode tnn, Node n)
+     }
+     else if (nk == Kind::SET_UNIVERSE)
+     {
+-      Assert(options().sets.setsExt);
++      Assert(options().sets.setsExp);
+       d_eqc_univset[tnn] = r;
+     }
+     else
+diff --git a/src/theory/sets/theory_sets.cpp b/src/theory/sets/theory_sets.cpp
+index d174da57d..3f98ddc4d 100644
+--- a/src/theory/sets/theory_sets.cpp
++++ b/src/theory/sets/theory_sets.cpp
+@@ -138,11 +138,11 @@ TrustNode TheorySets::ppRewrite(TNode n, std::vector<SkolemLemma>& lems)
+   if (nk == Kind::SET_UNIVERSE || nk == Kind::SET_COMPLEMENT
+       || nk == Kind::RELATION_JOIN_IMAGE || nk == Kind::SET_COMPREHENSION)
+   {
+-    if (!options().sets.setsExt)
++    if (!options().sets.setsExp)
+     {
+       std::stringstream ss;
+       ss << "Extended set operators are not supported in default mode, try "
+-            "--sets-ext.";
++            "--sets-exp.";
+       throw LogicException(ss.str());
+     }
+   }
+@@ -203,11 +203,11 @@ Theory::PPAssertStatus TheorySets::ppAssert(
+   {
+     if (in[0].isVar() && isLegalElimination(in[0], in[1]))
+     {
+-      // We cannot solve for sets if setsExt is enabled, since universe set
++      // We cannot solve for sets if setsExp is enabled, since universe set
+       // may appear when this option is enabled, and solving for such a set
+       // impacts the semantics of universe set, see
+       // regress0/sets/pre-proc-univ.smt2
+-      if (!in[0].getType().isSet() || !options().sets.setsExt)
++      if (!in[0].getType().isSet() || !options().sets.setsExp)
+       {
+         outSubstitutions.addSubstitutionSolved(in[0], in[1], tin);
+         status = Theory::PP_ASSERT_STATUS_SOLVED;
+@@ -215,7 +215,7 @@ Theory::PPAssertStatus TheorySets::ppAssert(
+     }
+     else if (in[1].isVar() && isLegalElimination(in[1], in[0]))
+     {
+-      if (!in[0].getType().isSet() || !options().sets.setsExt)
++      if (!in[0].getType().isSet() || !options().sets.setsExp)
+       {
+         outSubstitutions.addSubstitutionSolved(in[1], in[0], tin);
+         status = Theory::PP_ASSERT_STATUS_SOLVED;
+diff --git a/src/theory/sets/theory_sets_private.cpp b/src/theory/sets/theory_sets_private.cpp
+index d9459546d..1f58388f0 100644
+--- a/src/theory/sets/theory_sets_private.cpp
++++ b/src/theory/sets/theory_sets_private.cpp
+@@ -650,7 +650,7 @@ void TheorySetsPrivate::checkUpwardsClosure()
+   }
+   if (!d_im.hasSent())
+   {
+-    if (options().sets.setsExt)
++    if (options().sets.setsExp)
+     {
+       // universal sets
+       Trace("sets-debug") << "Check universe sets..." << std::endl;
+diff --git a/src/theory/uf/theory_uf.cpp b/src/theory/uf/theory_uf.cpp
+index ec5f52bba..cb2f439e8 100644
+--- a/src/theory/uf/theory_uf.cpp
++++ b/src/theory/uf/theory_uf.cpp
+@@ -104,6 +104,13 @@ void TheoryUF::finishInit() {
+   d_equalityEngine->addFunctionKind(Kind::APPLY_UF, false, isHo);
+   if (isHo)
+   {
++    if (!options().uf.hoExp)
++    {
++      std::stringstream ss;
++      ss << "Higher-order logic not available in this configuration, try "
++            "--ho-exp.";
++      throw LogicException(ss.str());
++    }
+     d_equalityEngine->addFunctionKind(Kind::HO_APPLY);
+     d_ho.reset(new HoExtension(d_env, d_state, d_im, *d_lambdaLift.get()));
+   }
+diff --git a/test/api/cpp/issues/proj-issue581.cpp b/test/api/cpp/issues/proj-issue581.cpp
+index b9fad4800..233f039ac 100644
+--- a/test/api/cpp/issues/proj-issue581.cpp
++++ b/test/api/cpp/issues/proj-issue581.cpp
+@@ -21,7 +21,7 @@ int main(void)
+   TermManager tm;
+   Solver solver(tm);
+   solver.setOption("incremental", "false");
+-  solver.setOption("sets-ext", "true");
++  solver.setOption("sets-exp", "true");
+   solver.setOption("produce-interpolants", "true");
+   DatatypeDecl d0 = tm.mkDatatypeDecl("_dt0");
+   DatatypeConstructorDecl dtcd1 = tm.mkDatatypeConstructorDecl("_cons8");
+diff --git a/test/api/cpp/issues/proj-issue600.cpp b/test/api/cpp/issues/proj-issue600.cpp
+index dff3e7485..892cf3ee0 100644
+--- a/test/api/cpp/issues/proj-issue600.cpp
++++ b/test/api/cpp/issues/proj-issue600.cpp
+@@ -21,7 +21,7 @@ int main(void)
+   TermManager tm;
+   Solver solver(tm);
+   solver.setOption("incremental", "false");
+-  solver.setOption("sets-ext", "true");
++  solver.setOption("sets-exp", "true");
+   solver.setOption("check-abducts", "true");
+   solver.setOption("produce-abducts", "true");
+   Sort s0 = tm.mkUninterpretedSort("_u0");
+diff --git a/test/api/cpp/issues/proj-issue644.cpp b/test/api/cpp/issues/proj-issue644.cpp
+index 3219d839e..d7d0adf5c 100644
+--- a/test/api/cpp/issues/proj-issue644.cpp
++++ b/test/api/cpp/issues/proj-issue644.cpp
+@@ -21,7 +21,7 @@ int main(void)
+   TermManager tm;
+   Solver solver(tm);
+   solver.setOption("incremental", "false");
+-  solver.setOption("sets-ext", "true");
++  solver.setOption("sets-exp", "true");
+   solver.setOption("check-interpolants", "true");
+   solver.setOption("produce-interpolants", "true");
+   Sort s0 = tm.getRoundingModeSort();
+diff --git a/test/regress/cli/regress0/fmf/quant_real_univ.cvc.smt2 b/test/regress/cli/regress0/fmf/quant_real_univ.cvc.smt2
+index fd0b11fa7..0bb436ac2 100644
+--- a/test/regress/cli/regress0/fmf/quant_real_univ.cvc.smt2
++++ b/test/regress/cli/regress0/fmf/quant_real_univ.cvc.smt2
+@@ -2,7 +2,7 @@
+ (set-logic ALL)
+ (set-option :incremental false)
+ (set-option :fmf-bound true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-sort Atom 0)
+ (declare-fun REAL_UNIVERSE () (Relation Real))
+ (declare-fun ATOM_UNIVERSE () (Relation Atom))
+diff --git a/test/regress/cli/regress0/fp/fp-set-comprehension-basic.smt2 b/test/regress/cli/regress0/fp/fp-set-comprehension-basic.smt2
+index 4338e22b2..9a9f7814b 100644
+--- a/test/regress/cli/regress0/fp/fp-set-comprehension-basic.smt2
++++ b/test/regress/cli/regress0/fp/fp-set-comprehension-basic.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unknown
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-const S (Set Float32))
+ (declare-const x Float32)
+ (assert (not (= x (set.choose (set.comprehension ((_x14 Float32)) false _x14)))))
+diff --git a/test/regress/cli/regress0/fp/issuepr650.smt2 b/test/regress/cli/regress0/fp/issuepr650.smt2
+index d46e7cf52..b037968f1 100644
+--- a/test/regress/cli/regress0/fp/issuepr650.smt2
++++ b/test/regress/cli/regress0/fp/issuepr650.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :fp-exp true)
+ (assert (set.subset (set.complement (set.singleton (_ -oo 5 11))) (set.singleton (fp.abs (set.choose (set.complement (set.singleton (_ -oo 5 11))))))))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/fp/proj-issue477-fp-set-comprehension.smt2 b/test/regress/cli/regress0/fp/proj-issue477-fp-set-comprehension.smt2
+index ca3f970ba..2d1a3a796 100644
+--- a/test/regress/cli/regress0/fp/proj-issue477-fp-set-comprehension.smt2
++++ b/test/regress/cli/regress0/fp/proj-issue477-fp-set-comprehension.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unknown
+ (set-logic ALL)
+ (set-option :strings-exp true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (assert (= (seq.nth (seq.unit false) (bag.count (_ NaN 11 53) (bag (_ +zero 11 53) 1))) (seq.nth (seq.extract (seq.unit false) (bag.count (_ NaN 11 53) (bag (_ +zero 11 53) 1)) (bag.count (set.choose (set.comprehension ((_x14 Float64)) false _x14)) (bag (_ +zero 11 53) 1))) 0)))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/fp/proj-issue509-fp-set-comprehension.smt2 b/test/regress/cli/regress0/fp/proj-issue509-fp-set-comprehension.smt2
+index 8907fd846..3f86c7d5f 100644
+--- a/test/regress/cli/regress0/fp/proj-issue509-fp-set-comprehension.smt2
++++ b/test/regress/cli/regress0/fp/proj-issue509-fp-set-comprehension.smt2
+@@ -1,6 +1,6 @@
+ ; DISABLE-TESTER: lfsc
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-datatype d ((c (s RoundingMode))))
+ (assert (set.member (set.choose (set.comprehension ((_x18 d)) false (s _x18))) (set.comprehension ((_x18 d)) false (s _x18))))
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress0/nl/nta/proj-issue460-pi-value.smt2 b/test/regress/cli/regress0/nl/nta/proj-issue460-pi-value.smt2
+index 6b7c10165..c1dd98e64 100644
+--- a/test/regress/cli/regress0/nl/nta/proj-issue460-pi-value.smt2
++++ b/test/regress/cli/regress0/nl/nta/proj-issue460-pi-value.smt2
+@@ -3,5 +3,5 @@
+ (set-logic ALL)
+ (set-info :status sat)
+ (set-option :global-declarations true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (check-sat-assuming ( (let ((_let0 real.pi))(set.member (- _let0) (set.complement (set.singleton _let0))))))
+diff --git a/test/regress/cli/regress0/nl/proj-issue552-narith-cee.smt2 b/test/regress/cli/regress0/nl/proj-issue552-narith-cee.smt2
+index 9a40e1e50..45e21e031 100644
+--- a/test/regress/cli/regress0/nl/proj-issue552-narith-cee.smt2
++++ b/test/regress/cli/regress0/nl/proj-issue552-narith-cee.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: sat
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :ee-mode central)
+ (declare-const x (Set (_ BitVec 44)))
+ (assert (> (set.card x) (div (set.card x) (set.card x))))
+diff --git a/test/regress/cli/regress0/rels/atom_univ2.cvc.smt2 b/test/regress/cli/regress0/rels/atom_univ2.cvc.smt2
+index c8aa67e73..93ab6ff0a 100644
+--- a/test/regress/cli/regress0/rels/atom_univ2.cvc.smt2
++++ b/test/regress/cli/regress0/rels/atom_univ2.cvc.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unsat
+ (set-option :incremental false)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-logic ALL)
+ (declare-sort Atom 0)
+ (declare-fun a () (Relation Atom))
+diff --git a/test/regress/cli/regress0/rels/iden_1.cvc.smt2 b/test/regress/cli/regress0/rels/iden_1.cvc.smt2
+index d6af1bb76..ba04005ce 100644
+--- a/test/regress/cli/regress0/rels/iden_1.cvc.smt2
++++ b/test/regress/cli/regress0/rels/iden_1.cvc.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unsat
+ (set-option :incremental false)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-logic ALL)
+ (declare-sort Atom 0)
+ 
+diff --git a/test/regress/cli/regress0/rels/joinImg_0.cvc.smt2 b/test/regress/cli/regress0/rels/joinImg_0.cvc.smt2
+index eb1c54e13..c77a1d6ef 100644
+--- a/test/regress/cli/regress0/rels/joinImg_0.cvc.smt2
++++ b/test/regress/cli/regress0/rels/joinImg_0.cvc.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: unsat
+ (set-option :incremental false)
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ 
+ (declare-fun x () (Relation Int Int))
+ (declare-fun y () (Relation Int Int))
+diff --git a/test/regress/cli/regress0/seq/proj-issue604-reg-closure.smt2 b/test/regress/cli/regress0/seq/proj-issue604-reg-closure.smt2
+index cf37a06eb..bcae7fbe4 100644
+--- a/test/regress/cli/regress0/seq/proj-issue604-reg-closure.smt2
++++ b/test/regress/cli/regress0/seq/proj-issue604-reg-closure.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: unsat
+ ; DISABLE-TESTER: lfsc
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :strings-eager-reg false)
+ (assert (forall ((x Int)) (or (> 0 x) (> x 4))))
+ (assert (set.subset (set.comprehension ((_x1 Real)) false (seq.unit false)) (set.insert (set.choose (set.comprehension ((_x1 Real)) false (seq.unit (= _x1 0.0)))) (set.comprehension ((_x1 Real)) false (seq.unit false)))))
+diff --git a/test/regress/cli/regress0/sets/comp-qf-error.smt2 b/test/regress/cli/regress0/sets/comp-qf-error.smt2
+index fc0b7a924..f522925d1 100644
+--- a/test/regress/cli/regress0/sets/comp-qf-error.smt2
++++ b/test/regress/cli/regress0/sets/comp-qf-error.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; SCRUBBER: grep -o "which doesn't include THEORY_QUANTIFIERS"
+ ; EXPECT: which doesn't include THEORY_QUANTIFIERS
+ ; EXIT: 1
+diff --git a/test/regress/cli/regress0/sets/complement.cvc.smt2 b/test/regress/cli/regress0/sets/complement.cvc.smt2
+index fc8ad328f..8aa16dc22 100644
+--- a/test/regress/cli/regress0/sets/complement.cvc.smt2
++++ b/test/regress/cli/regress0/sets/complement.cvc.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: sat
+ (set-option :incremental false)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-logic ALL)
+ (declare-sort Atom 0)
+ (declare-fun a () (Relation Atom))
+diff --git a/test/regress/cli/regress0/sets/complement2.cvc.smt2 b/test/regress/cli/regress0/sets/complement2.cvc.smt2
+index ecf8080db..8ef334377 100644
+--- a/test/regress/cli/regress0/sets/complement2.cvc.smt2
++++ b/test/regress/cli/regress0/sets/complement2.cvc.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unsat
+ (set-option :incremental false)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-logic ALL)
+ (declare-sort Atom 0)
+ (declare-fun a () (Set Atom))
+diff --git a/test/regress/cli/regress0/sets/complement3.cvc.smt2 b/test/regress/cli/regress0/sets/complement3.cvc.smt2
+index c360c5ad4..f3d8aa153 100644
+--- a/test/regress/cli/regress0/sets/complement3.cvc.smt2
++++ b/test/regress/cli/regress0/sets/complement3.cvc.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: sat
+ (set-option :incremental false)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-logic ALL)
+ (declare-sort Atom 0)
+ (declare-fun C32 () (Relation Atom))
+diff --git a/test/regress/cli/regress0/sets/int-real-univ-unsat.smt2 b/test/regress/cli/regress0/sets/int-real-univ-unsat.smt2
+index 3267dcccf..18a5fcaca 100644
+--- a/test/regress/cli/regress0/sets/int-real-univ-unsat.smt2
++++ b/test/regress/cli/regress0/sets/int-real-univ-unsat.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/sets/int-real-univ.smt2 b/test/regress/cli/regress0/sets/int-real-univ.smt2
+index 78bf88be9..3cbd9203f 100644
+--- a/test/regress/cli/regress0/sets/int-real-univ.smt2
++++ b/test/regress/cli/regress0/sets/int-real-univ.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/sets/issue5400-2-card-minus-univ.smt2 b/test/regress/cli/regress0/sets/issue5400-2-card-minus-univ.smt2
+index a9ad6edfd..ca359d4d3 100644
+--- a/test/regress/cli/regress0/sets/issue5400-2-card-minus-univ.smt2
++++ b/test/regress/cli/regress0/sets/issue5400-2-card-minus-univ.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/sets/issue5400-card-minus-univ.smt2 b/test/regress/cli/regress0/sets/issue5400-card-minus-univ.smt2
+index 4925abfb3..866254285 100644
+--- a/test/regress/cli/regress0/sets/issue5400-card-minus-univ.smt2
++++ b/test/regress/cli/regress0/sets/issue5400-card-minus-univ.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/sets/issue5402-1-card.smt2 b/test/regress/cli/regress0/sets/issue5402-1-card.smt2
+index 2752bce06..4bf35bf82 100644
+--- a/test/regress/cli/regress0/sets/issue5402-1-card.smt2
++++ b/test/regress/cli/regress0/sets/issue5402-1-card.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun s () (Set Int))
+diff --git a/test/regress/cli/regress0/sets/issue5402-2-card-finite.smt2 b/test/regress/cli/regress0/sets/issue5402-2-card-finite.smt2
+index 8b8586700..abe768061 100644
+--- a/test/regress/cli/regress0/sets/issue5402-2-card-finite.smt2
++++ b/test/regress/cli/regress0/sets/issue5402-2-card-finite.smt2
+@@ -2,7 +2,7 @@
+ ; EXPECT: sat
+ ; EXPECT: sat
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-datatype Color ((Blue) (Purple)))
+ (declare-fun A () (Set Color))
+ (assert (> (set.card A) 1))
+diff --git a/test/regress/cli/regress0/sets/nonvar-univ.smt2 b/test/regress/cli/regress0/sets/nonvar-univ.smt2
+index 695e87ec3..e8382b55a 100644
+--- a/test/regress/cli/regress0/sets/nonvar-univ.smt2
++++ b/test/regress/cli/regress0/sets/nonvar-univ.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/sets/pre-proc-univ.smt2 b/test/regress/cli/regress0/sets/pre-proc-univ.smt2
+index f01ad747b..0a730b5bd 100644
+--- a/test/regress/cli/regress0/sets/pre-proc-univ.smt2
++++ b/test/regress/cli/regress0/sets/pre-proc-univ.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress0/sets/proj-issue493-choose-det.smt2 b/test/regress/cli/regress0/sets/proj-issue493-choose-det.smt2
+index 16f8e1d34..4d89ec196 100644
+--- a/test/regress/cli/regress0/sets/proj-issue493-choose-det.smt2
++++ b/test/regress/cli/regress0/sets/proj-issue493-choose-det.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-const x Bool)
+ (declare-const x3 Bool)
+ (declare-const x4 Bool)
+diff --git a/test/regress/cli/regress0/sets/proj-issue501-choose-bool-term-var.smt2 b/test/regress/cli/regress0/sets/proj-issue501-choose-bool-term-var.smt2
+index 6906487a7..583c2723c 100644
+--- a/test/regress/cli/regress0/sets/proj-issue501-choose-bool-term-var.smt2
++++ b/test/regress/cli/regress0/sets/proj-issue501-choose-bool-term-var.smt2
+@@ -1,7 +1,7 @@
+ ; COMMAND-LINE: -q
+ ; EXPECT: unknown
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :fmf-bound true)
+ (declare-const x (Bag (Set Bool)))
+ (declare-const x1 (Set Bool))
+diff --git a/test/regress/cli/regress0/sets/proj-issue583.smt2 b/test/regress/cli/regress0/sets/proj-issue583.smt2
+index 9f1baf053..d0dfd2c14 100644
+--- a/test/regress/cli/regress0/sets/proj-issue583.smt2
++++ b/test/regress/cli/regress0/sets/proj-issue583.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: sat
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :produce-unsat-cores true)
+ (assert (set.choose (set.insert (set.is_singleton (set.complement (set.singleton true))) (set.complement (set.complement (set.singleton true))))))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/sets/proj-issue727.smt2 b/test/regress/cli/regress0/sets/proj-issue727.smt2
+index 7444fe2ab..f347f2e2e 100644
+--- a/test/regress/cli/regress0/sets/proj-issue727.smt2
++++ b/test/regress/cli/regress0/sets/proj-issue727.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unsat
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :debug-check-models true)
+ (declare-const x (Set Bool))
+ (declare-const _x6 (Set Bool))
+diff --git a/test/regress/cli/regress0/sets/proj-issue728.smt2 b/test/regress/cli/regress0/sets/proj-issue728.smt2
+index 347f27ceb..37d3ab80d 100644
+--- a/test/regress/cli/regress0/sets/proj-issue728.smt2
++++ b/test/regress/cli/regress0/sets/proj-issue728.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: sat
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :debug-check-models true)
+ (assert (set.is_singleton (set.complement (set.singleton roundTowardZero))))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/sets/proj-issue730-sets-ipc-fail.smt2 b/test/regress/cli/regress0/sets/proj-issue730-sets-ipc-fail.smt2
+index c29e47ecf..f1d608925 100644
+--- a/test/regress/cli/regress0/sets/proj-issue730-sets-ipc-fail.smt2
++++ b/test/regress/cli/regress0/sets/proj-issue730-sets-ipc-fail.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unknown
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :dump-proofs true)
+ (declare-const x Bool)
+ (assert (and (>= (set.choose (ite x (set.singleton real.pi) (as set.universe (Set Real)))) (arccos real.pi)) (ite (set.member (arccos real.pi) (set.singleton real.pi)) (set.member (arccos real.pi) (set.complement (set.singleton real.pi))) true)))
+diff --git a/test/regress/cli/regress0/sets/proj-issue731.smt2 b/test/regress/cli/regress0/sets/proj-issue731.smt2
+index cba71c305..b165fd21b 100644
+--- a/test/regress/cli/regress0/sets/proj-issue731.smt2
++++ b/test/regress/cli/regress0/sets/proj-issue731.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unsat
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :debug-check-models true)
+ (declare-sort _u0 0)
+ (declare-const _x3 _u0)
+diff --git a/test/regress/cli/regress0/sets/univset-simp.smt2 b/test/regress/cli/regress0/sets/univset-simp.smt2
+index 04f413399..8486a99ff 100644
+--- a/test/regress/cli/regress0/sets/univset-simp.smt2
++++ b/test/regress/cli/regress0/sets/univset-simp.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/proj-issue619-nconst-nl-mv.smt2 b/test/regress/cli/regress1/proj-issue619-nconst-nl-mv.smt2
+index 56eabf97d..7ee4e23c7 100644
+--- a/test/regress/cli/regress1/proj-issue619-nconst-nl-mv.smt2
++++ b/test/regress/cli/regress1/proj-issue619-nconst-nl-mv.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: unknown
+ ; DISABLE-TESTER: lfsc
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-sort u 0)
+ (declare-const x u)
+ (check-sat-assuming ((set.member (set.choose (set.comprehension ((_x3 Real)) (is_int (sec 25980915886.0)) (seq.unit x))) (set.comprehension ((_x3 Real)) true (seq.unit x)))))
+diff --git a/test/regress/cli/regress1/quantifiers/proj-issue564.smt2 b/test/regress/cli/regress1/quantifiers/proj-issue564.smt2
+index 05623bd6a..b033a0051 100644
+--- a/test/regress/cli/regress1/quantifiers/proj-issue564.smt2
++++ b/test/regress/cli/regress1/quantifiers/proj-issue564.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unsat
+ ; DISABLE-TESTER: lfsc
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :ieval use-learn)
+ (check-sat-assuming ((set.is_singleton (set.comprehension ((_x0 Real)) false 0.0))))
+diff --git a/test/regress/cli/regress1/quantifiers/proj-issue599.smt2 b/test/regress/cli/regress1/quantifiers/proj-issue599.smt2
+index 9fc203500..2fb3853d4 100644
+--- a/test/regress/cli/regress1/quantifiers/proj-issue599.smt2
++++ b/test/regress/cli/regress1/quantifiers/proj-issue599.smt2
+@@ -2,7 +2,7 @@
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-const x1 Bool)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :ieval use)
+ (declare-const x (Set Bool))
+ (declare-fun _x ((Set Bool) Bool (Set Bool) (Set Bool) Bool) Bool)
+diff --git a/test/regress/cli/regress1/rels/iden_1_1.cvc.smt2 b/test/regress/cli/regress1/rels/iden_1_1.cvc.smt2
+index ab9d1766a..0eb4fc49c 100644
+--- a/test/regress/cli/regress1/rels/iden_1_1.cvc.smt2
++++ b/test/regress/cli/regress1/rels/iden_1_1.cvc.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: sat
+ (set-option :incremental false)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-logic ALL)
+ (declare-sort Atom 0)
+ 
+diff --git a/test/regress/cli/regress1/rels/joinImg_0_1.cvc.smt2 b/test/regress/cli/regress1/rels/joinImg_0_1.cvc.smt2
+index 89a4efe41..f50532865 100644
+--- a/test/regress/cli/regress1/rels/joinImg_0_1.cvc.smt2
++++ b/test/regress/cli/regress1/rels/joinImg_0_1.cvc.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: sat
+ (set-option :incremental false)
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ 
+ (declare-fun x () (Relation Int Int))
+ (declare-fun y () (Relation Int Int))
+diff --git a/test/regress/cli/regress1/rels/joinImg_0_2.cvc.smt2 b/test/regress/cli/regress1/rels/joinImg_0_2.cvc.smt2
+index 7f3f12602..18f1dbf80 100644
+--- a/test/regress/cli/regress1/rels/joinImg_0_2.cvc.smt2
++++ b/test/regress/cli/regress1/rels/joinImg_0_2.cvc.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: sat
+ (set-option :incremental false)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-logic ALL)
+ 
+ (declare-fun x () (Relation Int Int))
+diff --git a/test/regress/cli/regress1/rels/joinImg_1.cvc.smt2 b/test/regress/cli/regress1/rels/joinImg_1.cvc.smt2
+index ca698bee9..cc1f8abd1 100644
+--- a/test/regress/cli/regress1/rels/joinImg_1.cvc.smt2
++++ b/test/regress/cli/regress1/rels/joinImg_1.cvc.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: unsat
+ (set-option :incremental false)
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-sort Atom 0)
+ (declare-fun x () (Relation Atom Atom))
+ (declare-fun y () (Relation Atom Atom))
+diff --git a/test/regress/cli/regress1/rels/joinImg_1_1.cvc.smt2 b/test/regress/cli/regress1/rels/joinImg_1_1.cvc.smt2
+index c433c5906..26bdf41d8 100644
+--- a/test/regress/cli/regress1/rels/joinImg_1_1.cvc.smt2
++++ b/test/regress/cli/regress1/rels/joinImg_1_1.cvc.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: sat
+ (set-option :incremental false)
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-sort Atom 0)
+ (declare-fun x () (Relation Atom Atom))
+ (declare-fun y () (Relation Atom Atom))
+diff --git a/test/regress/cli/regress1/rels/joinImg_2.cvc.smt2 b/test/regress/cli/regress1/rels/joinImg_2.cvc.smt2
+index d23509a48..ae6aba45e 100644
+--- a/test/regress/cli/regress1/rels/joinImg_2.cvc.smt2
++++ b/test/regress/cli/regress1/rels/joinImg_2.cvc.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: unsat
+ (set-option :incremental false)
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-sort Atom 0)
+ (declare-fun x () (Relation Atom Atom))
+ (declare-fun y () (Relation Atom Atom))
+diff --git a/test/regress/cli/regress1/rels/joinImg_2_1.cvc.smt2 b/test/regress/cli/regress1/rels/joinImg_2_1.cvc.smt2
+index 7b7627294..5acf5d0d5 100644
+--- a/test/regress/cli/regress1/rels/joinImg_2_1.cvc.smt2
++++ b/test/regress/cli/regress1/rels/joinImg_2_1.cvc.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: sat
+ (set-option :incremental false)
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-sort Atom 0)
+ (declare-fun x () (Relation Atom Atom))
+ (declare-fun y () (Relation Atom Atom))
+diff --git a/test/regress/cli/regress1/sets/comp-intersect.smt2 b/test/regress/cli/regress1/sets/comp-intersect.smt2
+index 4f1de2e35..e056a2683 100644
+--- a/test/regress/cli/regress1/sets/comp-intersect.smt2
++++ b/test/regress/cli/regress1/sets/comp-intersect.smt2
+@@ -1,5 +1,5 @@
+ ; DISABLE-TESTER: lfsc
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/sets/comp-odd.smt2 b/test/regress/cli/regress1/sets/comp-odd.smt2
+index 05450865a..50d83e232 100644
+--- a/test/regress/cli/regress1/sets/comp-odd.smt2
++++ b/test/regress/cli/regress1/sets/comp-odd.smt2
+@@ -1,5 +1,5 @@
+ ; DISABLE-TESTER: lfsc
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/sets/comp-pos-member.smt2 b/test/regress/cli/regress1/sets/comp-pos-member.smt2
+index 34c4d2870..837ff4d98 100644
+--- a/test/regress/cli/regress1/sets/comp-pos-member.smt2
++++ b/test/regress/cli/regress1/sets/comp-pos-member.smt2
+@@ -1,5 +1,5 @@
+ ; DISABLE-TESTER: lfsc
+-; COMMAND-LINE: --sets-ext --full-saturate-quant
++; COMMAND-LINE: --sets-exp --full-saturate-quant
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/sets/comp-positive.smt2 b/test/regress/cli/regress1/sets/comp-positive.smt2
+index be28deda1..378bbca27 100644
+--- a/test/regress/cli/regress1/sets/comp-positive.smt2
++++ b/test/regress/cli/regress1/sets/comp-positive.smt2
+@@ -1,5 +1,5 @@
+ ; DISABLE-TESTER: lfsc
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-arrcolor.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-arrcolor.smt2
+index 25724a31e..c15ea597c 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-arrcolor.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-arrcolor.smt2
+@@ -1,7 +1,7 @@
+ (set-logic QF_ALL)
+ (set-info :status sat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-datatype Color ((Red) (Green) (Blue)))
+ (declare-fun A () (Set (Array Color Color)))
+ (declare-fun B () (Set (Array Color Color)))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-arrunit.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-arrunit.smt2
+index d774e3b8e..2354fc79b 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-arrunit.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-arrunit.smt2
+@@ -1,6 +1,6 @@
+ (set-logic QF_ALL)
+ (set-info :status unsat)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-datatype Unit ((mkUnit)))
+ 
+ (declare-fun S () (Set (Array Int Unit)))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-1.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-1.smt2
+index ec82ddb8b..e83b78d60 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-1.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-1.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set Bool))
+ (declare-fun B () (Set Bool))
+ (declare-fun universe () (Set Bool))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-2.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-2.smt2
+index 161312cab..00fd923cd 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-2.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-2.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status sat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set Bool))
+ (declare-fun universe () (Set Bool))
+ (assert (= (set.card A) 2))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-3.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-3.smt2
+index 89daac5c7..74301f08e 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-3.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-3.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status sat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set Bool))
+ (declare-fun B () (Set Bool))
+ (declare-fun universe () (Set Bool))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-4.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-4.smt2
+index 90bd422b5..a2cce4200 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-4.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-4.smt2
+@@ -1,6 +1,6 @@
+ (set-logic QF_ALL)
+ (set-info :status sat)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :produce-models true)
+ (declare-fun A () (Set Bool))
+ (declare-fun x () Bool)
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-rec.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-rec.smt2
+index 9849ea211..933cdf542 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-bool-rec.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-bool-rec.smt2
+@@ -1,6 +1,6 @@
+ (set-logic QF_ALL)
+ (set-info :status sat)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set Bool))
+ (declare-fun x () Bool)
+ (assert (set.member (set.member x A) A))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-bv-1.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-bv-1.smt2
+index 9ecc6a3aa..d185f460f 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-bv-1.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-bv-1.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status sat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set (_ BitVec 3)))
+ (declare-fun universe () (Set (_ BitVec 3)))
+ (assert (= (set.card A) 3))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-bv-2.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-bv-2.smt2
+index 0003349b3..d69be851a 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-bv-2.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-bv-2.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status sat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set (_ BitVec 3)))
+ (declare-fun B () (Set (_ BitVec 3)))
+ (declare-fun universe () (Set (_ BitVec 3)))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-bv-3.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-bv-3.smt2
+index 5808c4ec7..e51cd4ae3 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-bv-3.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-bv-3.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status sat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set (_ BitVec 3)))
+ (declare-fun B () (Set (_ BitVec 3)))
+ (declare-fun universe () (Set (_ BitVec 3)))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-bv-4.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-bv-4.smt2
+index 81c49e1e3..d86065626 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-bv-4.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-bv-4.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set (_ BitVec 3)))
+ (declare-fun B () (Set (_ BitVec 3)))
+ (declare-fun universe () (Set (_ BitVec 3)))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-color-sat.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-color-sat.smt2
+index c2d2e0724..4f2941e63 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-color-sat.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-color-sat.smt2
+@@ -1,7 +1,7 @@
+ (set-logic QF_BVDTLIAFS)
+ (set-info :status sat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-datatype Color ((Red) (Green) (Blue) (Purple)))
+ (declare-fun A () (Set Color))
+ (declare-fun B () (Set Color))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-color.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-color.smt2
+index 73db8105d..ce5f787eb 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-color.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-color.smt2
+@@ -1,7 +1,7 @@
+ (set-logic QF_BVDTLIAFS)
+ (set-info :status unsat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-datatype Color ((Red) (Green) (Blue)))
+ (declare-fun A () (Set Color))
+ (declare-fun B () (Set Color))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-datatype-1.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-datatype-1.smt2
+index 62c0bc224..0c31c5c30 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-datatype-1.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-datatype-1.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status sat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-datatype Rec ((mkRec (r1 (_ BitVec 2)) (r2 (_ BitVec 2)))))
+ (declare-fun A () (Set Rec))
+ (declare-fun B () (Set Rec))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-datatype-2.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-datatype-2.smt2
+index 70e3a88d8..3b0c12a47 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-datatype-2.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-datatype-2.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-datatype Rec ((mkRec (r1 (_ BitVec 2)) (r2 (_ BitVec 2)))))
+ (declare-fun A () (Set Rec))
+ (declare-fun B () (Set Rec))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-neg-mem-union-1.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-neg-mem-union-1.smt2
+index 0999c6569..3b47da69d 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-neg-mem-union-1.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-neg-mem-union-1.smt2
+@@ -1,7 +1,7 @@
+ (set-logic QF_ALL)
+ (set-info :status unsat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set (_ BitVec 2)))
+ (declare-fun B () (Set (_ BitVec 2)))
+ (declare-fun C () (Set (_ BitVec 2)))
+diff --git a/test/regress/cli/regress1/sets/finite-type/sets-card-neg-mem-union-2.smt2 b/test/regress/cli/regress1/sets/finite-type/sets-card-neg-mem-union-2.smt2
+index 73781a91a..51cdda0c6 100644
+--- a/test/regress/cli/regress1/sets/finite-type/sets-card-neg-mem-union-2.smt2
++++ b/test/regress/cli/regress1/sets/finite-type/sets-card-neg-mem-union-2.smt2
+@@ -1,7 +1,7 @@
+ (set-logic QF_ALL)
+ (set-info :status unsat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set (_ BitVec 3)))
+ (declare-fun B () (Set (_ BitVec 3)))
+ (declare-fun C () (Set (_ BitVec 3)))
+diff --git a/test/regress/cli/regress1/sets/infinite-type/sets-card-array-int-1.smt2 b/test/regress/cli/regress1/sets/infinite-type/sets-card-array-int-1.smt2
+index 57f4344c6..12053a531 100644
+--- a/test/regress/cli/regress1/sets/infinite-type/sets-card-array-int-1.smt2
++++ b/test/regress/cli/regress1/sets/infinite-type/sets-card-array-int-1.smt2
+@@ -1,6 +1,6 @@
+ (set-logic QF_ALL)
+ (set-info :status unsat)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-const universe (Set (Array Int Int)))
+ (declare-const A (Set (Array Int Int)))
+ (declare-const B (Set (Array Int Int)))
+diff --git a/test/regress/cli/regress1/sets/infinite-type/sets-card-array-int-2.smt2 b/test/regress/cli/regress1/sets/infinite-type/sets-card-array-int-2.smt2
+index 76828576e..b3c7a0dd8 100644
+--- a/test/regress/cli/regress1/sets/infinite-type/sets-card-array-int-2.smt2
++++ b/test/regress/cli/regress1/sets/infinite-type/sets-card-array-int-2.smt2
+@@ -1,6 +1,6 @@
+ (set-logic QF_ALL)
+ (set-info :status sat)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-const universe (Set (Array Int Int)))
+ (declare-const A (Set (Array Int Int)))
+ (declare-const B (Set (Array Int Int)))
+diff --git a/test/regress/cli/regress1/sets/infinite-type/sets-card-int-1.smt2 b/test/regress/cli/regress1/sets/infinite-type/sets-card-int-1.smt2
+index 2cf5e566d..d4c89f3e5 100644
+--- a/test/regress/cli/regress1/sets/infinite-type/sets-card-int-1.smt2
++++ b/test/regress/cli/regress1/sets/infinite-type/sets-card-int-1.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-info :status unsat)
+ (assert (= (set.card (as set.universe (Set Int))) 10))
+ (declare-const universe (Set Int))
+diff --git a/test/regress/cli/regress1/sets/infinite-type/sets-card-int-2.smt2 b/test/regress/cli/regress1/sets/infinite-type/sets-card-int-2.smt2
+index 8668b9c27..fc8bbbf3e 100644
+--- a/test/regress/cli/regress1/sets/infinite-type/sets-card-int-2.smt2
++++ b/test/regress/cli/regress1/sets/infinite-type/sets-card-int-2.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-info :status sat)
+ (assert (= (set.card (as set.universe (Set Int))) 10))
+ (declare-const universe (Set Int))
+diff --git a/test/regress/cli/regress1/sets/issue5342.smt2 b/test/regress/cli/regress1/sets/issue5342.smt2
+index 1b4943535..438d8ec79 100644
+--- a/test/regress/cli/regress1/sets/issue5342.smt2
++++ b/test/regress/cli/regress1/sets/issue5342.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ (set-logic ALL)
+ (set-info :status unsat)
+ (declare-fun S () (Set Int))
+diff --git a/test/regress/cli/regress1/sets/issue5342_difference_version.smt2 b/test/regress/cli/regress1/sets/issue5342_difference_version.smt2
+index 31b28824c..c2dce268c 100644
+--- a/test/regress/cli/regress1/sets/issue5342_difference_version.smt2
++++ b/test/regress/cli/regress1/sets/issue5342_difference_version.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext
++; COMMAND-LINE: --sets-exp
+ (set-logic ALL)
+ (set-info :status unsat)
+ (declare-fun S () (Set Int))
+diff --git a/test/regress/cli/regress1/sets/proj-issue494-finite-leafof.smt2 b/test/regress/cli/regress1/sets/proj-issue494-finite-leafof.smt2
+index 24f0a51db..02f499e80 100644
+--- a/test/regress/cli/regress1/sets/proj-issue494-finite-leafof.smt2
++++ b/test/regress/cli/regress1/sets/proj-issue494-finite-leafof.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+ (set-option :strings-exp true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-const x (Array (Set RoundingMode) (Set RoundingMode)))
+ (check-sat-assuming (
+ (seq.nth 
+diff --git a/test/regress/cli/regress1/sets/proj-issue610.smt2 b/test/regress/cli/regress1/sets/proj-issue610.smt2
+index 01bb44f39..f3a5ca0f2 100644
+--- a/test/regress/cli/regress1/sets/proj-issue610.smt2
++++ b/test/regress/cli/regress1/sets/proj-issue610.smt2
+@@ -1,7 +1,7 @@
+ ; COMMAND-LINE: -q
+ ; EXPECT: sat
+ (set-logic ALL)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-const x (Set (Array Bool Bool)))
+ (assert (select (set.choose (set.minus (set.singleton (set.choose (set.complement x))) (set.minus (set.singleton (set.choose (set.complement x))) (set.minus (set.singleton (set.choose (set.complement x))) (set.minus (set.singleton (set.choose (set.complement x))) (set.minus (set.singleton (set.choose (set.complement x))) x)))))) (seq.prefixof seq.empty seq.empty)))
+ (assert (select (set.choose (set.minus (set.singleton (set.choose (set.complement x))) (ite (select (set.choose x) false) x (set.complement x)))) (seq.prefixof seq.empty seq.empty)))
+diff --git a/test/regress/cli/regress1/sets/set-comp-sat.smt2 b/test/regress/cli/regress1/sets/set-comp-sat.smt2
+index b8c2c1cfd..c814be951 100644
+--- a/test/regress/cli/regress1/sets/set-comp-sat.smt2
++++ b/test/regress/cli/regress1/sets/set-comp-sat.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sets-ext --finite-model-find
++; COMMAND-LINE: --sets-exp --finite-model-find
+ ; EXPECT: sat
+ (set-logic UFFS)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/sets/sets-tuple-poly.cvc.smt2 b/test/regress/cli/regress1/sets/sets-tuple-poly.cvc.smt2
+index 1f8f72b26..aa511a07b 100644
+--- a/test/regress/cli/regress1/sets/sets-tuple-poly.cvc.smt2
++++ b/test/regress/cli/regress1/sets/sets-tuple-poly.cvc.smt2
+@@ -1,7 +1,7 @@
+ ; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-option :incremental false)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-logic ALL)
+ (declare-fun a () (Relation Real Int))
+ (declare-fun b () (Relation Int Real))
+diff --git a/test/regress/cli/regress1/sets/univ-semantics.smt2 b/test/regress/cli/regress1/sets/univ-semantics.smt2
+index 8e2c68d89..fe63e667d 100644
+--- a/test/regress/cli/regress1/sets/univ-semantics.smt2
++++ b/test/regress/cli/regress1/sets/univ-semantics.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun x () Int)
+ (declare-fun y () (Set Int))
+ (declare-fun P ((Set Int)) Bool)
+diff --git a/test/regress/cli/regress1/strings/proj-issue659.smt2 b/test/regress/cli/regress1/strings/proj-issue659.smt2
+index 9ad14d6c5..1f6677659 100644
+--- a/test/regress/cli/regress1/strings/proj-issue659.smt2
++++ b/test/regress/cli/regress1/strings/proj-issue659.smt2
+@@ -2,7 +2,7 @@
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (set-option :strings-eager-reg false)
+ (declare-const x String)
+ (declare-const x3 String)
+diff --git a/test/regress/cli/regress4/sets-card-neg-mem-union-2.smt2 b/test/regress/cli/regress4/sets-card-neg-mem-union-2.smt2
+index 31519082b..6636d1c96 100644
+--- a/test/regress/cli/regress4/sets-card-neg-mem-union-2.smt2
++++ b/test/regress/cli/regress4/sets-card-neg-mem-union-2.smt2
+@@ -1,7 +1,7 @@
+ (set-logic QF_ALL)
+ (set-info :status unsat)
+ (set-option :produce-models true)
+-(set-option :sets-ext true)
++(set-option :sets-exp true)
+ (declare-fun A () (Set Int))
+ (declare-fun B () (Set Int))
+ (declare-fun C () (Set Int))
+-- 
+2.47.1
+

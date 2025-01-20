@@ -1,0 +1,359 @@
+From fdaa5911a07e6d20128712643d63c78bf6388a75 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 1 Nov 2024 15:30:47 -0500
+Subject: [PATCH 152/312] Add proof support in rewrite and extended rewrite
+ preprocessing passes (#11271)
+
+These passes did not have proof support; reconstruction would
+automatically determine that the steps they added corresponded to
+rewrites.
+
+Due to forthcoming changes that are more pedantic about tracking trusted
+steps, it is better if they have explicit support. A utility is added
+for this purpose.
+
+---------
+
+Co-authored-by: Haniel Barbosa <hanielbbarbosa@gmail.com>
+---
+ src/CMakeLists.txt                            |  2 +
+ .../passes/extended_rewriter_pass.cpp         | 19 ++++--
+ .../passes/extended_rewriter_pass.h           |  6 ++
+ src/preprocessing/passes/rewrite.cpp          | 12 +++-
+ src/preprocessing/passes/rewrite.h            |  3 +
+ src/proof/method_id.cpp                       |  1 +
+ src/proof/method_id.h                         |  6 +-
+ src/proof/rewrite_proof_generator.cpp         | 59 +++++++++++++++++
+ src/proof/rewrite_proof_generator.h           | 64 +++++++++++++++++++
+ src/smt/env.cpp                               |  4 ++
+ 10 files changed, 165 insertions(+), 11 deletions(-)
+ create mode 100644 src/proof/rewrite_proof_generator.cpp
+ create mode 100644 src/proof/rewrite_proof_generator.h
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 8251ed7d3..f81a55688 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -222,6 +222,8 @@ libcvc5_add_sources(
+   proof/proof_step_buffer.h
+   proof/resolution_proofs_util.cpp
+   proof/resolution_proofs_util.h
++  proof/rewrite_proof_generator.cpp
++  proof/rewrite_proof_generator.h
+   proof/subtype_elim_proof_converter.cpp
+   proof/subtype_elim_proof_converter.h
+   proof/trust_id.cpp
+diff --git a/src/preprocessing/passes/extended_rewriter_pass.cpp b/src/preprocessing/passes/extended_rewriter_pass.cpp
+index 5a208c27a..cf71d13a6 100644
+--- a/src/preprocessing/passes/extended_rewriter_pass.cpp
++++ b/src/preprocessing/passes/extended_rewriter_pass.cpp
+@@ -20,24 +20,31 @@
+ #include "options/smt_options.h"
+ #include "preprocessing/assertion_pipeline.h"
+ #include "preprocessing/preprocessing_pass_context.h"
++#include "smt/env.h"
+ 
+ namespace cvc5::internal {
+ namespace preprocessing {
+ namespace passes {
+ 
+ ExtRewPre::ExtRewPre(PreprocessingPassContext* preprocContext)
+-    : PreprocessingPass(preprocContext, "ext-rew-pre"){};
++    : PreprocessingPass(preprocContext, "ext-rew-pre"),
++      d_id(options().smt.extRewPrep == options::ExtRewPrepMode::AGG
++               ? MethodId::RW_EXT_REWRITE_AGG
++               : MethodId::RW_EXT_REWRITE),
++      d_proof(options().smt.produceProofs
++                  ? new RewriteProofGenerator(d_env, d_id)
++                  : nullptr)
++{
++}
+ 
+ PreprocessingPassResult ExtRewPre::applyInternal(
+     AssertionPipeline* assertionsToPreprocess)
+ {
+   for (unsigned i = 0, size = assertionsToPreprocess->size(); i < size; ++i)
+   {
+-    assertionsToPreprocess->replace(
+-        i,
+-        extendedRewrite(
+-            (*assertionsToPreprocess)[i],
+-            options().smt.extRewPrep == options::ExtRewPrepMode::AGG));
++    const Node& a = (*assertionsToPreprocess)[i];
++    Node ar = d_env.rewriteViaMethod(a, d_id);
++    assertionsToPreprocess->replace(i, ar, d_proof.get());
+     if (assertionsToPreprocess->isInConflict())
+     {
+       return PreprocessingPassResult::CONFLICT;
+diff --git a/src/preprocessing/passes/extended_rewriter_pass.h b/src/preprocessing/passes/extended_rewriter_pass.h
+index 477ed1fb1..214dfdaea 100644
+--- a/src/preprocessing/passes/extended_rewriter_pass.h
++++ b/src/preprocessing/passes/extended_rewriter_pass.h
+@@ -21,8 +21,10 @@
+ #define CVC5__PREPROCESSING__PASSES__EXTENDED_REWRITER_PASS_H
+ 
+ #include "preprocessing/preprocessing_pass.h"
++#include "proof/rewrite_proof_generator.h"
+ 
+ namespace cvc5::internal {
++class CDProof;
+ namespace preprocessing {
+ namespace passes {
+ 
+@@ -34,6 +36,10 @@ class ExtRewPre : public PreprocessingPass
+  protected:
+   PreprocessingPassResult applyInternal(
+       AssertionPipeline* assertionsToPreprocess) override;
++  /** The method id, determining the kind of rewrite */
++  MethodId d_id;
++  /** The proof generator if proofs are enabled */
++  std::unique_ptr<RewriteProofGenerator> d_proof;
+ };
+ 
+ }  // namespace passes
+diff --git a/src/preprocessing/passes/rewrite.cpp b/src/preprocessing/passes/rewrite.cpp
+index 4782be29e..e56f29e3c 100644
+--- a/src/preprocessing/passes/rewrite.cpp
++++ b/src/preprocessing/passes/rewrite.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "preprocessing/passes/rewrite.h"
+ 
++#include "options/smt_options.h"
+ #include "preprocessing/assertion_pipeline.h"
+ #include "theory/rewriter.h"
+ 
+@@ -27,15 +28,20 @@ namespace passes {
+ using namespace cvc5::internal::theory;
+ 
+ Rewrite::Rewrite(PreprocessingPassContext* preprocContext)
+-    : PreprocessingPass(preprocContext, "rewrite"){};
+-
++    : PreprocessingPass(preprocContext, "rewrite"),
++      d_proof(options().smt.produceProofs ? new RewriteProofGenerator(d_env)
++                                          : nullptr)
++{
++}
+ 
+ PreprocessingPassResult Rewrite::applyInternal(
+   AssertionPipeline* assertionsToPreprocess)
+ {
+   for (size_t i = 0, size = assertionsToPreprocess->size(); i < size; ++i)
+   {
+-    assertionsToPreprocess->replace(i, rewrite((*assertionsToPreprocess)[i]));
++    const Node& a = (*assertionsToPreprocess)[i];
++    Node ar = rewrite(a);
++    assertionsToPreprocess->replace(i, ar, d_proof.get());
+     if (assertionsToPreprocess->isInConflict())
+     {
+       return PreprocessingPassResult::CONFLICT;
+diff --git a/src/preprocessing/passes/rewrite.h b/src/preprocessing/passes/rewrite.h
+index d2229bfcb..541c114ac 100644
+--- a/src/preprocessing/passes/rewrite.h
++++ b/src/preprocessing/passes/rewrite.h
+@@ -21,6 +21,7 @@
+ #define CVC5__PREPROCESSING__PASSES__REWRITE_H
+ 
+ #include "preprocessing/preprocessing_pass.h"
++#include "proof/rewrite_proof_generator.h"
+ 
+ namespace cvc5::internal {
+ namespace preprocessing {
+@@ -34,6 +35,8 @@ class Rewrite : public PreprocessingPass
+  protected:
+   PreprocessingPassResult applyInternal(
+       AssertionPipeline* assertionsToPreprocess) override;
++  /** The proof generator if proofs are enabled */
++  std::unique_ptr<RewriteProofGenerator> d_proof;
+ };
+ 
+ }  // namespace passes
+diff --git a/src/proof/method_id.cpp b/src/proof/method_id.cpp
+index 53e62d4b5..1d0ae845c 100644
+--- a/src/proof/method_id.cpp
++++ b/src/proof/method_id.cpp
+@@ -28,6 +28,7 @@ const char* toString(MethodId id)
+   {
+     case MethodId::RW_REWRITE: return "RW_REWRITE";
+     case MethodId::RW_EXT_REWRITE: return "RW_EXT_REWRITE";
++    case MethodId::RW_EXT_REWRITE_AGG: return "RW_EXT_REWRITE_AGG";
+     case MethodId::RW_REWRITE_EQ_EXT: return "RW_REWRITE_EQ_EXT";
+     case MethodId::RW_EVALUATE: return "RW_EVALUATE";
+     case MethodId::RW_IDENTITY: return "RW_IDENTITY";
+diff --git a/src/proof/method_id.h b/src/proof/method_id.h
+index 16a8be275..2d321dd5f 100644
+--- a/src/proof/method_id.h
++++ b/src/proof/method_id.h
+@@ -41,6 +41,8 @@ enum class MethodId : uint32_t
+   RW_REWRITE,
+   // d_ext_rew.extendedRewrite(n);
+   RW_EXT_REWRITE,
++  // d_ext_rew.extendedRewrite(n, true);
++  RW_EXT_REWRITE_AGG,
+   // Rewriter::rewriteExtEquality(n)
+   RW_REWRITE_EQ_EXT,
+   // Evaluator::evaluate(n)
+@@ -68,8 +70,8 @@ enum class MethodId : uint32_t
+   SBA_SIMUL,
+   // multiple substitutions are applied to fix point
+   SBA_FIXPOINT
+-  // For example, for x -> u, y -> f(z), z -> g(x), applying this substitution to
+-  // y gives:
++  // For example, for x -> u, y -> f(z), z -> g(x), applying this substitution
++  // to y gives:
+   // - f(g(x)) for SBA_SEQUENTIAL
+   // - f(z) for SBA_SIMUL
+   // - f(g(u)) for SBA_FIXPOINT
+diff --git a/src/proof/rewrite_proof_generator.cpp b/src/proof/rewrite_proof_generator.cpp
+new file mode 100644
+index 000000000..5b885edff
+--- /dev/null
++++ b/src/proof/rewrite_proof_generator.cpp
+@@ -0,0 +1,59 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Rewrite proof generator utility.
++ */
++
++#include "proof/rewrite_proof_generator.h"
++
++#include "proof/proof_node_manager.h"
++#include "smt/env.h"
++
++namespace cvc5::internal {
++
++RewriteProofGenerator::RewriteProofGenerator(Env& env, MethodId id)
++    : EnvObj(env), ProofGenerator(), d_id(id)
++{
++  // initialize the proof args
++  addMethodIds(d_pargs, MethodId::SB_DEFAULT, MethodId::SBA_SEQUENTIAL, d_id);
++}
++RewriteProofGenerator::~RewriteProofGenerator() {}
++
++std::shared_ptr<ProofNode> RewriteProofGenerator::getProofFor(Node fact)
++{
++  if (fact.getKind() != Kind::EQUAL)
++  {
++    Assert(false) << "Expected an equality in RewriteProofGenerator, got "
++                  << fact;
++    return nullptr;
++  }
++  ProofNodeManager* pnm = d_env.getProofNodeManager();
++  const Node& t = fact[0];
++  Node tp = d_env.rewriteViaMethod(t, d_id);
++  if (tp != fact[1])
++  {
++    Assert(false) << "Could not prove " << fact << " via RewriteProofGenerator";
++    return nullptr;
++  }
++  std::vector<Node> pargs{t};
++  pargs.insert(pargs.end(), d_pargs.begin(), d_pargs.end());
++  std::shared_ptr<ProofNode> pf =
++      pnm->mkNode(ProofRule::MACRO_SR_EQ_INTRO, {}, pargs, fact);
++  return pf;
++}
++
++std::string RewriteProofGenerator::identify() const
++{
++  return "RewriteProofGenerator";
++}
++
++}  // namespace cvc5::internal
+diff --git a/src/proof/rewrite_proof_generator.h b/src/proof/rewrite_proof_generator.h
+new file mode 100644
+index 000000000..34c61384c
+--- /dev/null
++++ b/src/proof/rewrite_proof_generator.h
+@@ -0,0 +1,64 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Rewrite proof generator utility.
++ */
++
++#include "cvc5_private.h"
++
++#ifndef CVC5__PROOF__REWRITE_PROOF_GENERATOR_H
++#define CVC5__PROOF__REWRITE_PROOF_GENERATOR_H
++
++#include "proof/method_id.h"
++#include "proof/proof_generator.h"
++#include "smt/env_obj.h"
++
++namespace cvc5::internal {
++
++class ProofNode;
++class ProofNodeManager;
++
++/**
++ * This class is used as a (lazy) proof generator for macro rewrite steps
++ * (e.g. proof rule MACRO_SR_EQ_INTRO). Its getProofFor method is assumed to
++ * always prove equalities by rewrites for the given method id.
++ */
++class RewriteProofGenerator : protected EnvObj, public ProofGenerator
++{
++ public:
++  /**
++   * @param env Reference to the environment
++   * @param id The method id, which determines the method of rewriting this
++   * proof generator proves equalites for.
++   */
++  RewriteProofGenerator(Env& env, MethodId id = MethodId::RW_REWRITE);
++  virtual ~RewriteProofGenerator();
++  /**
++   * Get proof for fact. It should be that fact is an equality of the form
++   * t = t', where t' is d_env.rewriteViaMethod(t, d_id).
++   * If this is not the case, nullptr is returned and an assertion is thrown
++   * in debug mode.
++   */
++  std::shared_ptr<ProofNode> getProofFor(Node fact) override;
++  /** identify */
++  std::string identify() const override;
++
++ private:
++  /** The method id */
++  MethodId d_id;
++  /** Proof args */
++  std::vector<Node> d_pargs;
++};
++
++}  // namespace cvc5::internal
++
++#endif /* CVC5__PROOF__REWRITE_PROOF_GENERATOR_H */
+diff --git a/src/smt/env.cpp b/src/smt/env.cpp
+index 4a9127c1f..38e8d82fe 100644
+--- a/src/smt/env.cpp
++++ b/src/smt/env.cpp
+@@ -223,6 +223,10 @@ Node Env::rewriteViaMethod(TNode n, MethodId idr)
+   {
+     return d_rewriter->extendedRewrite(n);
+   }
++  if (idr == MethodId::RW_EXT_REWRITE_AGG)
++  {
++    return d_rewriter->extendedRewrite(n, true);
++  }
+   if (idr == MethodId::RW_REWRITE_EQ_EXT)
+   {
+     return d_rewriter->rewriteEqualityExt(n);
+-- 
+2.47.1
+

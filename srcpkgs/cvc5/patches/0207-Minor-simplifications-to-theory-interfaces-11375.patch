@@ -1,0 +1,582 @@
+From 37eea85583893b5b72ae15ae463943c338567071 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 2 Dec 2024 15:41:49 -0600
+Subject: [PATCH 207/312] Minor simplifications to theory interfaces (#11375)
+
+(1) Eliminates a forwarding routine isLegalElimination of Theory ->
+Valuation.
+(2) Drops proof requirements from `TheoryRewrite::expandDefinition`,
+which was ignored.
+
+Note we drop manual proof support for expanding eq-range in arrays
+rewriter, which was spurious as RARE reconstruction can handle this
+trivially.
+---
+ src/smt/expand_definitions.cpp                | 11 ++---------
+ src/theory/arith/arith_rewriter.cpp           |  8 ++++++--
+ src/theory/arith/arith_rewriter.h             |  2 +-
+ src/theory/arrays/theory_arrays.cpp           | 13 ++++++-------
+ src/theory/arrays/theory_arrays.h             |  2 --
+ src/theory/arrays/theory_arrays_rewriter.cpp  | 18 +++++-------------
+ src/theory/arrays/theory_arrays_rewriter.h    |  7 ++-----
+ src/theory/booleans/theory_bool.cpp           |  4 ++--
+ src/theory/bv/theory_bv.cpp                   |  2 +-
+ src/theory/bv/theory_bv_rewriter.cpp          |  5 ++---
+ src/theory/bv/theory_bv_rewriter.h            |  2 +-
+ src/theory/datatypes/datatypes_rewriter.cpp   |  6 +++---
+ src/theory/datatypes/datatypes_rewriter.h     |  2 +-
+ src/theory/datatypes/theory_datatypes.cpp     |  4 ++--
+ src/theory/fp/fp_expand_defs.cpp              |  6 +++---
+ src/theory/fp/fp_expand_defs.h                |  2 +-
+ src/theory/fp/theory_fp.cpp                   |  4 ++--
+ src/theory/fp/theory_fp_rewriter.cpp          |  2 +-
+ src/theory/fp/theory_fp_rewriter.h            |  2 +-
+ src/theory/quantifiers/theory_quantifiers.cpp |  2 +-
+ src/theory/sets/theory_sets.cpp               |  4 ++--
+ src/theory/theory.cpp                         |  9 ++-------
+ src/theory/theory.h                           | 17 -----------------
+ src/theory/theory_rewriter.cpp                |  4 ++--
+ src/theory/theory_rewriter.h                  | 12 ++++++------
+ 25 files changed, 55 insertions(+), 95 deletions(-)
+
+diff --git a/src/smt/expand_definitions.cpp b/src/smt/expand_definitions.cpp
+index d1d02b40c..690f15e1b 100644
+--- a/src/smt/expand_definitions.cpp
++++ b/src/smt/expand_definitions.cpp
+@@ -85,15 +85,8 @@ Node ExpandDefs::expandDefinitions(TNode n,
+       Assert(tr != NULL);
+       // ensure rewritten
+       Node nr = rewrite(n);
+-      TrustNode trn = tr->expandDefinition(nr);
+-      if (!trn.isNull())
+-      {
+-        node = trn.getNode();
+-      }
+-      else
+-      {
+-        node = nr;
+-      }
++      Node nre = tr->expandDefinition(nr);
++      node = nre.isNull() ? nr : nre;
+       // the partial functions can fall through, in which case we still
+       // consider their children
+       worklist.push(std::make_tuple(
+diff --git a/src/theory/arith/arith_rewriter.cpp b/src/theory/arith/arith_rewriter.cpp
+index bc2878156..18d9dc1ec 100644
+--- a/src/theory/arith/arith_rewriter.cpp
++++ b/src/theory/arith/arith_rewriter.cpp
+@@ -1232,13 +1232,17 @@ RewriteResponse ArithRewriter::postRewriteTranscendental(TNode t)
+   return RewriteResponse(REWRITE_DONE, t);
+ }
+ 
+-TrustNode ArithRewriter::expandDefinition(Node node)
++Node ArithRewriter::expandDefinition(Node node)
+ {
+   // call eliminate operators, to eliminate partial operators only
+   std::vector<SkolemLemma> lems;
+   TrustNode ret = d_opElim.eliminate(node, lems, true);
+   Assert(lems.empty());
+-  return ret;
++  if (ret.isNull())
++  {
++    return Node::null();
++  }
++  return ret.getNode();
+ }
+ 
+ RewriteResponse ArithRewriter::returnRewrite(TNode t, Node ret, Rewrite r)
+diff --git a/src/theory/arith/arith_rewriter.h b/src/theory/arith/arith_rewriter.h
+index f16c9f971..0e72248ac 100644
+--- a/src/theory/arith/arith_rewriter.h
++++ b/src/theory/arith/arith_rewriter.h
+@@ -40,7 +40,7 @@ class ArithRewriter : public TheoryRewriter
+    * Expand definition, which eliminates extended operators like div/mod in
+    * the given node.
+    */
+-  TrustNode expandDefinition(Node node) override;
++  Node expandDefinition(Node node) override;
+   /**
+    * Rewrite inequality to bv. If ineq contains a single bv2nat term, then
+    * if possible, return an equivalent formula involving a bitvector inequality.
+diff --git a/src/theory/arrays/theory_arrays.cpp b/src/theory/arrays/theory_arrays.cpp
+index 397658a33..b372600f2 100644
+--- a/src/theory/arrays/theory_arrays.cpp
++++ b/src/theory/arrays/theory_arrays.cpp
+@@ -78,9 +78,7 @@ TheoryArrays::TheoryArrays(Env& env,
+           name + "number of setModelVal conflicts")),
+       d_ppEqualityEngine(env, userContext(), name + "pp", true),
+       d_ppFacts(userContext()),
+-      d_rrEpg(env.isTheoryProofProducing() ? new EagerProofGenerator(env)
+-                                           : nullptr),
+-      d_rewriter(env.getNodeManager(), env.getRewriter(), d_rrEpg.get()),
++      d_rewriter(env.getNodeManager(), env.getRewriter()),
+       d_state(env, valuation),
+       d_im(env, *this, d_state),
+       d_literalsToPropagate(context()),
+@@ -312,10 +310,11 @@ TrustNode TheoryArrays::ppRewrite(TNode term, std::vector<SkolemLemma>& lems)
+     }
+   }
+   // see if we need to expand definitions
+-  TrustNode texp = d_rewriter.expandDefinition(term);
++  Node texp = d_rewriter.expandDefinition(term);
+   if (!texp.isNull())
+   {
+-    return texp;
++    // do not track proofs here
++    return TrustNode::mkTrustRewrite(term, texp, nullptr);
+   }
+   if (!d_preprocess)
+   {
+@@ -373,12 +372,12 @@ Theory::PPAssertStatus TheoryArrays::ppAssert(
+     {
+       d_ppFacts.push_back(in);
+       d_ppEqualityEngine.assertEquality(in, true, in);
+-      if (in[0].isVar() && isLegalElimination(in[0], in[1]))
++      if (in[0].isVar() && d_valuation.isLegalElimination(in[0], in[1]))
+       {
+         outSubstitutions.addSubstitutionSolved(in[0], in[1], tin);
+         return PP_ASSERT_STATUS_SOLVED;
+       }
+-      if (in[1].isVar() && isLegalElimination(in[1], in[0]))
++      if (in[1].isVar() && d_valuation.isLegalElimination(in[1], in[0]))
+       {
+         outSubstitutions.addSubstitutionSolved(in[1], in[0], tin);
+         return PP_ASSERT_STATUS_SOLVED;
+diff --git a/src/theory/arrays/theory_arrays.h b/src/theory/arrays/theory_arrays.h
+index a40e431ba..f11e7413d 100644
+--- a/src/theory/arrays/theory_arrays.h
++++ b/src/theory/arrays/theory_arrays.h
+@@ -182,8 +182,6 @@ class TheoryArrays : public Theory {
+   bool ppDisequal(TNode a, TNode b);
+   Node solveWrite(TNode term, bool solve1, bool solve2, bool ppCheck);
+ 
+-  /** An eager proof generator for the rewriter, if proof are enabled */
+-  std::unique_ptr<EagerProofGenerator> d_rrEpg;
+   /** The theory rewriter for this theory. */
+   TheoryArraysRewriter d_rewriter;
+   /** A (default) theory state object */
+diff --git a/src/theory/arrays/theory_arrays_rewriter.cpp b/src/theory/arrays/theory_arrays_rewriter.cpp
+index 7f8453e34..19256df3c 100644
+--- a/src/theory/arrays/theory_arrays_rewriter.cpp
++++ b/src/theory/arrays/theory_arrays_rewriter.cpp
+@@ -63,10 +63,8 @@ void setMostFrequentValueCount(TNode store, uint64_t count)
+   return store.setAttribute(ArrayConstantMostFrequentValueCountAttr(), count);
+ }
+ 
+-TheoryArraysRewriter::TheoryArraysRewriter(NodeManager* nm,
+-                                           Rewriter* r,
+-                                           EagerProofGenerator* epg)
+-    : TheoryRewriter(nm), d_rewriter(r), d_epg(epg)
++TheoryArraysRewriter::TheoryArraysRewriter(NodeManager* nm, Rewriter* r)
++    : TheoryRewriter(nm), d_rewriter(r)
+ {
+   registerProofRewriteRule(ProofRewriteRule::ARRAYS_SELECT_CONST,
+                            TheoryRewriteCtx::PRE_DSL);
+@@ -717,22 +715,16 @@ RewriteResponse TheoryArraysRewriter::preRewrite(TNode node)
+   return RewriteResponse(REWRITE_DONE, node);
+ }
+ 
+-TrustNode TheoryArraysRewriter::expandDefinition(Node node)
++Node TheoryArraysRewriter::expandDefinition(Node node)
+ {
+   Kind kind = node.getKind();
+ 
+   if (kind == Kind::EQ_RANGE)
+   {
+-    Node expandedEqRange = expandEqRange(d_nm, node);
+-    if (d_epg)
+-    {
+-      return d_epg->mkTrustNodeRewrite(
+-          node, expandedEqRange, ProofRewriteRule::ARRAYS_EQ_RANGE_EXPAND);
+-    }
+-    return TrustNode::mkTrustRewrite(node, expandedEqRange, nullptr);
++    return expandEqRange(d_nm, node);
+   }
+ 
+-  return TrustNode::null();
++  return Node::null();
+ }
+ 
+ }  // namespace arrays
+diff --git a/src/theory/arrays/theory_arrays_rewriter.h b/src/theory/arrays/theory_arrays_rewriter.h
+index 4a172d095..2792d1118 100644
+--- a/src/theory/arrays/theory_arrays_rewriter.h
++++ b/src/theory/arrays/theory_arrays_rewriter.h
+@@ -29,7 +29,6 @@
+ 
+ namespace cvc5::internal {
+ 
+-class EagerProofGenerator;
+ class Env;
+ 
+ namespace theory {
+@@ -46,7 +45,7 @@ static inline Node mkEqNode(Node a, Node b) { return a.eqNode(b); }
+ class TheoryArraysRewriter : public TheoryRewriter
+ {
+  public:
+-  TheoryArraysRewriter(NodeManager* nm, Rewriter* r, EagerProofGenerator* epg);
++  TheoryArraysRewriter(NodeManager* nm, Rewriter* r);
+ 
+   /** Normalize a constant whose index type has cardinality indexCard */
+   static Node normalizeConstant(NodeManager* nm,
+@@ -72,7 +71,7 @@ class TheoryArraysRewriter : public TheoryRewriter
+    */
+   Node rewriteViaRule(ProofRewriteRule id, const Node& n) override;
+ 
+-  TrustNode expandDefinition(Node node) override;
++  Node expandDefinition(Node node) override;
+ 
+   /**
+    * Puts array constant node into normal form. This is so that array constants
+@@ -89,8 +88,6 @@ class TheoryArraysRewriter : public TheoryRewriter
+    * be removed.
+    */
+   Rewriter* d_rewriter;
+-  /** Pointer to an eager proof generator, if proof are enabled */
+-  EagerProofGenerator* d_epg;
+ }; /* class TheoryArraysRewriter */
+ 
+ }  // namespace arrays
+diff --git a/src/theory/booleans/theory_bool.cpp b/src/theory/booleans/theory_bool.cpp
+index fff12c192..be7022996 100644
+--- a/src/theory/booleans/theory_bool.cpp
++++ b/src/theory/booleans/theory_bool.cpp
+@@ -63,12 +63,12 @@ Theory::PPAssertStatus TheoryBool::ppAssert(
+     else if (in[0].getKind() == Kind::EQUAL && in[0][0].getType().isBoolean())
+     {
+       TNode eq = in[0];
+-      if (eq[0].isVar() && isLegalElimination(eq[0], eq[1]))
++      if (eq[0].isVar() && d_valuation.isLegalElimination(eq[0], eq[1]))
+       {
+         outSubstitutions.addSubstitutionSolved(eq[0], eq[1].notNode(), tin);
+         return PP_ASSERT_STATUS_SOLVED;
+       }
+-      else if (eq[1].isVar() && isLegalElimination(eq[1], eq[0]))
++      else if (eq[1].isVar() && d_valuation.isLegalElimination(eq[1], eq[0]))
+       {
+         outSubstitutions.addSubstitutionSolved(eq[1], eq[0].notNode(), tin);
+         return PP_ASSERT_STATUS_SOLVED;
+diff --git a/src/theory/bv/theory_bv.cpp b/src/theory/bv/theory_bv.cpp
+index e08c713a3..082b1af21 100644
+--- a/src/theory/bv/theory_bv.cpp
++++ b/src/theory/bv/theory_bv.cpp
+@@ -239,7 +239,7 @@ Theory::PPAssertStatus TheoryBV::ppAssert(
+ 
+         Node concat = utils::mkConcat(children);
+         Assert(utils::getSize(concat) == utils::getSize(extract[0]));
+-        if (isLegalElimination(extract[0], concat))
++        if (d_valuation.isLegalElimination(extract[0], concat))
+         {
+           outSubstitutions.addSubstitutionSolved(extract[0], concat, tin);
+           return Theory::PP_ASSERT_STATUS_SOLVED;
+diff --git a/src/theory/bv/theory_bv_rewriter.cpp b/src/theory/bv/theory_bv_rewriter.cpp
+index e23b359c4..401ee09fb 100644
+--- a/src/theory/bv/theory_bv_rewriter.cpp
++++ b/src/theory/bv/theory_bv_rewriter.cpp
+@@ -101,10 +101,9 @@ Node TheoryBVRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+   return Node::null();
+ }
+ 
+-TrustNode TheoryBVRewriter::expandDefinition(Node node)
++Node TheoryBVRewriter::expandDefinition(Node node)
+ {
+-  Node expanded = eliminateOverflows(node);
+-  return TrustNode::mkTrustRewrite(node, expanded, nullptr);
++  return eliminateOverflows(node);
+ }
+ 
+ Node TheoryBVRewriter::eliminateOverflows(Node node)
+diff --git a/src/theory/bv/theory_bv_rewriter.h b/src/theory/bv/theory_bv_rewriter.h
+index cdc315c2f..8f1fe6fa3 100644
+--- a/src/theory/bv/theory_bv_rewriter.h
++++ b/src/theory/bv/theory_bv_rewriter.h
+@@ -46,7 +46,7 @@ class TheoryBVRewriter : public TheoryRewriter
+    * Override TheoryRewriter::expandDefinition in order to
+    * eliminate overflow operators
+    */
+-  TrustNode expandDefinition(Node node) override;
++  Node expandDefinition(Node node) override;
+ 
+   /**
+    * This function is called when int-blasting is disabled.
+diff --git a/src/theory/datatypes/datatypes_rewriter.cpp b/src/theory/datatypes/datatypes_rewriter.cpp
+index b76c70888..7c1b3ba81 100644
+--- a/src/theory/datatypes/datatypes_rewriter.cpp
++++ b/src/theory/datatypes/datatypes_rewriter.cpp
+@@ -1044,7 +1044,7 @@ Node DatatypesRewriter::expandApplySelector(Node n, bool sharedSel)
+   return utils::applySelector(c, selectorIndex, true, n[0]);
+ }
+ 
+-TrustNode DatatypesRewriter::expandDefinition(Node n)
++Node DatatypesRewriter::expandDefinition(Node n)
+ {
+   Node ret;
+   switch (n.getKind())
+@@ -1069,9 +1069,9 @@ TrustNode DatatypesRewriter::expandDefinition(Node n)
+   }
+   if (!ret.isNull() && n != ret)
+   {
+-    return TrustNode::mkTrustRewrite(n, ret, nullptr);
++    return ret;
+   }
+-  return TrustNode::null();
++  return Node::null();
+ }
+ 
+ Node DatatypesRewriter::expandUpdater(const Node& n)
+diff --git a/src/theory/datatypes/datatypes_rewriter.h b/src/theory/datatypes/datatypes_rewriter.h
+index 22dec0a29..998f0ce8f 100644
+--- a/src/theory/datatypes/datatypes_rewriter.h
++++ b/src/theory/datatypes/datatypes_rewriter.h
+@@ -101,7 +101,7 @@ class DatatypesRewriter : public TheoryRewriter
+    */
+   static Node expandMatch(Node n);
+   /** expand defintions */
+-  TrustNode expandDefinition(Node n) override;
++  Node expandDefinition(Node n) override;
+   /**
+    * Expand a nullable lift term with an ite expression.
+    * Example:
+diff --git a/src/theory/datatypes/theory_datatypes.cpp b/src/theory/datatypes/theory_datatypes.cpp
+index cd3b7ca24..03480546d 100644
+--- a/src/theory/datatypes/theory_datatypes.cpp
++++ b/src/theory/datatypes/theory_datatypes.cpp
+@@ -377,10 +377,10 @@ TrustNode TheoryDatatypes::ppRewrite(TNode in, std::vector<SkolemLemma>& lems)
+     return TrustNode::mkTrustRewrite(in, k);
+   }
+   // first, see if we need to expand definitions
+-  TrustNode texp = d_rewriter.expandDefinition(in);
++  Node texp = d_rewriter.expandDefinition(in);
+   if (!texp.isNull())
+   {
+-    return texp;
++    return TrustNode::mkTrustRewrite(in, texp);
+   }
+   // nothing to do
+   return TrustNode::null();
+diff --git a/src/theory/fp/fp_expand_defs.cpp b/src/theory/fp/fp_expand_defs.cpp
+index 6d612df9c..259b6440a 100644
+--- a/src/theory/fp/fp_expand_defs.cpp
++++ b/src/theory/fp/fp_expand_defs.cpp
+@@ -75,7 +75,7 @@ Node FpExpandDefs::toRealUF(TNode node)
+       node[0]);
+ }
+ 
+-TrustNode FpExpandDefs::expandDefinition(Node node)
++Node FpExpandDefs::expandDefinition(Node node)
+ {
+   Trace("fp-expandDefinition")
+       << "FpExpandDefs::expandDefinition(): " << node << std::endl;
+@@ -120,9 +120,9 @@ TrustNode FpExpandDefs::expandDefinition(Node node)
+   {
+     Trace("fp-expandDefinition") << "FpExpandDefs::expandDefinition(): " << node
+                                  << " rewritten to " << res << std::endl;
+-    return TrustNode::mkTrustRewrite(node, res, nullptr);
++    return res;
+   }
+-  return TrustNode::null();
++  return Node::null();
+ }
+ 
+ }  // namespace fp
+diff --git a/src/theory/fp/fp_expand_defs.h b/src/theory/fp/fp_expand_defs.h
+index 3c457ab3b..cc8ad53c5 100644
+--- a/src/theory/fp/fp_expand_defs.h
++++ b/src/theory/fp/fp_expand_defs.h
+@@ -44,7 +44,7 @@ class FpExpandDefs
+  public:
+   FpExpandDefs(NodeManager* nm) : d_nm(nm) {}
+   /** expand definitions in node */
+-  TrustNode expandDefinition(Node node);
++  Node expandDefinition(Node node);
+ 
+  private:
+   /**
+diff --git a/src/theory/fp/theory_fp.cpp b/src/theory/fp/theory_fp.cpp
+index 61dd361bb..cb88abb03 100644
+--- a/src/theory/fp/theory_fp.cpp
++++ b/src/theory/fp/theory_fp.cpp
+@@ -119,10 +119,10 @@ TrustNode TheoryFp::ppRewrite(TNode node, std::vector<SkolemLemma>& lems)
+   Trace("fp-ppRewrite") << "TheoryFp::ppRewrite(): " << node << std::endl;
+ 
+   // first, see if we need to expand definitions
+-  TrustNode texp = d_rewriter.expandDefinition(node);
++  Node texp = d_rewriter.expandDefinition(node);
+   if (!texp.isNull())
+   {
+-    return texp;
++    return TrustNode::mkTrustRewrite(node, texp, nullptr);
+   }
+ 
+   // The following kinds should have been removed by the
+diff --git a/src/theory/fp/theory_fp_rewriter.cpp b/src/theory/fp/theory_fp_rewriter.cpp
+index c45868c19..903f5e9ec 100644
+--- a/src/theory/fp/theory_fp_rewriter.cpp
++++ b/src/theory/fp/theory_fp_rewriter.cpp
+@@ -1697,7 +1697,7 @@ RewriteResponse TheoryFpRewriter::postRewrite(TNode node)
+ 
+   return res;
+ }
+-TrustNode TheoryFpRewriter::expandDefinition(Node node)
++Node TheoryFpRewriter::expandDefinition(Node node)
+ {
+   return d_fpExpDef.expandDefinition(node);
+ }
+diff --git a/src/theory/fp/theory_fp_rewriter.h b/src/theory/fp/theory_fp_rewriter.h
+index 81f845e43..7092240e3 100644
+--- a/src/theory/fp/theory_fp_rewriter.h
++++ b/src/theory/fp/theory_fp_rewriter.h
+@@ -47,7 +47,7 @@ class TheoryFpRewriter : public TheoryRewriter
+     return postRewrite(equality).d_node;
+   }
+   /** Expand definitions in node */
+-  TrustNode expandDefinition(Node node) override;
++  Node expandDefinition(Node node) override;
+ 
+  protected:
+   /** TODO: document (projects issue #265) */
+diff --git a/src/theory/quantifiers/theory_quantifiers.cpp b/src/theory/quantifiers/theory_quantifiers.cpp
+index 1fda03b41..db6329512 100644
+--- a/src/theory/quantifiers/theory_quantifiers.cpp
++++ b/src/theory/quantifiers/theory_quantifiers.cpp
+@@ -118,7 +118,7 @@ Theory::PPAssertStatus TheoryQuantifiers::ppAssert(
+     if (!eq.isNull())
+     {
+       // must be legal
+-      if (isLegalElimination(eq[0], eq[1]))
++      if (d_valuation.isLegalElimination(eq[0], eq[1]))
+       {
+         // add substitution solved, which ensures we track that eq depends on
+         // tin, which can impact unsat cores.
+diff --git a/src/theory/sets/theory_sets.cpp b/src/theory/sets/theory_sets.cpp
+index 5f98860e9..f2d6b5c96 100644
+--- a/src/theory/sets/theory_sets.cpp
++++ b/src/theory/sets/theory_sets.cpp
+@@ -201,7 +201,7 @@ Theory::PPAssertStatus TheorySets::ppAssert(
+   // this is based off of Theory::ppAssert
+   if (in.getKind() == Kind::EQUAL)
+   {
+-    if (in[0].isVar() && isLegalElimination(in[0], in[1]))
++    if (in[0].isVar() && d_valuation.isLegalElimination(in[0], in[1]))
+     {
+       // We cannot solve for sets if setsExp is enabled, since universe set
+       // may appear when this option is enabled, and solving for such a set
+@@ -213,7 +213,7 @@ Theory::PPAssertStatus TheorySets::ppAssert(
+         status = Theory::PP_ASSERT_STATUS_SOLVED;
+       }
+     }
+-    else if (in[1].isVar() && isLegalElimination(in[1], in[0]))
++    else if (in[1].isVar() && d_valuation.isLegalElimination(in[1], in[0]))
+     {
+       if (!in[0].getType().isSet() || !options().sets.setsExp)
+       {
+diff --git a/src/theory/theory.cpp b/src/theory/theory.cpp
+index ecfb1d55e..dea89fa8d 100644
+--- a/src/theory/theory.cpp
++++ b/src/theory/theory.cpp
+@@ -298,11 +298,6 @@ void Theory::debugPrintFacts() const{
+   printFacts(TraceChannel.getStream());
+ }
+ 
+-bool Theory::isLegalElimination(TNode x, TNode val)
+-{
+-  return d_valuation.isLegalElimination(x, val);
+-}
+-
+ bool Theory::collectModelInfo(TheoryModel* m, const std::set<Node>& termSet)
+ {
+   // if we are using an equality engine, assert it to the model
+@@ -406,12 +401,12 @@ Theory::PPAssertStatus Theory::ppAssert(TrustNode tin,
+     // 1) x is a variable
+     // 2) x is not in the term t
+     // 3) x : T and t : S, then S <: T
+-    if (in[0].isVar() && isLegalElimination(in[0], in[1]))
++    if (in[0].isVar() && d_valuation.isLegalElimination(in[0], in[1]))
+     {
+       outSubstitutions.addSubstitutionSolved(in[0], in[1], tin);
+       return PP_ASSERT_STATUS_SOLVED;
+     }
+-    if (in[1].isVar() && isLegalElimination(in[1], in[0]))
++    if (in[1].isVar() && d_valuation.isLegalElimination(in[1], in[0]))
+     {
+       outSubstitutions.addSubstitutionSolved(in[1], in[0], tin);
+       return PP_ASSERT_STATUS_SOLVED;
+diff --git a/src/theory/theory.h b/src/theory/theory.h
+index 42017e00b..4175225ea 100644
+--- a/src/theory/theory.h
++++ b/src/theory/theory.h
+@@ -202,23 +202,6 @@ class Theory : protected EnvObj
+   void printFacts(std::ostream& os) const;
+   void debugPrintFacts() const;
+ 
+-  /** is legal elimination
+-   *
+-   * Returns true if x -> val is a legal elimination of variable x. This is
+-   * useful for ppAssert, when x = val is an entailed equality. This function
+-   * determines whether indeed x can be eliminated from the problem via the
+-   * substitution x -> val.
+-   *
+-   * The following criteria imply that x -> val is *not* a legal elimination:
+-   * (1) If x is contained in val,
+-   * (2) If the type of val is not the same as the type of x,
+-   * (3) If val contains an operator that cannot be evaluated, and
+-   * produceModels is true. For example, x -> sqrt(2) is not a legal
+-   * elimination if we are producing models. This is because we care about the
+-   * value of x, and its value must be computed (approximated) by the
+-   * non-linear solver.
+-   */
+-  bool isLegalElimination(TNode x, TNode val);
+   //--------------------------------- private initialization
+   /**
+    * Called to set the official equality engine. This should be done by
+diff --git a/src/theory/theory_rewriter.cpp b/src/theory/theory_rewriter.cpp
+index 5c755b796..a4ef7dd78 100644
+--- a/src/theory/theory_rewriter.cpp
++++ b/src/theory/theory_rewriter.cpp
+@@ -84,10 +84,10 @@ TrustNode TheoryRewriter::rewriteEqualityExtWithProof(Node node)
+   return TrustNode::null();
+ }
+ 
+-TrustNode TheoryRewriter::expandDefinition(Node node)
++Node TheoryRewriter::expandDefinition(Node node)
+ {
+   // no expansion
+-  return TrustNode::null();
++  return Node::null();
+ }
+ 
+ Node TheoryRewriter::rewriteViaRule(ProofRewriteRule pr, const Node& n)
+diff --git a/src/theory/theory_rewriter.h b/src/theory/theory_rewriter.h
+index 0b98258c1..be5affed4 100644
+--- a/src/theory/theory_rewriter.h
++++ b/src/theory/theory_rewriter.h
+@@ -169,11 +169,8 @@ class TheoryRewriter
+ 
+   /**
+    * Expand definitions in the term node. This returns a term that is
+-   * equivalent to node. It wraps this term in a TrustNode of kind
+-   * TrustNodeKind::REWRITE. If node is unchanged by this method, the
+-   * null TrustNode may be returned. This is an optimization to avoid
+-   * constructing the trivial equality (= node node) internally within
+-   * TrustNode.
++   * equivalent to node. If node is unchanged by this method, the
++   * null Node may be returned.
+    *
+    * The purpose of this method is typically to eliminate the operators in node
+    * that are syntax sugar that cannot otherwise be eliminated during rewriting.
+@@ -188,8 +185,11 @@ class TheoryRewriter
+    * Where possible rewrite rules should be used, definitions should only be
+    * used when rewrites are not possible, for example in handling
+    * under-specified operations using partially defined functions.
++   *
++   * @param node The node to expand.
++   * @return the expanded form of node.
+    */
+-  virtual TrustNode expandDefinition(Node node);
++  virtual Node expandDefinition(Node node);
+ 
+   /**
+    * Rewrite n based on the proof rewrite rule id.
+-- 
+2.47.1
+

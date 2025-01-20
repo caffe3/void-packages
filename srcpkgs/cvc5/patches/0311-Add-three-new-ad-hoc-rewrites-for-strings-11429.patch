@@ -1,0 +1,568 @@
+From ca078a520eb8804ae57f9af6333f3409ba4aadc2 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 16 Jan 2025 08:16:09 -0600
+Subject: [PATCH 311/312] Add three new ad-hoc rewrites for strings (#11429)
+
+The first reasons by multiset approximation, a Eunoia definition is
+given.
+
+The remaing two are macros which will be elaborated in further PRs.
+---
+ include/cvc5/cvc5_proof_rule.h               |  43 +++
+ proofs/eo/cpc/rules/Strings.eo               |  58 ++++
+ src/api/cpp/cvc5_proof_rule_template.cpp     |   6 +
+ src/proof/alf/alf_printer.cpp                |   4 +
+ src/theory/strings/sequences_rewriter.cpp    | 307 +++++++++++--------
+ src/theory/strings/sequences_rewriter.h      |   4 +
+ test/regress/cli/CMakeLists.txt              |   1 +
+ test/regress/cli/regress0/strings/rw_65.smt2 |   8 +
+ 8 files changed, 308 insertions(+), 123 deletions(-)
+ create mode 100644 test/regress/cli/regress0/strings/rw_65.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 1ca763dec..7c86f5bd8 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2970,6 +2970,49 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(BV_REPEAT_ELIM),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Strings -- String contains multiset subset**
++   *
++   * .. math::
++   *    contains(s,t) = \bot
++   *
++   * where the multiset overapproximation of :math:`s` can be shown to not
++   * contain the multiset abstraction of :math:`t` based on the reasoning
++   * described in the paper Reynolds et al, CAV 2019, "High-Level Abstractions
++   * for Simplifying Extended String Constraints in SMT".
++   * \endverbatim
++   */
++  EVALUE(STR_CTN_MULTISET_SUBSET),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Strings -- String equality length unify prefix**
++   *
++   * .. math::
++   *    (s = \mathit{str}.\text{++}(t_1, \ldots, t_n)) = 
++   *    (s = \mathit{str}.\text{++}(t_1, \ldots t_i)) \wedge
++   *    t_{i+1} = \epsilon \wedge \ldots \wedge t_n = \epsilon
++   *
++   * where we can show :math:`s` has a length that is at least the length
++   * of :math:`\text{++}(t_1, \ldots t_i)`.
++   * \endverbatim
++   */
++  EVALUE(MACRO_STR_EQ_LEN_UNIFY_PREFIX),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Strings -- String equality length unify**
++   *
++   * .. math::
++   *    (\mathit{str}.\text{++}(s_1, \ldots, s_n) = \mathit{str}.\text{++}(t_1, \ldots, t_m)) =
++   *    (r_1 = u_1 \wedge \ldots r_k = u_k)
++   *
++   * where for each :math:`i = 1, \ldots, k`, we can show the length of
++   * :math:`r_i` and :math:`u_i` are equal,
++   * :math:`s_1, \ldots, s_n` is :math:`r_1, \ldots, r_k`, and
++   * :math:`t_1, \ldots, t_m` is :math:`u_1, \ldots, u_k`.
++   * \endverbatim
++   */
++  EVALUE(MACRO_STR_EQ_LEN_UNIFY),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Strings -- string indexof regex evaluation**
+diff --git a/proofs/eo/cpc/rules/Strings.eo b/proofs/eo/cpc/rules/Strings.eo
+index c40616899..8c857e3ae 100644
+--- a/proofs/eo/cpc/rules/Strings.eo
++++ b/proofs/eo/cpc/rules/Strings.eo
+@@ -583,3 +583,61 @@
+   :requires ((($str_mk_str_in_re_sigma_star s r) b))
+   :conclusion (= (str.in_re s (re.* r)) b)
+ )
++
++;;;;; ProofRewriteRule::STR_CTN_MULTISET_SUBSET
++
++; program: $str_multiset_overapprox
++; args:
++; - s (Seq T): the term.
++; return: >
++;   The multiset over-approximation of s, which is a (flattened) concatenation
++;   term whose components represent an overapproximation of what s may contain.
++(program $str_multiset_overapprox ((T Type) (s (Seq T)) (ss (Seq T) :list) (t (Seq T)) (r (Seq T)) (n Int) (m Int))
++    ((Seq T)) (Seq T)
++    (
++      (($str_multiset_overapprox (str.++ s ss))        (eo::list_concat str.++ ($str_multiset_overapprox s) ($str_multiset_overapprox ss)))
++      (($str_multiset_overapprox (str.substr s n m))   ($str_to_flat_form s false))
++      (($str_multiset_overapprox (str.replace s t r))  (eo::list_concat str.++ ($str_multiset_overapprox s) ($str_multiset_overapprox r)))
++      (($str_multiset_overapprox s)                    ($str_to_flat_form s false))
++    )
++)
++
++; program: $str_is_multiset_subset_strict
++; args:
++; - s (Seq T): the multiset approximation of a string term.
++; - t (Seq T): the multiset (over)approximation of a string term.
++; - b Bool: whether we have found that a character from s was not contained in t.
++; return: >
++;   True if the string approximated by s is definitely not contained in the string
++;   approximated by t. We compute this by iteratively removing the components of
++;   s from t, remembering if we have removed a character.
++; note: This method only supports strings currently.
++(program $str_is_multiset_subset_strict ((T Type :implicit) (id (Seq T)) (s (Seq T)) (ss (Seq T) :list) (t (Seq T)) (b Bool))
++    ((Seq T) (Seq T) Bool) Bool
++    (
++      (($str_is_multiset_subset_strict (str.++ s ss) t b) (eo::define ((tr ($nary_remove str.++ "" s t)))
++                                                            (eo::define ((nrem (eo::is_eq t tr)))
++                                                              ($str_is_multiset_subset_strict ss tr 
++                                                                ; we update b to true if we successfully remove a character from s
++                                                                (eo::ite b true (eo::ite nrem (eo::is_str s) false))))))
++      (($str_is_multiset_subset_strict s t b)             (eo::ite b 
++                                                            ; remaining characters in t must be constants only
++                                                            (eo::is_str ($str_from_flat_form t false))
++                                                            false))
++    )
++)
++
++; rule: str-ctn-multiset-subset
++; implements: ProofRewriteRule::STR_CTN_MULTISET_SUBSET
++; args:
++; - eq Bool: The equality between a contains predicate and false
++; requires: >
++;   The contains predicate can be shown false by multiset reasoning
++; conclusion: The given equality.
++(declare-rule str-ctn-multiset-subset ((T Type) (t (Seq T)) (s (Seq T)))
++  :args ((= (str.contains t s) false))
++  :requires ((($str_is_multiset_subset_strict
++                ($str_to_flat_form s false)
++                ($str_multiset_overapprox t) false) true))
++  :conclusion (= (str.contains t s) false)
++)
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index f8e6d5cac..ec8899c27 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -284,6 +284,12 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::BV_MULT_SIMPLIFY: return "bv-mult-simplify";
+     case ProofRewriteRule::BV_BITWISE_SLICING: return "bv-bitwise-slicing";
+     case ProofRewriteRule::BV_REPEAT_ELIM: return "bv-repeat-elim";
++    case ProofRewriteRule::STR_CTN_MULTISET_SUBSET:
++      return "str-ctn-multiset-subset";
++    case ProofRewriteRule::MACRO_STR_EQ_LEN_UNIFY_PREFIX:
++      return "macro-str-eq-len-unify-prefix";
++    case ProofRewriteRule::MACRO_STR_EQ_LEN_UNIFY:
++      return "macro-str-eq-len-unify";
+     case ProofRewriteRule::STR_INDEXOF_RE_EVAL: return "str-indexof-re-eval";
+     case ProofRewriteRule::STR_REPLACE_RE_EVAL: return "str-replace-re-eval";
+     case ProofRewriteRule::STR_REPLACE_RE_ALL_EVAL:
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index e2e86bf60..2ec3e4731 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -294,6 +294,10 @@ bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id, const Node& n)
+     case ProofRewriteRule::RE_INTER_UNION_INCLUSION:
+     case ProofRewriteRule::BV_REPEAT_ELIM:
+     case ProofRewriteRule::BV_BITWISE_SLICING: return true;
++    case ProofRewriteRule::STR_CTN_MULTISET_SUBSET:
++      // only strings are supported, since it is non-trivial to show
++      // distinctness of sequence characters.
++      return n[0][0].getType().isString();
+     case ProofRewriteRule::STR_IN_RE_EVAL:
+       Assert(n[0].getKind() == Kind::STRING_IN_REGEXP && n[0][0].isConst());
+       return canEvaluateRegExp(n[0][1]);
+diff --git a/src/theory/strings/sequences_rewriter.cpp b/src/theory/strings/sequences_rewriter.cpp
+index 740e7cc63..59004795c 100644
+--- a/src/theory/strings/sequences_rewriter.cpp
++++ b/src/theory/strings/sequences_rewriter.cpp
+@@ -65,6 +65,12 @@ SequencesRewriter::SequencesRewriter(NodeManager* nm,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::MACRO_SUBSTR_STRIP_SYM_LENGTH,
+                            TheoryRewriteCtx::POST_DSL);
++  registerProofRewriteRule(ProofRewriteRule::STR_CTN_MULTISET_SUBSET,
++                           TheoryRewriteCtx::DSL_SUBCALL);
++  registerProofRewriteRule(ProofRewriteRule::MACRO_STR_EQ_LEN_UNIFY_PREFIX,
++                           TheoryRewriteCtx::POST_DSL);
++  registerProofRewriteRule(ProofRewriteRule::MACRO_STR_EQ_LEN_UNIFY,
++                           TheoryRewriteCtx::POST_DSL);
+   registerProofRewriteRule(ProofRewriteRule::STR_INDEXOF_RE_EVAL,
+                            TheoryRewriteCtx::POST_DSL);
+   registerProofRewriteRule(ProofRewriteRule::STR_REPLACE_RE_EVAL,
+@@ -97,6 +103,34 @@ Node SequencesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       StringsEntail sent(nullptr, ae, nullptr);
+       return rewriteViaMacroSubstrStripSymLength(n, rule, sent);
+     }
++    case ProofRewriteRule::STR_CTN_MULTISET_SUBSET:
++    {
++      if (n.getKind() == Kind::STRING_CONTAINS)
++      {
++        if (d_stringsEntail.checkMultisetSubset(n[0], n[1]))
++        {
++          return d_nm->mkConst(false);
++        }
++      }
++    }
++    break;
++    case ProofRewriteRule::MACRO_STR_EQ_LEN_UNIFY_PREFIX:
++    {
++      if (n.getKind() == Kind::EQUAL)
++      {
++        return rewriteViaStrEqLenUnifyPrefix(n);
++      }
++    }
++    break;
++    case ProofRewriteRule::MACRO_STR_EQ_LEN_UNIFY:
++    {
++      if (n.getKind() == Kind::EQUAL)
++      {
++        Rewrite rule;
++        return rewriteViaStrEqLenUnify(n, rule);
++      }
++    }
++    break;
+     case ProofRewriteRule::STR_INDEXOF_RE_EVAL:
+     {
+       return rewriteViaStrIndexofReEval(n);
+@@ -296,7 +330,7 @@ Node SequencesRewriter::rewriteStrEqualityExt(Node node)
+       // We generally don't apply the extended equality rewriter if the
+       // original node was an equality but we may be able to do additional
+       // rewriting here, e.g.,
+-      // x++y = "" --> x = "" and y = ""
++      // x++y = "" --> x = "" and y = ""   
+       new_ret = returnRewrite(node, new_ret, Rewrite::STR_EQ_UNIFY);
+       return rewriteStrEqualityExt(new_ret);
+     }
+@@ -509,133 +543,29 @@ Node SequencesRewriter::rewriteStrEqualityExt(Node node)
+   //
+   // where yi' and yi'' correspond to some yj and
+   //   (<= (str.len x) (str.++ y1' ... ym'))
+-  for (unsigned i = 0; i < 2; i++)
++  new_ret = rewriteViaStrEqLenUnifyPrefix(node);
++  if (!new_ret.isNull())
+   {
+-    if (node[1 - i].getKind() == Kind::STRING_CONCAT)
+-    {
+-      new_ret = d_stringsEntail.inferEqsFromContains(node[i], node[1 - i]);
+-      if (!new_ret.isNull())
+-      {
+-        return returnRewrite(node, new_ret, Rewrite::STR_EQ_CONJ_LEN_ENTAIL);
+-      }
+-    }
++    return returnRewrite(node, new_ret, Rewrite::STR_EQ_CONJ_LEN_ENTAIL);
+   }
+ 
+-  if (node[0].getKind() == Kind::STRING_CONCAT
+-      && node[1].getKind() == Kind::STRING_CONCAT)
++  // (= (str.++ x_1 ... x_i x_{i + 1} ... x_n)
++  //    (str.++ y_1 ... y_j y_{j + 1} ... y_m)) --->
++  //  (and (= (str.++ x_1 ... x_i) (str.++ y_1 ... y_j))
++  //       (= (str.++ x_{i + 1} ... x_n) (str.++ y_{j + 1} ... y_m)))
++  //
++  // if (str.len (str.++ x_1 ... x_i)) = (str.len (str.++ y_1 ... y_j))
++  //
++  // This rewrite performs length-based equality splitting: If we can show
++  // that two prefixes have the same length, we can split an equality into
++  // two equalities, one over the prefixes and another over the suffixes.
++  Rewrite rule;
++  new_ret = rewriteViaStrEqLenUnify(node, rule);
++  if (!new_ret.isNull())
+   {
+-    // (= (str.++ x_1 ... x_i x_{i + 1} ... x_n)
+-    //    (str.++ y_1 ... y_j y_{j + 1} ... y_m)) --->
+-    //  (and (= (str.++ x_1 ... x_i) (str.++ y_1 ... y_j))
+-    //       (= (str.++ x_{i + 1} ... x_n) (str.++ y_{j + 1} ... y_m)))
+-    //
+-    // if (str.len (str.++ x_1 ... x_i)) = (str.len (str.++ y_1 ... y_j))
+-    //
+-    // This rewrite performs length-based equality splitting: If we can show
+-    // that two prefixes have the same length, we can split an equality into
+-    // two equalities, one over the prefixes and another over the suffixes.
+-    std::vector<Node> v0, v1;
+-    utils::getConcat(node[0], v0);
+-    utils::getConcat(node[1], v1);
+-    size_t startRhs = 0;
+-    for (size_t i = 0, size0 = v0.size(); i <= size0; i++)
+-    {
+-      const std::vector<Node> pfxv0(v0.begin(), v0.begin() + i);
+-      Node pfx0 = utils::mkConcat(pfxv0, stype);
+-      for (size_t j = startRhs, size1 = v1.size(); j <= size1; j++)
+-      {
+-        if (!(i == 0 && j == 0) && !(i == v0.size() && j == v1.size()))
+-        {
+-          std::vector<Node> pfxv1(v1.begin(), v1.begin() + j);
+-          Node pfx1 = utils::mkConcat(pfxv1, stype);
+-          Node lenPfx0 = nm->mkNode(Kind::STRING_LENGTH, pfx0);
+-          Node lenPfx1 = nm->mkNode(Kind::STRING_LENGTH, pfx1);
+-
+-          if (d_arithEntail.checkEq(lenPfx0, lenPfx1))
+-          {
+-            std::vector<Node> sfxv0(v0.begin() + i, v0.end());
+-            std::vector<Node> sfxv1(v1.begin() + j, v1.end());
+-            Node ret = nm->mkNode(Kind::AND,
+-                                  pfx0.eqNode(pfx1),
+-                                  utils::mkConcat(sfxv0, stype)
+-                                      .eqNode(utils::mkConcat(sfxv1, stype)));
+-            return returnRewrite(node, ret, Rewrite::SPLIT_EQ);
+-          }
+-          else if (d_arithEntail.check(lenPfx1, lenPfx0, true))
+-          {
+-            // The prefix on the right-hand side is strictly longer than the
+-            // prefix on the left-hand side, so we try to strip the right-hand
+-            // prefix by the length of the left-hand prefix
+-            //
+-            // Example:
+-            // (= (str.++ "A" x y) (str.++ x "AB" z)) --->
+-            //   (and (= (str.++ "A" x) (str.++ x "A")) (= y (str.++ "B" z)))
+-            std::vector<Node> rpfxv1;
+-            if (d_stringsEntail.stripSymbolicLength(
+-                    pfxv1, rpfxv1, 1, lenPfx0, true))
+-            {
+-              // The rewrite requires the full left-hand prefix length to be
+-              // stripped (otherwise we would have to keep parts of the
+-              // left-hand prefix).
+-              if (lenPfx0.isConst() && lenPfx0.getConst<Rational>().isZero())
+-              {
+-                std::vector<Node> sfxv0(v0.begin() + i, v0.end());
+-                pfxv1.insert(pfxv1.end(), v1.begin() + j, v1.end());
+-                Node ret =
+-                    nm->mkNode(Kind::AND,
+-                               pfx0.eqNode(utils::mkConcat(rpfxv1, stype)),
+-                               utils::mkConcat(sfxv0, stype)
+-                                   .eqNode(utils::mkConcat(pfxv1, stype)));
+-                return returnRewrite(node, ret, Rewrite::SPLIT_EQ_STRIP_R);
+-              }
+-            }
+-
+-            // If the prefix of the right-hand side is (strictly) longer than
+-            // the prefix of the left-hand side, we can advance the left-hand
+-            // side (since the length of the right-hand side is only increasing
+-            // in the inner loop)
+-            break;
+-          }
+-          else if (d_arithEntail.check(lenPfx0, lenPfx1, true))
+-          {
+-            // The prefix on the left-hand side is strictly longer than the
+-            // prefix on the right-hand side, so we try to strip the left-hand
+-            // prefix by the length of the right-hand prefix
+-            //
+-            // Example:
+-            // (= (str.++ x "AB" z) (str.++ "A" x y)) --->
+-            //   (and (= (str.++ x "A") (str.++ "A" x)) (= (str.++ "B" z) y))
+-            std::vector<Node> sfxv0 = pfxv0;
+-            std::vector<Node> rpfxv0;
+-            if (d_stringsEntail.stripSymbolicLength(
+-                    sfxv0, rpfxv0, 1, lenPfx1, true))
+-            {
+-              // The rewrite requires the full right-hand prefix length to be
+-              // stripped (otherwise we would have to keep parts of the
+-              // right-hand prefix).
+-              if (lenPfx1.isConst() && lenPfx1.getConst<Rational>().isZero())
+-              {
+-                sfxv0.insert(sfxv0.end(), v0.begin() + i, v0.end());
+-                std::vector<Node> sfxv1(v1.begin() + j, v1.end());
+-                Node ret =
+-                    nm->mkNode(Kind::AND,
+-                               utils::mkConcat(rpfxv0, stype).eqNode(pfx1),
+-                               utils::mkConcat(sfxv0, stype)
+-                                   .eqNode(utils::mkConcat(sfxv1, stype)));
+-                return returnRewrite(node, ret, Rewrite::SPLIT_EQ_STRIP_L);
+-              }
+-            }
+-
+-            // If the prefix of the left-hand side is (strictly) longer than
+-            // the prefix of the right-hand side, then we don't need to check
+-            // that right-hand prefix for future left-hand prefixes anymore
+-            // (since they are increasing in length)
+-            startRhs = j + 1;
+-          }
+-        }
+-      }
+-    }
++    return returnRewrite(node, new_ret, rule);
+   }
++
+   return node;
+ }
+ 
+@@ -1334,6 +1264,137 @@ Node SequencesRewriter::rewriteLoopRegExp(TNode node)
+   return returnRewrite(node, retNode, Rewrite::RE_LOOP);
+ }
+ 
++Node SequencesRewriter::rewriteViaStrEqLenUnifyPrefix(const Node& node)
++{
++  Node newRet;
++  for (unsigned i = 0; i < 2; i++)
++  {
++    if (node[1 - i].getKind() == Kind::STRING_CONCAT)
++    {
++      newRet = d_stringsEntail.inferEqsFromContains(node[i], node[1 - i]);
++      if (!newRet.isNull())
++      {
++        return newRet;
++      }
++    }
++  }
++  return Node::null();
++}
++
++Node SequencesRewriter::rewriteViaStrEqLenUnify(const Node& node, Rewrite& rule)
++{
++  if (node[0].getKind() == Kind::STRING_CONCAT
++      && node[1].getKind() == Kind::STRING_CONCAT)
++  {
++    std::vector<Node> v0, v1;
++    utils::getConcat(node[0], v0);
++    utils::getConcat(node[1], v1);
++    size_t startRhs = 0;
++    TypeNode stype = node[0].getType();
++    for (size_t i = 0, size0 = v0.size(); i <= size0; i++)
++    {
++      const std::vector<Node> pfxv0(v0.begin(), v0.begin() + i);
++      Node pfx0 = utils::mkConcat(pfxv0, stype);
++      for (size_t j = startRhs, size1 = v1.size(); j <= size1; j++)
++      {
++        if (!(i == 0 && j == 0) && !(i == v0.size() && j == v1.size()))
++        {
++          std::vector<Node> pfxv1(v1.begin(), v1.begin() + j);
++          Node pfx1 = utils::mkConcat(pfxv1, stype);
++          Node lenPfx0 = d_nm->mkNode(Kind::STRING_LENGTH, pfx0);
++          Node lenPfx1 = d_nm->mkNode(Kind::STRING_LENGTH, pfx1);
++
++          if (d_arithEntail.checkEq(lenPfx0, lenPfx1))
++          {
++            std::vector<Node> sfxv0(v0.begin() + i, v0.end());
++            std::vector<Node> sfxv1(v1.begin() + j, v1.end());
++            Node ret = d_nm->mkNode(Kind::AND,
++                                    pfx0.eqNode(pfx1),
++                                    utils::mkConcat(sfxv0, stype)
++                                        .eqNode(utils::mkConcat(sfxv1, stype)));
++            rule = Rewrite::SPLIT_EQ;
++            return ret;
++          }
++          else if (d_arithEntail.check(lenPfx1, lenPfx0, true))
++          {
++            // The prefix on the right-hand side is strictly longer than the
++            // prefix on the left-hand side, so we try to strip the right-hand
++            // prefix by the length of the left-hand prefix
++            //
++            // Example:
++            // (= (str.++ "A" x y) (str.++ x "AB" z)) --->
++            //   (and (= (str.++ "A" x) (str.++ x "A")) (= y (str.++ "B" z)))
++            std::vector<Node> rpfxv1;
++            if (d_stringsEntail.stripSymbolicLength(
++                    pfxv1, rpfxv1, 1, lenPfx0, true))
++            {
++              // The rewrite requires the full left-hand prefix length to be
++              // stripped (otherwise we would have to keep parts of the
++              // left-hand prefix).
++              if (lenPfx0.isConst() && lenPfx0.getConst<Rational>().isZero())
++              {
++                std::vector<Node> sfxv0(v0.begin() + i, v0.end());
++                pfxv1.insert(pfxv1.end(), v1.begin() + j, v1.end());
++                Node ret =
++                    d_nm->mkNode(Kind::AND,
++                                 pfx0.eqNode(utils::mkConcat(rpfxv1, stype)),
++                                 utils::mkConcat(sfxv0, stype)
++                                     .eqNode(utils::mkConcat(pfxv1, stype)));
++                rule = Rewrite::SPLIT_EQ_STRIP_R;
++                return ret;
++              }
++            }
++
++            // If the prefix of the right-hand side is (strictly) longer than
++            // the prefix of the left-hand side, we can advance the left-hand
++            // side (since the length of the right-hand side is only increasing
++            // in the inner loop)
++            break;
++          }
++          else if (d_arithEntail.check(lenPfx0, lenPfx1, true))
++          {
++            // The prefix on the left-hand side is strictly longer than the
++            // prefix on the right-hand side, so we try to strip the left-hand
++            // prefix by the length of the right-hand prefix
++            //
++            // Example:
++            // (= (str.++ x "AB" z) (str.++ "A" x y)) --->
++            //   (and (= (str.++ x "A") (str.++ "A" x)) (= (str.++ "B" z) y))
++            std::vector<Node> sfxv0 = pfxv0;
++            std::vector<Node> rpfxv0;
++            if (d_stringsEntail.stripSymbolicLength(
++                    sfxv0, rpfxv0, 1, lenPfx1, true))
++            {
++              // The rewrite requires the full right-hand prefix length to be
++              // stripped (otherwise we would have to keep parts of the
++              // right-hand prefix).
++              if (lenPfx1.isConst() && lenPfx1.getConst<Rational>().isZero())
++              {
++                sfxv0.insert(sfxv0.end(), v0.begin() + i, v0.end());
++                std::vector<Node> sfxv1(v1.begin() + j, v1.end());
++                Node ret =
++                    d_nm->mkNode(Kind::AND,
++                                 utils::mkConcat(rpfxv0, stype).eqNode(pfx1),
++                                 utils::mkConcat(sfxv0, stype)
++                                     .eqNode(utils::mkConcat(sfxv1, stype)));
++                rule = Rewrite::SPLIT_EQ_STRIP_L;
++                return ret;
++              }
++            }
++
++            // If the prefix of the left-hand side is (strictly) longer than
++            // the prefix of the right-hand side, then we don't need to check
++            // that right-hand prefix for future left-hand prefixes anymore
++            // (since they are increasing in length)
++            startRhs = j + 1;
++          }
++        }
++      }
++    }
++  }
++  return Node::null();
++}
++
+ Node SequencesRewriter::rewriteViaReLoopElim(const Node& node)
+ {
+   if (node.getKind() != Kind::REGEXP_LOOP)
+diff --git a/src/theory/strings/sequences_rewriter.h b/src/theory/strings/sequences_rewriter.h
+index ba26e251d..e465ee2a6 100644
+--- a/src/theory/strings/sequences_rewriter.h
++++ b/src/theory/strings/sequences_rewriter.h
+@@ -140,6 +140,10 @@ class SequencesRewriter : public TheoryRewriter
+    */
+   Node returnRewrite(Node node, Node ret, Rewrite r);
+   //-------------------- ProofRewriteRule
++  /** Rewrite based on STR_EQ_LEN_UNIFY_PREFIX */
++  Node rewriteViaStrEqLenUnifyPrefix(const Node& n);
++  /** Rewrite based on STR_EQ_LEN_UNIFY */
++  Node rewriteViaStrEqLenUnify(const Node& n, Rewrite& rule);
+   /** Rewrite based on RE_LOOP_ELIM */
+   Node rewriteViaReLoopElim(const Node& n);
+   /** Rewrite based on RE_INTER_UNION_INCLUSION */
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index d2571d181..22eb5b283 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1953,6 +1953,7 @@ set(regress_0_tests
+   regress0/strings/rewrites-re-concat.smt2
+   regress0/strings/rewrites-v2.smt2
+   regress0/strings/rw_545.smt2 
++  regress0/strings/rw_65.smt2
+   regress0/strings/sigma-star-mod-3.smt2
+   regress0/strings/simple-include-mem.smt2
+   regress0/strings/simple-include-subrange.smt2
+diff --git a/test/regress/cli/regress0/strings/rw_65.smt2 b/test/regress/cli/regress0/strings/rw_65.smt2
+new file mode 100644
+index 000000000..b7a28157c
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/rw_65.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic QF_SLIA)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () Int)
++(assert (not (= (str.at x (str.indexof "B" "A" z)) "")))
++(check-sat)
++(exit)
+-- 
+2.47.1
+

@@ -1,0 +1,211 @@
+From 665292e4376a68f07fa102f46a671aee5795ea9a Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 22 Nov 2024 16:15:32 -0600
+Subject: [PATCH 196/312] Add more cases for EVALUATE in Eunoia (#11359)
+
+Mostly focusing on bitvector operators.
+---
+ proofs/eo/cpc/Cpc.eo                 | 48 +++++++++++++++++++++++-----
+ proofs/eo/cpc/programs/BitVectors.eo | 48 ++++++++++++++++++++++++++++
+ src/proof/alf/alf_printer.cpp        | 19 ++++++++++-
+ 3 files changed, 106 insertions(+), 9 deletions(-)
+
+diff --git a/proofs/eo/cpc/Cpc.eo b/proofs/eo/cpc/Cpc.eo
+index 7d39420d9..b00f385e3 100644
+--- a/proofs/eo/cpc/Cpc.eo
++++ b/proofs/eo/cpc/Cpc.eo
+@@ -95,7 +95,7 @@
+ (program $run_evaluate ((T Type) (S Type) 
+                        (x T) (y T) (z S) (ys S :list)
+                        (b Bool) (n Int) (m Int)
+-                       (xb (BitVec m)) (ybs (BitVec m) :list)
++                       (xb (BitVec m)) (yb (BitVec m)) (ybs (BitVec m) :list)
+                        (xs (Seq T)) (yss (Seq T) :list))
+     (S) S
+     (
+@@ -138,7 +138,8 @@
+                                             (eo::ite (eo::is_eq ey 0) ex (eo::zmod ex ey)))))
+       (($run_evaluate (to_real x))         (eo::to_q ($run_evaluate x)))
+       (($run_evaluate (to_int x))          (eo::to_z ($run_evaluate x)))
+-      (($run_evaluate (is_int x))          (eo::is_eq (eo::to_q (eo::to_z x)) (eo::to_q x)))
++      (($run_evaluate (is_int x))          (eo::define ((ex ($run_evaluate x))) (eo::is_eq (eo::to_q (eo::to_z ex)) (eo::to_q ex))))
++      (($run_evaluate (abs x))             (eo::define ((ex ($run_evaluate x))) (eo::ite (eo::is_neg ex) (eo::neg ex) ex)))
+       (($run_evaluate (int.log2 x))        ($arith_eval_int_log_2 ($run_evaluate x)))
+       (($run_evaluate (int.pow2 x))        ($arith_eval_int_pow_2 ($run_evaluate x)))
+       (($run_evaluate (int.ispow2 x))      ($arith_eval_int_is_pow_2 ($run_evaluate x)))
+@@ -160,6 +161,12 @@
+                                                  (eo::extract ex (eo::add r (eo::len ey)) (eo::len ex)))
+                                              )
+                                            ))))
++      (($run_evaluate (str.prefixof x y)) (eo::define ((ex ($run_evaluate x)))
++                                          (eo::define ((ey ($run_evaluate y)))
++                                          (eo::define ((r (eo::find ex ey)))
++                                            (eo::ite (eo::is_eq r 0) true
++                                            (eo::ite (eo::is_z r) false
++                                              (str.prefixof ex ey)))))))
+       (($run_evaluate (str.indexof x y n)) (eo::define ((en ($run_evaluate n)))
+                                            (eo::ite (eo::is_neg en) -1
+                                              (eo::define ((ex ($run_evaluate x)))
+@@ -170,7 +177,10 @@
+                                                (eo::define ((r (eo::find (eo::to_str exs) (eo::to_str ey))))
+                                                (eo::ite (eo::is_neg r) r (eo::add n r)))))))))))
+       (($run_evaluate (str.to_code x))     (eo::define ((ex ($run_evaluate x)))
+-                                             (eo::ite (eo::is_eq (eo::len ex) 1) (eo::to_z ex) -1)))
++                                           (eo::define ((len (eo::len ex)))
++                                             (eo::ite (eo::is_eq len 1) (eo::to_z ex)
++                                             (eo::ite (eo::is_z len) -1
++                                               (str.to_code ex))))))
+       (($run_evaluate (str.from_code x))   (eo::define ((ex ($run_evaluate x)))
+                                              (eo::ite ($str_is_code_point ex) (eo::to_str x) "")))
+ 
+@@ -181,15 +191,37 @@
+       (($run_evaluate (bvmul xb ybs))      (eo::mul ($run_evaluate xb) ($run_evaluate ybs)))
+       (($run_evaluate (bvand xb ybs))      (eo::and ($run_evaluate xb) ($run_evaluate ybs)))
+       (($run_evaluate (bvor xb ybs))       (eo::or ($run_evaluate xb) ($run_evaluate ybs)))
++      (($run_evaluate (bvxor xb ybs))      (eo::xor ($run_evaluate xb) ($run_evaluate ybs)))
+       (($run_evaluate (concat x ys))       (eo::concat ($run_evaluate x) ($run_evaluate ys)))
+-      (($run_evaluate (bvsub x y))         (eo::add ($run_evaluate x) (eo::neg ($run_evaluate y))))
++      (($run_evaluate (bvsub xb yb))       (eo::add ($run_evaluate xb) (eo::neg ($run_evaluate yb))))
+       (($run_evaluate (extract m n x))     (eo::extract ($run_evaluate x) n m)) ; note swap n/m
+-      (($run_evaluate (bvult x y))         ($run_evaluate (< (eo::to_z x) (eo::to_z y))))
+-      (($run_evaluate (bvule x y))         ($run_evaluate (<= (eo::to_z x) (eo::to_z y))))
+-      (($run_evaluate (bvugt x y))         ($run_evaluate (> (eo::to_z x) (eo::to_z y))))
+-      (($run_evaluate (bvuge x y))         ($run_evaluate (>= (eo::to_z x) (eo::to_z y))))
++      (($run_evaluate (bvult xb yb))       ($run_evaluate (bvugt yb xb)))
++      (($run_evaluate (bvule xb yb))       ($run_evaluate (bvuge yb xb)))
++      (($run_evaluate (bvugt xb yb))       (eo::define ((ex (eo::to_z ($run_evaluate xb))))
++                                           (eo::define ((ey (eo::to_z ($run_evaluate yb))))
++                                             (eo::gt ex ey))))
++      (($run_evaluate (bvuge xb yb))       (eo::define ((ex ($run_evaluate xb)))
++                                           (eo::define ((ey ($run_evaluate yb)))
++                                             (eo::or (eo::gt ex ey) (eo::is_eq ex ey)))))
++      (($run_evaluate (bvslt xb yb))       ($run_evaluate (bvsgt yb xb)))
++      (($run_evaluate (bvsle xb yb))       ($run_evaluate (bvsge yb xb)))
++      (($run_evaluate (bvsgt xb yb))       (eo::define ((ex ($bv_to_signed_int ($run_evaluate xb))))
++                                           (eo::define ((ey ($bv_to_signed_int ($run_evaluate yb))))
++                                             (eo::gt ex ey))))
++      (($run_evaluate (bvsge xb yb))       (eo::define ((ex ($bv_to_signed_int ($run_evaluate xb))))
++                                           (eo::define ((ey ($bv_to_signed_int ($run_evaluate yb))))
++                                             (eo::or (eo::gt ex ey) (eo::is_eq ex ey)))))
++      (($run_evaluate (repeat n xb))       ($bv_eval_repeat ($run_evaluate n) ($run_evaluate xb)))
++      (($run_evaluate (sign_extend n xb))  (eo::define ((ex ($run_evaluate xb)))
++                                              (eo::concat ($bv_eval_repeat ($run_evaluate n) ($bv_sign_bit ex)) ex)))
++      (($run_evaluate (zero_extend n xb))  (eo::define ((ex ($run_evaluate xb)))
++                                              (eo::concat ($bv_eval_repeat ($run_evaluate n) #b0) ex)))
+       (($run_evaluate (@bv n m))           (eo::to_bin ($run_evaluate m) ($run_evaluate n)))
+       (($run_evaluate (@bvsize x))         ($bv_bitwidth (eo::typeof x)))
++
++      ; arith bv conversions
++      (($run_evaluate (int2bv n m))        (eo::to_bin ($run_evaluate n) ($run_evaluate m)))
++      (($run_evaluate (bv2nat xb))         (eo::to_z ($run_evaluate xb)))
+   
+       (($run_evaluate z)                   z)
+     )
+diff --git a/proofs/eo/cpc/programs/BitVectors.eo b/proofs/eo/cpc/programs/BitVectors.eo
+index e83c29a04..2dd46304b 100644
+--- a/proofs/eo/cpc/programs/BitVectors.eo
++++ b/proofs/eo/cpc/programs/BitVectors.eo
+@@ -1,5 +1,53 @@
+ (include "../theories/BitVectors.eo")
+ 
++; define: $bv_sign_bit
++; args:
++; - b (BitVec m): The bitvector term.
++; return: The sign bit of b.
++(define $bv_sign_bit ((m Int :implicit) (b (BitVec m)))
++  (eo::define ((T (eo::typeof b)))
++  (eo::define ((w ($bv_bitwidth T)))
++  (eo::define ((wm1 (eo::add w -1)))
++    (eo::extract b wm1 wm1)))))
++
++; define: $bv_to_signed_int
++; args:
++; - b (BitVec m): The bitvector term.
++; return: The result of converting b to a signed integer.
++(define $bv_to_signed_int ((m Int :implicit) (b (BitVec m)))
++  (eo::define ((T (eo::typeof b)))
++  (eo::define ((w ($bv_bitwidth T)))
++  (eo::define ((wm1 (eo::add w -1)))
++  (eo::define ((z (eo::to_z (eo::extract b 0 (eo::add w -2)))))
++    (eo::ite (eo::is_eq ($bv_sign_bit b) #b1)
++      (eo::add (eo::neg ($arith_eval_int_pow_2 wm1)) z)
++      z))))))
++
++; define: $bv_eval_repeat_rec
++; args:
++; - n Int: The number of times to repeat, expected to be a non-negative numeral.
++; - b (BitVec m): The bitvector term, expected to be a binary constant.
++; return: The result of repeating b n times.
++(program $bv_eval_repeat_rec ((m Int) (n Int) (b (BitVec m)))
++  (Int (BitVec m)) (BitVec (eo::mul n m))
++  (
++    (($bv_eval_repeat_rec 0 b)  (eo::to_bin 0 0))
++    (($bv_eval_repeat_rec n b)  (eo::concat b ($bv_eval_repeat_rec (eo::add n -1) b)))
++  )
++)
++
++; define: $bv_eval_repeat
++; args:
++; - n Int: The number of times to repeat, expected to be a non-negative numeral.
++; - b (BitVec m): The bitvector term, expected to be a binary constant.
++; return: >
++;   The result of repeating b n times. If n is not a numeral or is negative,
++;   this returns the term (repeat n b).
++(define $bv_eval_repeat ((m Int :implicit) (n Int) (b (BitVec m)))
++  (eo::ite (eo::and (eo::is_z n) (eo::not (eo::is_neg n)))
++    ($bv_eval_repeat_rec n b)
++    (repeat n b)))
++
+ ; program: $bv_get_first_const_child
+ ; args:
+ ; - a (BitVec n): The term to find a constant child in.
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 702d45d54..d251f5690 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -343,9 +343,11 @@ bool AlfPrinter::canEvaluate(Node n)
+         case Kind::INTS_DIVISION_TOTAL:
+         case Kind::INTS_ISPOW2:
+         case Kind::INTS_LOG2:
++        case Kind::POW2:
+         case Kind::TO_REAL:
+         case Kind::TO_INTEGER:
+         case Kind::IS_INTEGER:
++        case Kind::ABS:
+         case Kind::STRING_CONCAT:
+         case Kind::STRING_SUBSTR:
+         case Kind::STRING_LENGTH:
+@@ -354,6 +356,7 @@ bool AlfPrinter::canEvaluate(Node n)
+         case Kind::STRING_INDEXOF:
+         case Kind::STRING_TO_CODE:
+         case Kind::STRING_FROM_CODE:
++        case Kind::STRING_PREFIX:
+         case Kind::BITVECTOR_EXTRACT:
+         case Kind::BITVECTOR_CONCAT:
+         case Kind::BITVECTOR_ADD:
+@@ -363,7 +366,21 @@ bool AlfPrinter::canEvaluate(Node n)
+         case Kind::BITVECTOR_MULT:
+         case Kind::BITVECTOR_AND:
+         case Kind::BITVECTOR_OR:
+-        case Kind::CONST_BITVECTOR_SYMBOLIC: break;
++        case Kind::BITVECTOR_XOR:
++        case Kind::BITVECTOR_ULT:
++        case Kind::BITVECTOR_ULE:
++        case Kind::BITVECTOR_UGT:
++        case Kind::BITVECTOR_UGE:
++        case Kind::BITVECTOR_SLT:
++        case Kind::BITVECTOR_SLE:
++        case Kind::BITVECTOR_SGT:
++        case Kind::BITVECTOR_SGE:
++        case Kind::BITVECTOR_REPEAT:
++        case Kind::BITVECTOR_SIGN_EXTEND:
++        case Kind::BITVECTOR_ZERO_EXTEND:
++        case Kind::CONST_BITVECTOR_SYMBOLIC:
++        case Kind::BITVECTOR_TO_NAT:
++        case Kind::INT_TO_BITVECTOR: break;
+         case Kind::EQUAL:
+         {
+           TypeNode tn = cur[0].getType();
+-- 
+2.47.1
+

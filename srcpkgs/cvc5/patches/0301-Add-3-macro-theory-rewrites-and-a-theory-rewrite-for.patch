@@ -1,0 +1,257 @@
+From 95b00b0e32647e1dc8ec4b339799040f45ada772 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 14 Jan 2025 08:10:07 -0600
+Subject: [PATCH 301/312] Add 3 macro theory rewrites and a theory rewrite for
+ sets (#11491)
+
+The macro theory rewrites include a rule that is analogous to the rule
+MACRO_ARRAYS_DISTINCT_ARRAYS rule. Recall this rule is non-trivial since
+it is difficult to establish a type independent criteria for
+"valueness".
+
+This adds 2 additional rules for evaluating intersection and different,
+and then a theory rewrite for "normalizing" union. The latter does not
+require reasoning about the valueness of elements whereas the former 2
+do, and thus will require further elaboration.
+---
+ include/cvc5/cvc5_proof_rule.h           |  61 +++++++++++++
+ src/api/cpp/cvc5_proof_rule_template.cpp |   7 ++
+ src/theory/sets/theory_sets_rewriter.cpp | 104 ++++++++++++++++-------
+ 3 files changed, 139 insertions(+), 33 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index f5cb9df0f..1ca763dec 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -3124,6 +3124,67 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(MACRO_SUBSTR_STRIP_SYM_LENGTH),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Sets -- distinct sets**
++   *
++   * .. math::
++   *   (A = B) = \bot
++   *
++   * where :math:`A` and :math:`B` are distinct set values, that is,
++   * the Node::isConst method returns true for both. This rule
++   * verifies that this returns true for both terms and that these
++   * terms are distinct.
++   *
++   * \endverbatim
++   */
++  EVALUE(MACRO_SETS_DISTINCT_SETS),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Sets -- sets intersection evaluate**
++   *
++   * .. math::
++   *   \mathit{set.inter}(t_1, t_2) = t
++   *
++   * where :math:`t_1` and :math:`t_2` are set values, that is,
++   * the Node::isConst method returns true for both, and
++   * where :math:`t` is an intersection of the component elements of
++   * :math:`t_1` and :math:`t_2`.
++   *
++   * \endverbatim
++   */
++  EVALUE(MACRO_SETS_INTER_EVAL),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Sets -- sets minus evaluate**
++   *
++   * .. math::
++   *   \mathit{set.minus}(t_1, t_2) = t
++   *
++   * where :math:`t_1` and :math:`t_2` are set values, that is,
++   * the Node::isConst method returns true for both, and
++   * where :math:`t` is the difference of the component elements of
++   * :math:`t_1` and :math:`t_2`.
++   *
++   * \endverbatim
++   */
++  EVALUE(MACRO_SETS_MINUS_EVAL),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Sets -- sets union normalize**
++   *
++   * .. math::
++   *   \mathit{set.union}(t_1, t_2) = t
++   * 
++   * where :math:`t` is a union of the component elements of
++   * :math:`t_1` and :math:`t_2`.
++   * 
++   * Note we use this rule only when :math:`t_1` and :math:`t_2` are set values,
++   * that is, the Node::isConst method returns true for both.
++   *
++   * \endverbatim
++   */
++  EVALUE(SETS_UNION_NORM),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Sets -- empty tester evaluation**
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index fda00a21d..f8e6d5cac 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -299,6 +299,13 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::STR_IN_RE_SIGMA_STAR: return "str-in-re-sigma-star";
+     case ProofRewriteRule::MACRO_SUBSTR_STRIP_SYM_LENGTH:
+       return "macro-substr-strip-sym-length";
++    case ProofRewriteRule::MACRO_SETS_DISTINCT_SETS:
++      return "macro-sets-distinct-sets";
++    case ProofRewriteRule::MACRO_SETS_INTER_EVAL:
++      return "macro-sets-inter-eval";
++    case ProofRewriteRule::MACRO_SETS_MINUS_EVAL:
++      return "macro-sets-minus-eval";
++    case ProofRewriteRule::SETS_UNION_NORM: return "sets-union-norm";
+     case ProofRewriteRule::SETS_IS_EMPTY_EVAL:
+       return "sets-is-empty-eval";
+     case ProofRewriteRule::SETS_INSERT_ELIM:
+diff --git a/src/theory/sets/theory_sets_rewriter.cpp b/src/theory/sets/theory_sets_rewriter.cpp
+index 5d7f38e2d..4d6ef5dc2 100644
+--- a/src/theory/sets/theory_sets_rewriter.cpp
++++ b/src/theory/sets/theory_sets_rewriter.cpp
+@@ -46,6 +46,14 @@ TheorySetsRewriter::TheorySetsRewriter(NodeManager* nm,
+                            TheoryRewriteCtx::DSL_SUBCALL);
+   registerProofRewriteRule(ProofRewriteRule::SETS_INSERT_ELIM,
+                            TheoryRewriteCtx::PRE_DSL);
++  registerProofRewriteRule(ProofRewriteRule::MACRO_SETS_DISTINCT_SETS,
++                           TheoryRewriteCtx::POST_DSL);
++  registerProofRewriteRule(ProofRewriteRule::MACRO_SETS_INTER_EVAL,
++                           TheoryRewriteCtx::POST_DSL);
++  registerProofRewriteRule(ProofRewriteRule::MACRO_SETS_MINUS_EVAL,
++                           TheoryRewriteCtx::POST_DSL);
++  registerProofRewriteRule(ProofRewriteRule::SETS_UNION_NORM,
++                           TheoryRewriteCtx::POST_DSL);
+ }
+ 
+ Node TheorySetsRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+@@ -77,6 +85,64 @@ Node TheorySetsRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
++    case ProofRewriteRule::MACRO_SETS_DISTINCT_SETS:
++    {
++      if (n.getKind() == Kind::EQUAL && n[0].isConst() && n[1].isConst()
++          && n[0] != n[1])
++      {
++        Assert(n[0].getType().isSet());
++        return d_nm->mkConst(false);
++      }
++    }
++    break;
++    case ProofRewriteRule::MACRO_SETS_INTER_EVAL:
++    {
++      if (n.getKind() == Kind::SET_INTER && n[0].isConst() && n[1].isConst())
++      {
++        std::set<Node> left = NormalForm::getElementsFromNormalConstant(n[0]);
++        std::set<Node> right = NormalForm::getElementsFromNormalConstant(n[1]);
++        std::set<Node> newSet;
++        std::set_intersection(left.begin(),
++                              left.end(),
++                              right.begin(),
++                              right.end(),
++                              std::inserter(newSet, newSet.begin()));
++        return NormalForm::elementsToSet(newSet, n.getType());
++      }
++    }
++    break;
++    case ProofRewriteRule::MACRO_SETS_MINUS_EVAL:
++    {
++      if (n.getKind() == Kind::SET_MINUS && n[0].isConst() && n[1].isConst())
++      {
++        std::set<Node> left = NormalForm::getElementsFromNormalConstant(n[0]);
++        std::set<Node> right = NormalForm::getElementsFromNormalConstant(n[1]);
++        std::set<Node> newSet;
++        std::set_difference(left.begin(),
++                            left.end(),
++                            right.begin(),
++                            right.end(),
++                            std::inserter(newSet, newSet.begin()));
++        return NormalForm::elementsToSet(newSet, n.getType());
++      }
++    }
++    break;
++    case ProofRewriteRule::SETS_UNION_NORM:
++    {
++      if (n.getKind() == Kind::SET_UNION && n[0].isConst() && n[1].isConst())
++      {
++        std::set<Node> left = NormalForm::getElementsFromNormalConstant(n[0]);
++        std::set<Node> right = NormalForm::getElementsFromNormalConstant(n[1]);
++        std::set<Node> newSet;
++        std::set_union(left.begin(),
++                       left.end(),
++                       right.begin(),
++                       right.end(),
++                       std::inserter(newSet, newSet.begin()));
++        return NormalForm::elementsToSet(newSet, n.getType());
++      }
++    }
++    break;
+     default: break;
+   }
+   return Node::null();
+@@ -204,17 +270,8 @@ RewriteResponse TheorySetsRewriter::postRewrite(TNode node) {
+       }
+       else if (node[0].isConst() && node[1].isConst())
+       {
+-        std::set<Node> left =
+-            NormalForm::getElementsFromNormalConstant(node[0]);
+-        std::set<Node> right =
+-            NormalForm::getElementsFromNormalConstant(node[1]);
+-        std::set<Node> newSet;
+-        std::set_difference(left.begin(),
+-                            left.end(),
+-                            right.begin(),
+-                            right.end(),
+-                            std::inserter(newSet, newSet.begin()));
+-        Node newNode = NormalForm::elementsToSet(newSet, node.getType());
++        Node newNode =
++            rewriteViaRule(ProofRewriteRule::MACRO_SETS_MINUS_EVAL, node);
+         Assert(newNode.isConst());
+         Trace("sets-postrewrite")
+             << "Sets::postRewrite returning " << newNode << std::endl;
+@@ -241,17 +298,8 @@ RewriteResponse TheorySetsRewriter::postRewrite(TNode node) {
+       }
+       else if (node[0].isConst() && node[1].isConst())
+       {
+-        std::set<Node> left =
+-            NormalForm::getElementsFromNormalConstant(node[0]);
+-        std::set<Node> right =
+-            NormalForm::getElementsFromNormalConstant(node[1]);
+-        std::set<Node> newSet;
+-        std::set_intersection(left.begin(),
+-                              left.end(),
+-                              right.begin(),
+-                              right.end(),
+-                              std::inserter(newSet, newSet.begin()));
+-        Node newNode = NormalForm::elementsToSet(newSet, node.getType());
++        Node newNode =
++            rewriteViaRule(ProofRewriteRule::MACRO_SETS_INTER_EVAL, node);
+         Assert(newNode.isConst() && newNode.getType() == node.getType());
+         Trace("sets-postrewrite")
+             << "Sets::postRewrite returning " << newNode << std::endl;
+@@ -285,17 +333,7 @@ RewriteResponse TheorySetsRewriter::postRewrite(TNode node) {
+       }
+       else if (node[0].isConst() && node[1].isConst())
+       {
+-        std::set<Node> left =
+-            NormalForm::getElementsFromNormalConstant(node[0]);
+-        std::set<Node> right =
+-            NormalForm::getElementsFromNormalConstant(node[1]);
+-        std::set<Node> newSet;
+-        std::set_union(left.begin(),
+-                       left.end(),
+-                       right.begin(),
+-                       right.end(),
+-                       std::inserter(newSet, newSet.begin()));
+-        Node newNode = NormalForm::elementsToSet(newSet, node.getType());
++        Node newNode = rewriteViaRule(ProofRewriteRule::SETS_UNION_NORM, node);
+         Assert(newNode.isConst());
+         Trace("sets-rewrite")
+             << "Sets::rewrite: UNION_CONSTANT_MERGE: " << newNode << std::endl;
+-- 
+2.47.1
+

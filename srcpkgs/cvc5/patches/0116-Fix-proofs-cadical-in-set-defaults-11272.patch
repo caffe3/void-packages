@@ -1,0 +1,89 @@
+From 20250cf066204a15bb23b6e5a5ca3cfbc98e730f Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 10 Oct 2024 12:48:19 -0500
+Subject: [PATCH 116/312] Fix proofs + cadical in set defaults (#11272)
+
+Currently we are not properly guarding when the user tries to use
+cadical + proofs.
+---
+ src/smt/set_defaults.cpp                         | 7 ++++++-
+ test/regress/cli/regress0/prop/cadical_bug1.smt2 | 1 +
+ test/regress/cli/regress0/prop/cadical_bug2.smt2 | 1 +
+ test/regress/cli/regress0/prop/cadical_bug4.smt2 | 3 +--
+ test/regress/cli/regress0/prop/cadical_bug5.smt2 | 1 +
+ test/regress/cli/regress0/prop/cadical_bug6.smt2 | 1 +
+ 6 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index e5dc56bb1..48c2c9d70 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -1059,7 +1059,12 @@ bool SetDefaults::incompatibleWithProofs(Options& opts,
+   {
+     if (opts.proof.propProofMode == options::PropProofMode::PROOF)
+     {
+-      reason << "(resolution) proofs not supported in cadical";
++      reason << "(resolution) proofs in CaDiCaL";
++      return true;
++    }
++    if (opts.smt.proofMode!=options::ProofMode::PP_ONLY)
++    {
++      reason << "CaDiCaL";
+       return true;
+     }
+   }
+diff --git a/test/regress/cli/regress0/prop/cadical_bug1.smt2 b/test/regress/cli/regress0/prop/cadical_bug1.smt2
+index 3bce09520..013c30364 100644
+--- a/test/regress/cli/regress0/prop/cadical_bug1.smt2
++++ b/test/regress/cli/regress0/prop/cadical_bug1.smt2
+@@ -1,4 +1,5 @@
+ ; COMMAND-LINE: -i --sat-solver=cadical
++; DISABLE-TESTER: proof
+ (set-logic BV)
+ (declare-const c (_ BitVec 1))
+ (assert (forall ((m (_ BitVec 32))) (distinct (_ bv0 32) (bvadd ((_ zero_extend 31) c) (bvmul m (_ bv2 32))))))
+diff --git a/test/regress/cli/regress0/prop/cadical_bug2.smt2 b/test/regress/cli/regress0/prop/cadical_bug2.smt2
+index 2dba3f8ba..dfbe20ea9 100644
+--- a/test/regress/cli/regress0/prop/cadical_bug2.smt2
++++ b/test/regress/cli/regress0/prop/cadical_bug2.smt2
+@@ -1,4 +1,5 @@
+ ; COMMAND-LINE: -i --sat-solver=cadical
++; DISABLE-TESTER: proof
+ (set-logic QF_BV)
+ (declare-const x Bool)
+ (declare-fun p () Bool)
+diff --git a/test/regress/cli/regress0/prop/cadical_bug4.smt2 b/test/regress/cli/regress0/prop/cadical_bug4.smt2
+index 8ea0bf6d1..650ce0a90 100644
+--- a/test/regress/cli/regress0/prop/cadical_bug4.smt2
++++ b/test/regress/cli/regress0/prop/cadical_bug4.smt2
+@@ -1,6 +1,5 @@
+ ; COMMAND-LINE: -i --sat-solver=cadical
+-; DISABLE-TESTER: cpc
+-; DISABLE-TESTER: alethe
++; DISABLE-TESTER: proof
+ (set-logic QF_LIA)
+ (declare-fun s () Int)
+ (push)
+diff --git a/test/regress/cli/regress0/prop/cadical_bug5.smt2 b/test/regress/cli/regress0/prop/cadical_bug5.smt2
+index cd8b8b357..83c34df8b 100644
+--- a/test/regress/cli/regress0/prop/cadical_bug5.smt2
++++ b/test/regress/cli/regress0/prop/cadical_bug5.smt2
+@@ -1,4 +1,5 @@
+ ; COMMAND-LINE: -i --sat-solver=cadical
++; DISABLE-TESTER: proof
+ (set-logic ALL)
+ (declare-fun a () Real)
+ (assert (= 1.0 (/ 0.0 a)))
+diff --git a/test/regress/cli/regress0/prop/cadical_bug6.smt2 b/test/regress/cli/regress0/prop/cadical_bug6.smt2
+index 8367bc654..3af30b5de 100644
+--- a/test/regress/cli/regress0/prop/cadical_bug6.smt2
++++ b/test/regress/cli/regress0/prop/cadical_bug6.smt2
+@@ -1,4 +1,5 @@
+ ; COMMAND-LINE: -i --sat-solver=cadical
++; DISABLE-TESTER: proof
+ ; EXPECT: unsat
+ ; EXPECT: unsat
+ ; EXPECT: unsat
+-- 
+2.47.1
+

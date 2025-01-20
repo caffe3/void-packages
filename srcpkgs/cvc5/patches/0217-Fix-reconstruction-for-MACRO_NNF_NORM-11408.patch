@@ -1,0 +1,182 @@
+From a0f82efb0a4adf79eb20dc3607a83ff42b15e9a8 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 4 Dec 2024 14:45:54 -0600
+Subject: [PATCH 217/312] Fix reconstruction for MACRO_NNF_NORM (#11408)
+
+The proof reconstruction for this macro was wrong in cases where a
+rewritten formula appeared in the body of the quantified formula but not
+as part of the Boolean skeleton. This led to internal proof checking
+failures on several benchmarks in SMT-LIB.
+
+This corrects the issue by introducing an appropriate term context
+object.
+
+This adds 2 regressions that demonstrate the issue.
+---
+ src/expr/term_context.cpp                       | 17 +++++++++++++++++
+ src/expr/term_context.h                         | 14 ++++++++++++++
+ src/rewriter/basic_rewrite_rcons.cpp            | 11 ++++++++++-
+ src/theory/booleans/theory_bool_rewriter.h      |  4 +++-
+ test/regress/cli/CMakeLists.txt                 |  1 +
+ test/regress/cli/regress0/proofs/dd_pf_739.smt2 |  9 +++++++++
+ .../cli/regress0/proofs/dd_spark_nnf_pf.smt2    | 17 +++++++++++++++++
+ 7 files changed, 71 insertions(+), 2 deletions(-)
+ create mode 100644 test/regress/cli/regress0/proofs/dd_pf_739.smt2
+ create mode 100644 test/regress/cli/regress0/proofs/dd_spark_nnf_pf.smt2
+
+diff --git a/src/expr/term_context.cpp b/src/expr/term_context.cpp
+index 82b7fd022..d4687f088 100644
+--- a/src/expr/term_context.cpp
++++ b/src/expr/term_context.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include "expr/term_context.h"
+ 
++#include "expr/node_algorithm.h"
+ #include "theory/theory.h"
+ 
+ namespace cvc5::internal {
+@@ -143,5 +144,21 @@ uint32_t TheoryLeafTermContext::computeValue(TNode t,
+ {
+   return theory::Theory::isLeafOf(t, d_theoryId) ? 1 : tval;
+ }
++uint32_t BoolSkeletonTermContext::initialValue() const { return 0; }
++
++uint32_t BoolSkeletonTermContext::computeValue(TNode t,
++                                               uint32_t tval,
++                                               size_t child) const
++{
++  if (tval == 0)
++  {
++    if (!expr::isBooleanConnective(t))
++    {
++      return 1;
++    }
++    return 0;
++  }
++  return 1;
++}
+ 
+ }  // namespace cvc5::internal
+diff --git a/src/expr/term_context.h b/src/expr/term_context.h
+index 07262c2bb..a21095594 100644
+--- a/src/expr/term_context.h
++++ b/src/expr/term_context.h
+@@ -182,6 +182,20 @@ class TheoryLeafTermContext : public TermContext
+   theory::TheoryId d_theoryId;
+ };
+ 
++/**
++ * Boolean skeleton term context.
++ * Returns 0 for terms that are part of a Boolean skeleton, 1 otherwise.
++ */
++class BoolSkeletonTermContext : public TermContext
++{
++ public:
++  BoolSkeletonTermContext() {}
++  /** The initial value: assumed to be 0, i.e. in the Boolean skeleton. */
++  uint32_t initialValue() const override;
++  /** Compute the value of the index^th child of t whose hash is tval */
++  uint32_t computeValue(TNode t, uint32_t tval, size_t index) const override;
++};
++
+ }  // namespace cvc5::internal
+ 
+ #endif /* CVC5__EXPR__TERM_CONVERSION_PROOF_GENERATOR_H */
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index 31377c0a0..32cfcfaa4 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include "expr/nary_term_util.h"
+ #include "expr/node_algorithm.h"
++#include "expr/term_context.h"
+ #include "proof/conv_proof_generator.h"
+ #include "proof/proof_checker.h"
+ #include "proof/proof_node_algorithm.h"
+@@ -246,7 +247,15 @@ bool BasicRewriteRCons::ensureProofMacroBoolNnfNorm(CDProof* cdp,
+                      << std::endl;
+   // Call the utility again with proof tracking and construct the term
+   // conversion proof. This proof itself may have trust steps in it.
+-  TConvProofGenerator tcpg(d_env, nullptr);
++  // Rewrites should only be applied for terms in the Boolean skeleton, hence
++  // we use BoolSkeletonTermContext here.
++  BoolSkeletonTermContext bstc;
++  TConvProofGenerator tcpg(d_env,
++                           nullptr,
++                           TConvPolicy::FIXPOINT,
++                           TConvCachePolicy::NEVER,
++                           "MacroNnfNormTConv",
++                           &bstc);
+   Node nr = theory::booleans::TheoryBoolRewriter::computeNnfNorm(
+       nodeManager(), eq[0], &tcpg);
+   std::shared_ptr<ProofNode> pfn = tcpg.getProofFor(eq);
+diff --git a/src/theory/booleans/theory_bool_rewriter.h b/src/theory/booleans/theory_bool_rewriter.h
+index c845174e5..78d8a23c9 100644
+--- a/src/theory/booleans/theory_bool_rewriter.h
++++ b/src/theory/booleans/theory_bool_rewriter.h
+@@ -52,7 +52,9 @@ class TheoryBoolRewriter : public TheoryRewriter
+    * @param nm Pointer to node manager.
+    * @param n The node to rewrite.
+    * @param pg If non-null, this stores rewrite rules that are capable of
+-   * proving that n is equal to its normalized form.
++   * proving that n is equal to its normalized form. This conversion generator
++   * is expected to use a BoolSkeletonTermContext (see expr/term_context.h) as
++   * this method only traverses the propositional skeleton of n.
+    * @return The normalized form of n.
+    */
+   static Node computeNnfNorm(NodeManager* nm,
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index a9f785cec..7c8351981 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1318,6 +1318,7 @@ set(regress_0_tests
+   regress0/proofs/bvrewrite-shlbyconst.smt2
+   regress0/proofs/dd_bug787_beta_reduce.smt2
+   regress0/proofs/dd_fv-bvl.smt2
++  regress0/proofs/dd_pf_739.smt2
+   regress0/proofs/define-fun-shadow.smt2
+   regress0/proofs/dsl-cong-eval-cr.smt2
+   regress0/proofs/dsl-no-eval.smt2
+diff --git a/test/regress/cli/regress0/proofs/dd_pf_739.smt2 b/test/regress/cli/regress0/proofs/dd_pf_739.smt2
+new file mode 100644
+index 000000000..f87a3fa6a
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/dd_pf_739.smt2
+@@ -0,0 +1,9 @@
++; EXPECT: unsat
++; DISABLE-TESTER: alethe
++(set-logic ALL)
++(declare-const x Bool)
++(declare-const x9 Bool)
++(declare-const x95 Bool)
++(declare-fun n () (Array (_ BitVec 64) (_ BitVec 72)))
++(assert (and (forall ((u (_ BitVec 64))) (and x9 (not (or x x9)) (= (_ bv0 1) ((_ extract 71 71) (select (ite x95 n (store n (_ bv0 64) (concat (_ bv1 1) (_ bv0 3) (_ bv0 64) (_ bv0 3) (ite (and x95 (not (or x x9))) (_ bv0 1) (_ bv1 1))))) (_ bv0 64))))))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/dd_spark_nnf_pf.smt2 b/test/regress/cli/regress0/proofs/dd_spark_nnf_pf.smt2
+new file mode 100644
+index 000000000..16f749a01
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/dd_spark_nnf_pf.smt2
+@@ -0,0 +1,17 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-const x5 Bool)
++(declare-const x Bool)
++(declare-sort o 0)
++(declare-fun i (o) Int)
++(declare-sort t 0)
++(declare-fun l (t) o)
++(declare-datatypes ((u 0)) (((r (r t)))))
++(declare-datatypes ((f 0)) (((e (c u)))))
++(declare-datatypes ((s 0)) (((s (c f)))))
++(declare-datatypes ((s_ 0)) (((s (l s)))))
++(declare-const i7 s_)
++(declare-fun i (s_) Int)
++(assert (forall ((v s_)) (or (and (not x5) (or x5 (=> x x5))) (= (i v) (ite (=> x x5) 0 (i (l (r (c (c (l v)))))))))))
++(assert (exists ((v s)) (and x5 (= 1 (i i7)))))
++(check-sat)
+-- 
+2.47.1
+

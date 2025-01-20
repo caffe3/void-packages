@@ -1,0 +1,83 @@
+From 3de6b613f0e7994559b08e3e617964cd65872c7b Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 15 Jan 2025 16:07:42 -0600
+Subject: [PATCH 310/312] Ensure trust id for solve-int-as-real (#11524)
+
+Fixes https://github.com/cvc5/cvc5-projects/issues/750.
+---
+ src/preprocessing/passes/real_to_int.cpp                   | 4 +++-
+ src/proof/trust_id.cpp                                     | 1 +
+ src/proof/trust_id.h                                       | 2 ++
+ test/regress/cli/CMakeLists.txt                            | 1 +
+ .../cli/regress0/proj-issue750-real-to-int-safe.smt2       | 7 +++++++
+ 5 files changed, 14 insertions(+), 1 deletion(-)
+ create mode 100644 test/regress/cli/regress0/proj-issue750-real-to-int-safe.smt2
+
+diff --git a/src/preprocessing/passes/real_to_int.cpp b/src/preprocessing/passes/real_to_int.cpp
+index e4b2cbf2f..eb59bc21f 100644
+--- a/src/preprocessing/passes/real_to_int.cpp
++++ b/src/preprocessing/passes/real_to_int.cpp
+@@ -228,7 +228,9 @@ PreprocessingPassResult RealToInt::applyInternal(
+       // this pass is refutation unsound, "unsat" will be "unknown"
+       assertionsToPreprocess->markRefutationUnsound();
+       Trace("real-to-int") << "Converted " << a << " to " << ac << std::endl;
+-      assertionsToPreprocess->replace(i, rewrite(ac));
++      assertionsToPreprocess->replace(
++          i, ac, nullptr, TrustId::PREPROCESS_REAL_TO_INT);
++      assertionsToPreprocess->ensureRewritten(i);
+       if (assertionsToPreprocess->isInConflict())
+       {
+         return PreprocessingPassResult::CONFLICT;
+diff --git a/src/proof/trust_id.cpp b/src/proof/trust_id.cpp
+index e0c300e3e..4766921f0 100644
+--- a/src/proof/trust_id.cpp
++++ b/src/proof/trust_id.cpp
+@@ -78,6 +78,7 @@ const char* toString(TrustId id)
+     case TrustId::PREPROCESS_UNCONSTRAINED_SIMP:
+       return "PREPROCESS_UNCONSTRAINED_SIMP";
+     case TrustId::PREPROCESS_QUANTIFIERS_PP: return "PREPROCESS_QUANTIFIERS_PP";
++    case TrustId::PREPROCESS_REAL_TO_INT: return "PREPROCESS_REAL_TO_INT";
+     case TrustId::PREPROCESS_SORT_INFER: return "PREPROCESS_SORT_INFER";
+     case TrustId::PREPROCESS_SORT_INFER_LEMMA:
+       return "PREPROCESS_SORT_INFER_LEMMA";
+diff --git a/src/proof/trust_id.h b/src/proof/trust_id.h
+index 42d6a2ab9..0fb8541fb 100644
+--- a/src/proof/trust_id.h
++++ b/src/proof/trust_id.h
+@@ -95,6 +95,8 @@ enum class TrustId : uint32_t
+   PREPROCESS_UNCONSTRAINED_SIMP,
+   /** QuantifiersPreprocess preprocessing pass */
+   PREPROCESS_QUANTIFIERS_PP,
++  /** RealToInt preprocessing pass */
++  PREPROCESS_REAL_TO_INT,
+   /** SortInferencePass preprocessing pass */
+   PREPROCESS_SORT_INFER,
+   PREPROCESS_SORT_INFER_LEMMA,
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index b0e0df062..d2571d181 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1320,6 +1320,7 @@ set(regress_0_tests
+   regress0/printer/tuples_and_records.cvc.smt2
+   regress0/proj-issue307-get-value-re.smt2
+   regress0/proj-issue645-abs-value-subs.smt2
++  regress0/proj-issue750-real-to-int-safe.smt2
+   regress0/proofs/alethe-res-need-or-step.smt2
+   regress0/proofs/arith-poly-norm-rel-mixed.smt2
+   regress0/proofs/cyclic-ucp.smt2
+diff --git a/test/regress/cli/regress0/proj-issue750-real-to-int-safe.smt2 b/test/regress/cli/regress0/proj-issue750-real-to-int-safe.smt2
+new file mode 100644
+index 000000000..0146b3d31
+--- /dev/null
++++ b/test/regress/cli/regress0/proj-issue750-real-to-int-safe.smt2
+@@ -0,0 +1,7 @@
++; EXPECT: sat
++(set-option :check-proofs true)
++(set-logic ALL)
++(set-option :solve-real-as-int true)
++(declare-const x Real)
++(assert (= 0.0 x))
++(check-sat)
+-- 
+2.47.1
+

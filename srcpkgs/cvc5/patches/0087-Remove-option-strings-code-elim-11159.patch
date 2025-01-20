@@ -1,0 +1,270 @@
+From 97d944d45dd550fdc12435602bc169367ae9fa61 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 30 Sep 2024 14:26:32 -0500
+Subject: [PATCH 087/312] Remove option `strings-code-elim` (#11159)
+
+Makes `seq.nth` only apply to sequences. Deletes a now irrelevant RARE
+rewrite.
+---
+ include/cvc5/cvc5_proof_rule.h                |  2 --
+ src/options/strings_options.toml              |  8 -----
+ src/theory/strings/rewrites                   |  4 ---
+ src/theory/strings/sequences_rewriter.cpp     |  6 ----
+ src/theory/strings/theory_strings.cpp         | 30 +------------------
+ .../strings/theory_strings_preprocess.cpp     | 13 ++++++--
+ .../strings/theory_strings_type_rules.cpp     | 14 +++++----
+ .../regress0/strings/issue5816-re-kind.smt2   |  1 -
+ .../regress0/strings/model-code-point.smt2    |  2 +-
+ .../cli/regress0/strings/simple-nth-fail.smt2 |  2 --
+ .../cli/regress1/decision/jh-test1.smt2       |  2 +-
+ .../cli/regress1/strings/str-code-sat.smt2    |  1 -
+ .../strings/strings-code-elim-min.smt2        |  2 +-
+ .../cli/regress1/strings/to_upper_12.smt2     |  2 +-
+ .../strings/to_upper_over_concat.smt2         |  2 +-
+ 15 files changed, 25 insertions(+), 66 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 03405d99f..e15534fe1 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -3395,8 +3395,6 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(RE_INTER_CSTRING),
+   /** Auto-generated from RARE rule re-inter-cstring-neg */
+   EVALUE(RE_INTER_CSTRING_NEG),
+-  /** Auto-generated from RARE rule str-nth-elim-code */
+-  EVALUE(STR_NTH_ELIM_CODE),
+   /** Auto-generated from RARE rule str-substr-len-include */
+   EVALUE(STR_SUBSTR_LEN_INCLUDE),
+   /** Auto-generated from RARE rule str-substr-len-include-pre */
+diff --git a/src/options/strings_options.toml b/src/options/strings_options.toml
+index c5e6f51db..31228d4ed 100644
+--- a/src/options/strings_options.toml
++++ b/src/options/strings_options.toml
+@@ -228,14 +228,6 @@ name   = "Strings Theory"
+   maximum    = "2147483647"
+   help       = "The maximum size of string values in models"
+ 
+-[[option]]
+-  name       = "stringsCodeElim"
+-  category   = "expert"
+-  long       = "strings-code-elim"
+-  type       = "bool"
+-  default    = "false"
+-  help       = "eliminate code points during preprocessing"
+-
+ [[option]]
+   name       = "stringRegexpPosConcatEager"
+   category   = "expert"
+diff --git a/src/theory/strings/rewrites b/src/theory/strings/rewrites
+index 6a146c4b6..e9de1a131 100644
+--- a/src/theory/strings/rewrites
++++ b/src/theory/strings/rewrites
+@@ -305,10 +305,6 @@
+   (re.inter xs (str.to_re s) ys) 
+   re.none)
+ 
+-(define-rule str-nth-elim-code ((s String) (n Int))
+-  (seq.nth s n)
+-  (str.to_code (str.substr s n 1)))
+-
+ (define-cond-rule str-substr-len-include ((s1 ?Seq) (s2 ?Seq :list) (n Int))
+   (= n (str.len s1))
+   (str.substr (str.++ s1 s2) 0 n)
+diff --git a/src/theory/strings/sequences_rewriter.cpp b/src/theory/strings/sequences_rewriter.cpp
+index c62f2855d..b57f0e59d 100644
+--- a/src/theory/strings/sequences_rewriter.cpp
++++ b/src/theory/strings/sequences_rewriter.cpp
+@@ -2033,12 +2033,6 @@ Node SequencesRewriter::rewriteSeqNth(Node node)
+         return returnRewrite(node, ret, Rewrite::SEQ_NTH_EVAL);
+       }
+     }
+-    if (s.getType().isString())
+-    {
+-      NodeManager* nm = nodeManager();
+-      Node ret = nm->mkConstInt(Rational(-1));
+-      return returnRewrite(node, ret, Rewrite::SEQ_NTH_EVAL_OOB);
+-    }
+   }
+ 
+   std::vector<Node> prefix, suffix;
+diff --git a/src/theory/strings/theory_strings.cpp b/src/theory/strings/theory_strings.cpp
+index cfebc31a8..820badf47 100644
+--- a/src/theory/strings/theory_strings.cpp
++++ b/src/theory/strings/theory_strings.cpp
+@@ -1141,35 +1141,7 @@ TrustNode TheoryStrings::ppRewrite(TNode atom, std::vector<SkolemLemma>& lems)
+     lems.push_back(SkolemLemma(tnk, k));
+     return TrustNode::mkTrustRewrite(atom, k, nullptr);
+   }
+-  if (options().strings.stringsCodeElim)
+-  {
+-    if (ak == Kind::STRING_TO_CODE)
+-    {
+-      // If we are eliminating code, convert it to nth.
+-      // str.to_code(t) ---> ite(str.len(t) = 1, str.nth(t,0), -1)
+-      NodeManager* nm = nodeManager();
+-      Node t = atom[0];
+-      Node cond =
+-          nm->mkNode(Kind::EQUAL, nm->mkNode(Kind::STRING_LENGTH, t), d_one);
+-      Node ret = nm->mkNode(
+-          Kind::ITE, cond, nm->mkNode(Kind::SEQ_NTH, t, d_zero), d_neg_one);
+-      return TrustNode::mkTrustRewrite(atom, ret, nullptr);
+-    }
+-  }
+-  else if (ak == Kind::SEQ_NTH && atom[0].getType().isString())
+-  {
+-    // If we are not eliminating code, we are eliminating nth (over strings);
+-    // convert it to code.
+-    // (seq.nth x n) ---> (str.to_code (str.substr x n 1))
+-    NodeManager* nm = nodeManager();
+-    Node ret = nm->mkNode(Kind::STRING_TO_CODE,
+-                          nm->mkNode(Kind::STRING_SUBSTR,
+-                                     atom[0],
+-                                     atom[1],
+-                                     nm->mkConstInt(Rational(1))));
+-    return TrustNode::mkTrustRewrite(atom, ret, nullptr);
+-  }
+-  else if (ak == Kind::REGEXP_RANGE)
++  if (ak == Kind::REGEXP_RANGE)
+   {
+     for (const Node& nc : atom)
+     {
+diff --git a/src/theory/strings/theory_strings_preprocess.cpp b/src/theory/strings/theory_strings_preprocess.cpp
+index 3e67a9481..e7a3f0cf4 100644
+--- a/src/theory/strings/theory_strings_preprocess.cpp
++++ b/src/theory/strings/theory_strings_preprocess.cpp
+@@ -1123,10 +1123,17 @@ Node StringsPreprocess::simplifyRec(Node t, std::vector<Node>& asserts)
+ }
+ Node StringsPreprocess::mkCodePointAtIndex(Node x, Node i)
+ {
+-  // We use (SEQ_NTH, x, i) instead of
+-  // (STRING_TO_CODE, (STRING_SUBSTR, x, i, 1)) here. The former may be
+-  // converted to the latter during preprocessing based on our options.
++  // If x is a string, we use (STRING_TO_CODE, (STRING_SUBSTR, x, i, 1)).
++  // It is possible to have an extension where (STRING_NTH x i) is generated
++  // here for a new STRING_NTH kind, if there was a native way of handling nth
++  // for strings, but this is not explored here.
+   NodeManager* nm = NodeManager::currentNM();
++  if (x.getType().isString())
++  {
++    Node one = nm->mkConstInt(Rational(1));
++    return nm->mkNode(Kind::STRING_TO_CODE,
++                      nm->mkNode(Kind::STRING_SUBSTR, {x, i, one}));
++  }
+   return nm->mkNode(Kind::SEQ_NTH, x, i);
+ }
+ 
+diff --git a/src/theory/strings/theory_strings_type_rules.cpp b/src/theory/strings/theory_strings_type_rules.cpp
+index 66bd40ae6..251ff4db3 100644
+--- a/src/theory/strings/theory_strings_type_rules.cpp
++++ b/src/theory/strings/theory_strings_type_rules.cpp
+@@ -511,7 +511,7 @@ TypeNode SeqNthTypeRule::computeType(NodeManager* nodeManager,
+ {
+   Assert(n.getKind() == Kind::SEQ_NTH);
+   TypeNode t = n[0].getTypeOrNull();
+-  if (check && !isMaybeStringLike(t))
++  if (check && !t.isMaybeKind(Kind::SEQUENCE_TYPE))
+   {
+     if (errOut)
+     {
+@@ -536,12 +536,16 @@ TypeNode SeqNthTypeRule::computeType(NodeManager* nodeManager,
+     // if selecting from abstract, we don't know the type
+     return nodeManager->mkAbstractType(Kind::ABSTRACT_TYPE);
+   }
+-  if (t.isSequence())
++  // must check sequence here to ensure not a string
++  if (!t.isSequence())
+   {
+-    return t.getSequenceElementType();
++    if (errOut)
++    {
++      (*errOut) << "expecting a sequence term in nth";
++    }
++    return TypeNode::null();
+   }
+-  Assert(t.isString());
+-  return nodeManager->integerType();
++  return t.getSequenceElementType();
+ }
+ 
+ Cardinality SequenceProperties::computeCardinality(TypeNode type)
+diff --git a/test/regress/cli/regress0/strings/issue5816-re-kind.smt2 b/test/regress/cli/regress0/strings/issue5816-re-kind.smt2
+index be1f47e75..110637fb4 100644
+--- a/test/regress/cli/regress0/strings/issue5816-re-kind.smt2
++++ b/test/regress/cli/regress0/strings/issue5816-re-kind.smt2
+@@ -1,4 +1,3 @@
+-; COMMAND-LINE: --no-strings-code-elim
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/strings/model-code-point.smt2 b/test/regress/cli/regress0/strings/model-code-point.smt2
+index 84d1c342b..86cb24fc7 100644
+--- a/test/regress/cli/regress0/strings/model-code-point.smt2
++++ b/test/regress/cli/regress0/strings/model-code-point.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --lang=smt2.6 --produce-models --no-strings-code-elim
++; COMMAND-LINE: --lang=smt2.6 --produce-models
+ ; EXPECT: sat
+ ; EXPECT: ((x "\u{a}"))
+ ; EXPECT: ((y "\u{7f}"))
+diff --git a/test/regress/cli/regress0/strings/simple-nth-fail.smt2 b/test/regress/cli/regress0/strings/simple-nth-fail.smt2
+index 26c3ee8dc..ee23f86a3 100644
+--- a/test/regress/cli/regress0/strings/simple-nth-fail.smt2
++++ b/test/regress/cli/regress0/strings/simple-nth-fail.smt2
+@@ -1,5 +1,3 @@
+-; COMMAND-LINE: --no-strings-code-elim
+-; COMMAND-LINE: --strings-code-elim
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+ (declare-const i Int)
+diff --git a/test/regress/cli/regress1/decision/jh-test1.smt2 b/test/regress/cli/regress1/decision/jh-test1.smt2
+index 999e03a77..31b72e787 100644
+--- a/test/regress/cli/regress1/decision/jh-test1.smt2
++++ b/test/regress/cli/regress1/decision/jh-test1.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --decision=justification --no-strings-code-elim
++; COMMAND-LINE: --decision=justification
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-const size4 String)
+diff --git a/test/regress/cli/regress1/strings/str-code-sat.smt2 b/test/regress/cli/regress1/strings/str-code-sat.smt2
+index 3ae0de6a8..51bd13c5b 100644
+--- a/test/regress/cli/regress1/strings/str-code-sat.smt2
++++ b/test/regress/cli/regress1/strings/str-code-sat.smt2
+@@ -1,4 +1,3 @@
+-; COMMAND-LINE: --no-strings-code-elim
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/strings-code-elim-min.smt2 b/test/regress/cli/regress1/strings/strings-code-elim-min.smt2
+index 64e288cc5..0a9473df0 100644
+--- a/test/regress/cli/regress1/strings/strings-code-elim-min.smt2
++++ b/test/regress/cli/regress1/strings/strings-code-elim-min.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --decision=internal --strings-code-elim
++; COMMAND-LINE: --decision=internal
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-fun s () String)
+diff --git a/test/regress/cli/regress1/strings/to_upper_12.smt2 b/test/regress/cli/regress1/strings/to_upper_12.smt2
+index 4fc7a7c79..293195c97 100644
+--- a/test/regress/cli/regress1/strings/to_upper_12.smt2
++++ b/test/regress/cli/regress1/strings/to_upper_12.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy --strings-code-elim
++; COMMAND-LINE: --strings-exp --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-const X String)
+diff --git a/test/regress/cli/regress1/strings/to_upper_over_concat.smt2 b/test/regress/cli/regress1/strings/to_upper_over_concat.smt2
+index a7f5632cc..57a370f36 100644
+--- a/test/regress/cli/regress1/strings/to_upper_over_concat.smt2
++++ b/test/regress/cli/regress1/strings/to_upper_over_concat.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy --strings-code-elim
++; COMMAND-LINE: --strings-exp --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-const x String)
+-- 
+2.47.1
+

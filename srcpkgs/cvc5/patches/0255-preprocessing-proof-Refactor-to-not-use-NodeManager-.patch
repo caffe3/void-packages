@@ -1,0 +1,660 @@
+From da255fd537f4e2735a25333759fc34a33e7f24f2 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Wed, 18 Dec 2024 11:58:21 -0600
+Subject: [PATCH 255/312] preprocessing/proof: Refactor to not use
+ NodeManager::currentNM() (#11459)
+
+This PR introduces some calls to `NodeManager::currentNM()`, which will
+be removed in subsequent PRs.
+---
+ src/preprocessing/passes/synth_rew_rules.cpp |  7 +++----
+ src/preprocessing/passes/synth_rew_rules.h   |  4 ++--
+ src/proof/lazy_proof.cpp                     |  2 +-
+ src/proof/lazy_tree_proof_generator.cpp      |  2 +-
+ src/proof/method_id.cpp                      | 14 +++++++-------
+ src/proof/method_id.h                        |  5 +++--
+ src/proof/proof.cpp                          |  2 +-
+ src/proof/proof_node_algorithm.cpp           |  3 ++-
+ src/proof/proof_node_manager.cpp             |  2 +-
+ src/proof/proof_rule_checker.cpp             |  5 ++---
+ src/proof/proof_rule_checker.h               |  2 +-
+ src/proof/proof_step_buffer.cpp              |  2 +-
+ src/proof/resolution_proofs_util.cpp         |  4 ++--
+ src/proof/resolution_proofs_util.h           |  3 ++-
+ src/proof/rewrite_proof_generator.cpp        |  6 +++++-
+ src/proof/subtype_elim_proof_converter.cpp   |  4 ++--
+ src/proof/theory_proof_step_buffer.cpp       | 10 +++++-----
+ src/proof/trust_id.cpp                       |  5 ++---
+ src/proof/trust_id.h                         |  2 +-
+ src/rewriter/basic_rewrite_rcons.cpp         |  2 +-
+ src/rewriter/rewrite_db_proof_cons.cpp       |  2 +-
+ src/smt/proof_post_processor.cpp             |  5 +++--
+ src/smt/solver_engine.cpp                    |  5 +++--
+ src/theory/arrays/inference_manager.cpp      |  2 +-
+ src/theory/datatypes/infer_proof_cons.cpp    |  2 +-
+ src/theory/quantifiers/alpha_equivalence.cpp |  3 ++-
+ src/theory/rewriter.cpp                      |  5 +++--
+ src/theory/sep/theory_sep.cpp                |  2 +-
+ src/theory/sets/inference_manager.cpp        |  2 +-
+ src/theory/strings/infer_proof_cons.cpp      |  5 +++--
+ src/theory/theory_preprocessor.cpp           |  2 +-
+ src/theory/uf/eq_proof.cpp                   |  7 ++++---
+ 32 files changed, 69 insertions(+), 59 deletions(-)
+
+diff --git a/src/preprocessing/passes/synth_rew_rules.cpp b/src/preprocessing/passes/synth_rew_rules.cpp
+index c2b093f12..e8b373ef8 100644
+--- a/src/preprocessing/passes/synth_rew_rules.cpp
++++ b/src/preprocessing/passes/synth_rew_rules.cpp
+@@ -51,11 +51,11 @@ PreprocessingPassResult SynthRewRulesPass::applyInternal(
+ }
+ 
+ std::vector<TypeNode> SynthRewRulesPass::getGrammarsFrom(
+-    const std::vector<Node>& assertions, uint64_t nvars)
++    NodeManager* nm, const std::vector<Node>& assertions, uint64_t nvars)
+ {
+   std::vector<TypeNode> ret;
+   std::map<TypeNode, TypeNode> tlGrammarTypes =
+-      constructTopLevelGrammar(assertions, nvars);
++      constructTopLevelGrammar(nm, assertions, nvars);
+   for (std::pair<const TypeNode, TypeNode> ttp : tlGrammarTypes)
+   {
+     ret.push_back(ttp.second);
+@@ -64,14 +64,13 @@ std::vector<TypeNode> SynthRewRulesPass::getGrammarsFrom(
+ }
+ 
+ std::map<TypeNode, TypeNode> SynthRewRulesPass::constructTopLevelGrammar(
+-    const std::vector<Node>& assertions, uint64_t nvars)
++    NodeManager* nm, const std::vector<Node>& assertions, uint64_t nvars)
+ {
+   std::map<TypeNode, TypeNode> tlGrammarTypes;
+   if (assertions.empty())
+   {
+     return tlGrammarTypes;
+   }
+-  NodeManager* nm = NodeManager::currentNM();
+   // initialize the candidate rewrite
+   std::unordered_map<TNode, bool> visited;
+   std::unordered_map<TNode, bool>::iterator it;
+diff --git a/src/preprocessing/passes/synth_rew_rules.h b/src/preprocessing/passes/synth_rew_rules.h
+index 42ebd8da7..7c425f224 100644
+--- a/src/preprocessing/passes/synth_rew_rules.h
++++ b/src/preprocessing/passes/synth_rew_rules.h
+@@ -66,11 +66,11 @@ class SynthRewRulesPass : public PreprocessingPass
+   SynthRewRulesPass(PreprocessingPassContext* preprocContext);
+ 
+   static std::vector<TypeNode> getGrammarsFrom(
+-      const std::vector<Node>& assertions, uint64_t nvars);
++      NodeManager* nm, const std::vector<Node>& assertions, uint64_t nvars);
+ 
+  protected:
+   static std::map<TypeNode, TypeNode> constructTopLevelGrammar(
+-      const std::vector<Node>& assertions, uint64_t nvars);
++      NodeManager* nm, const std::vector<Node>& assertions, uint64_t nvars);
+   PreprocessingPassResult applyInternal(
+       AssertionPipeline* assertionsToPreprocess) override;
+ };
+diff --git a/src/proof/lazy_proof.cpp b/src/proof/lazy_proof.cpp
+index bf82bf113..7c549998d 100644
+--- a/src/proof/lazy_proof.cpp
++++ b/src/proof/lazy_proof.cpp
+@@ -181,7 +181,7 @@ void LazyCDProof::addLazyStep(Node expected,
+     }
+     Trace("lazy-cdproof") << "LazyCDProof::addLazyStep: " << expected
+                           << " set (trusted) step " << idNull << "\n";
+-    Node tid = mkTrustId(idNull);
++    Node tid = mkTrustId(nodeManager(), idNull);
+     addStep(expected, ProofRule::TRUST, {}, {tid, expected});
+     return;
+   }
+diff --git a/src/proof/lazy_tree_proof_generator.cpp b/src/proof/lazy_tree_proof_generator.cpp
+index ddd23abc6..1dfe9d4e9 100644
+--- a/src/proof/lazy_tree_proof_generator.cpp
++++ b/src/proof/lazy_tree_proof_generator.cpp
+@@ -74,7 +74,7 @@ void LazyTreeProofGenerator::setCurrentTrust(size_t objectId,
+                                              Node proven)
+ {
+   std::vector<Node> newArgs;
+-  newArgs.push_back(mkTrustId(tid));
++  newArgs.push_back(mkTrustId(nodeManager(), tid));
+   newArgs.push_back(proven);
+   newArgs.insert(newArgs.end(), args.begin(), args.end());
+   setCurrent(objectId, ProofRule::TRUST, premise, newArgs, proven);
+diff --git a/src/proof/method_id.cpp b/src/proof/method_id.cpp
+index 1d0ae845c..25de7b57b 100644
+--- a/src/proof/method_id.cpp
++++ b/src/proof/method_id.cpp
+@@ -50,10 +50,9 @@ std::ostream& operator<<(std::ostream& out, MethodId id)
+   return out;
+ }
+ 
+-Node mkMethodId(MethodId id)
++Node mkMethodId(NodeManager* nm, MethodId id)
+ {
+-  return NodeManager::currentNM()->mkConstInt(
+-      Rational(static_cast<uint32_t>(id)));
++  return nm->mkConstInt(Rational(static_cast<uint32_t>(id)));
+ }
+ 
+ bool getMethodId(TNode n, MethodId& i)
+@@ -98,7 +97,8 @@ bool getMethodIds(const std::vector<Node>& args,
+   return true;
+ }
+ 
+-void addMethodIds(std::vector<Node>& args,
++void addMethodIds(NodeManager* nm,
++                  std::vector<Node>& args,
+                   MethodId ids,
+                   MethodId ida,
+                   MethodId idr)
+@@ -107,15 +107,15 @@ void addMethodIds(std::vector<Node>& args,
+   bool ndefApply = (ida != MethodId::SBA_SEQUENTIAL);
+   if (ids != MethodId::SB_DEFAULT || ndefRewriter || ndefApply)
+   {
+-    args.push_back(mkMethodId(ids));
++    args.push_back(mkMethodId(nm, ids));
+   }
+   if (ndefApply || ndefRewriter)
+   {
+-    args.push_back(mkMethodId(ida));
++    args.push_back(mkMethodId(nm, ida));
+   }
+   if (ndefRewriter)
+   {
+-    args.push_back(mkMethodId(idr));
++    args.push_back(mkMethodId(nm, idr));
+   }
+ }
+ 
+diff --git a/src/proof/method_id.h b/src/proof/method_id.h
+index 2d321dd5f..c4c1982b0 100644
+--- a/src/proof/method_id.h
++++ b/src/proof/method_id.h
+@@ -84,7 +84,7 @@ const char* toString(MethodId id);
+ /** Write a rewriter id to out */
+ std::ostream& operator<<(std::ostream& out, MethodId id);
+ /** Make a method id node */
+-Node mkMethodId(MethodId id);
++Node mkMethodId(NodeManager* nm, MethodId id);
+ 
+ /** get a method identifier from a node, return false if we fail */
+ bool getMethodId(TNode n, MethodId& i);
+@@ -102,7 +102,8 @@ bool getMethodIds(const std::vector<Node>& args,
+  * Add method identifiers ids, ida and idr as nodes to args. This does not add
+  * ids, ida or idr if their values are the default ones.
+  */
+-void addMethodIds(std::vector<Node>& args,
++void addMethodIds(NodeManager* nm,
++                  std::vector<Node>& args,
+                   MethodId ids,
+                   MethodId ida,
+                   MethodId idr);
+diff --git a/src/proof/proof.cpp b/src/proof/proof.cpp
+index 50bfff12b..dbc697890 100644
+--- a/src/proof/proof.cpp
++++ b/src/proof/proof.cpp
+@@ -267,7 +267,7 @@ bool CDProof::addTrustedStep(Node expected,
+                              CDPOverwrite opolicy)
+ {
+   std::vector<Node> sargs;
+-  sargs.push_back(mkTrustId(id));
++  sargs.push_back(mkTrustId(nodeManager(), id));
+   sargs.push_back(expected);
+   sargs.insert(sargs.end(), args.begin(), args.end());
+   return addStep(
+diff --git a/src/proof/proof_node_algorithm.cpp b/src/proof/proof_node_algorithm.cpp
+index 7dbe8df06..542fc9a0d 100644
+--- a/src/proof/proof_node_algorithm.cpp
++++ b/src/proof/proof_node_algorithm.cpp
+@@ -272,7 +272,8 @@ ProofRule getCongRule(const Node& n, std::vector<Node>& args)
+       break;
+   }
+   // Add the arguments
+-  args.push_back(ProofRuleChecker::mkKindNode(k));
++  NodeManager* nm = NodeManager::currentNM();
++  args.push_back(ProofRuleChecker::mkKindNode(nm, k));
+   if (kind::metaKindOf(k) == kind::metakind::PARAMETERIZED)
+   {
+     args.push_back(n.getOperator());
+diff --git a/src/proof/proof_node_manager.cpp b/src/proof/proof_node_manager.cpp
+index 2e0a6583f..9730c0b4b 100644
+--- a/src/proof/proof_node_manager.cpp
++++ b/src/proof/proof_node_manager.cpp
+@@ -68,7 +68,7 @@ std::shared_ptr<ProofNode> ProofNodeManager::mkTrustedNode(
+     const Node& conc)
+ {
+   std::vector<Node> sargs;
+-  sargs.push_back(mkTrustId(id));
++  sargs.push_back(mkTrustId(NodeManager::currentNM(), id));
+   sargs.push_back(conc);
+   sargs.insert(sargs.end(), args.begin(), args.end());
+   return mkNode(ProofRule::TRUST, children, sargs);
+diff --git a/src/proof/proof_rule_checker.cpp b/src/proof/proof_rule_checker.cpp
+index 4e8251b00..deca6ebfd 100644
+--- a/src/proof/proof_rule_checker.cpp
++++ b/src/proof/proof_rule_checker.cpp
+@@ -63,15 +63,14 @@ bool ProofRuleChecker::getKind(TNode n, Kind& k)
+   return true;
+ }
+ 
+-Node ProofRuleChecker::mkKindNode(Kind k)
++Node ProofRuleChecker::mkKindNode(NodeManager* nm, Kind k)
+ {
+   if (k == Kind::UNDEFINED_KIND)
+   {
+     // UNDEFINED_KIND is negative, hence return null to avoid cast
+     return Node::null();
+   }
+-  return NodeManager::currentNM()->mkConstInt(
+-      Rational(static_cast<uint32_t>(k)));
++  return nm->mkConstInt(Rational(static_cast<uint32_t>(k)));
+ }
+ 
+ NodeManager* ProofRuleChecker::nodeManager() const { return d_nm; }
+diff --git a/src/proof/proof_rule_checker.h b/src/proof/proof_rule_checker.h
+index 6a5dbf66b..a309560af 100644
+--- a/src/proof/proof_rule_checker.h
++++ b/src/proof/proof_rule_checker.h
+@@ -63,7 +63,7 @@ class ProofRuleChecker
+   /** get a Kind from a node, return false if we fail */
+   static bool getKind(TNode n, Kind& k);
+   /** Make a Kind into a node */
+-  static Node mkKindNode(Kind k);
++  static Node mkKindNode(NodeManager* nm, Kind k);
+ 
+   /** Register all rules owned by this rule checker into pc. */
+   virtual void registerTo(ProofChecker* pc) {}
+diff --git a/src/proof/proof_step_buffer.cpp b/src/proof/proof_step_buffer.cpp
+index 4d48a6b42..5cb64ba89 100644
+--- a/src/proof/proof_step_buffer.cpp
++++ b/src/proof/proof_step_buffer.cpp
+@@ -126,7 +126,7 @@ bool ProofStepBuffer::addTrustedStep(TrustId id,
+                                      Node conc)
+ {
+   std::vector<Node> sargs;
+-  sargs.push_back(mkTrustId(id));
++  sargs.push_back(mkTrustId(NodeManager::currentNM(), id));
+   sargs.push_back(conc);
+   sargs.insert(sargs.end(), args.begin(), args.end());
+   return addStep(ProofRule::TRUST, children, sargs, conc);
+diff --git a/src/proof/resolution_proofs_util.cpp b/src/proof/resolution_proofs_util.cpp
+index 3dc79621d..2b664fb91 100644
+--- a/src/proof/resolution_proofs_util.cpp
++++ b/src/proof/resolution_proofs_util.cpp
+@@ -64,7 +64,8 @@ std::ostream& operator<<(std::ostream& out, CrowdingLitInfo info)
+   return out;
+ }
+ 
+-Node eliminateCrowdingLits(bool reorderPremises,
++Node eliminateCrowdingLits(NodeManager* nm,
++                           bool reorderPremises,
+                            const std::vector<Node>& clauseLits,
+                            const std::vector<Node>& targetClauseLits,
+                            const std::vector<Node>& children,
+@@ -76,7 +77,6 @@ Node eliminateCrowdingLits(bool reorderPremises,
+   Trace("crowding-lits") << "Clause lits: " << clauseLits << "\n";
+   Trace("crowding-lits") << "Target lits: " << targetClauseLits << "\n\n";
+   std::vector<Node> newChildren{children}, newArgs{args};
+-  NodeManager* nm = NodeManager::currentNM();
+   Node trueNode = nm->mkConst(true);
+   // get crowding lits and the position of the last clause that includes
+   // them. The factoring step must be added after the last inclusion and before
+diff --git a/src/proof/resolution_proofs_util.h b/src/proof/resolution_proofs_util.h
+index ce239f780..42c2249d1 100644
+--- a/src/proof/resolution_proofs_util.h
++++ b/src/proof/resolution_proofs_util.h
+@@ -107,7 +107,8 @@ namespace proof {
+  * @return The resulting node of transforming MACRO_RESOLUTION into
+  * CHAIN_RESOLUTION according to the above idea.
+  */
+-Node eliminateCrowdingLits(bool reorderPremises,
++Node eliminateCrowdingLits(NodeManager* nm,
++                           bool reorderPremises,
+                            const std::vector<Node>& clauseLits,
+                            const std::vector<Node>& targetClauseLits,
+                            const std::vector<Node>& children,
+diff --git a/src/proof/rewrite_proof_generator.cpp b/src/proof/rewrite_proof_generator.cpp
+index 5b885edff..069319d8c 100644
+--- a/src/proof/rewrite_proof_generator.cpp
++++ b/src/proof/rewrite_proof_generator.cpp
+@@ -24,7 +24,11 @@ RewriteProofGenerator::RewriteProofGenerator(Env& env, MethodId id)
+     : EnvObj(env), ProofGenerator(), d_id(id)
+ {
+   // initialize the proof args
+-  addMethodIds(d_pargs, MethodId::SB_DEFAULT, MethodId::SBA_SEQUENTIAL, d_id);
++  addMethodIds(nodeManager(),
++               d_pargs,
++               MethodId::SB_DEFAULT,
++               MethodId::SBA_SEQUENTIAL,
++               d_id);
+ }
+ RewriteProofGenerator::~RewriteProofGenerator() {}
+ 
+diff --git a/src/proof/subtype_elim_proof_converter.cpp b/src/proof/subtype_elim_proof_converter.cpp
+index 3f892ce48..77f23637b 100644
+--- a/src/proof/subtype_elim_proof_converter.cpp
++++ b/src/proof/subtype_elim_proof_converter.cpp
+@@ -254,7 +254,7 @@ bool SubtypeElimConverterCallback::prove(const Node& src,
+   Node csrc = nm->mkNode(src.getKind(), conv[0], conv[1]);
+   if (tgt.getKind() == Kind::EQUAL)
+   {
+-    Node nk = ProofRuleChecker::mkKindNode(Kind::TO_REAL);
++    Node nk = ProofRuleChecker::mkKindNode(nm, Kind::TO_REAL);
+     cdp->addStep(csrc, ProofRule::CONG, {src}, {nk});
+     Trace("pf-subtype-elim") << "...via " << csrc << std::endl;
+     if (csrc != tgt)
+@@ -295,7 +295,7 @@ bool SubtypeElimConverterCallback::prove(const Node& src,
+     if (csrc != tgt)
+     {
+       Node congEq = csrc.eqNode(tgt);
+-      Node nk = ProofRuleChecker::mkKindNode(csrc.getKind());
++      Node nk = ProofRuleChecker::mkKindNode(nm, csrc.getKind());
+       cdp->addStep(congEq, ProofRule::CONG, {convEq[0], convEq[1]}, {nk});
+       cdp->addStep(fullEq, ProofRule::TRANS, {rewriteEq, congEq}, {});
+     }
+diff --git a/src/proof/theory_proof_step_buffer.cpp b/src/proof/theory_proof_step_buffer.cpp
+index 0a9f361d8..c6a225034 100644
+--- a/src/proof/theory_proof_step_buffer.cpp
++++ b/src/proof/theory_proof_step_buffer.cpp
+@@ -38,7 +38,7 @@ bool TheoryProofStepBuffer::applyEqIntro(Node src,
+ {
+   std::vector<Node> args;
+   args.push_back(src);
+-  addMethodIds(args, ids, ida, idr);
++  addMethodIds(NodeManager::currentNM(), args, ids, ida, idr);
+   bool added;
+   Node expected = src.eqNode(tgt);
+   Node res = tryStep(added,
+@@ -84,7 +84,7 @@ bool TheoryProofStepBuffer::applyPredTransform(Node src,
+   // try to prove that tgt rewrites to src
+   children.insert(children.end(), exp.begin(), exp.end());
+   args.push_back(tgt);
+-  addMethodIds(args, ids, ida, idr);
++  addMethodIds(NodeManager::currentNM(), args, ids, ida, idr);
+   Node res = tryStep(ProofRule::MACRO_SR_PRED_TRANSFORM,
+                      children,
+                      args,
+@@ -108,7 +108,7 @@ bool TheoryProofStepBuffer::applyPredIntro(Node tgt,
+ {
+   std::vector<Node> args;
+   args.push_back(tgt);
+-  addMethodIds(args, ids, ida, idr);
++  addMethodIds(NodeManager::currentNM(), args, ids, ida, idr);
+   Node res = tryStep(ProofRule::MACRO_SR_PRED_INTRO,
+                      exp,
+                      args,
+@@ -131,7 +131,7 @@ Node TheoryProofStepBuffer::applyPredElim(Node src,
+   children.push_back(src);
+   children.insert(children.end(), exp.begin(), exp.end());
+   std::vector<Node> args;
+-  addMethodIds(args, ids, ida, idr);
++  addMethodIds(NodeManager::currentNM(), args, ids, ida, idr);
+   bool added;
+   Node srcRew = tryStep(added, ProofRule::MACRO_SR_PRED_ELIM, children, args);
+   if (d_autoSym && added && CDProof::isSame(src, srcRew))
+@@ -198,7 +198,7 @@ Node TheoryProofStepBuffer::factorReorderElimDoubleNeg(Node n)
+     Node congEq = oldn.eqNode(n);
+     addStep(ProofRule::NARY_CONG,
+             childrenEqs,
+-            {ProofRuleChecker::mkKindNode(Kind::OR)},
++            {ProofRuleChecker::mkKindNode(nm, Kind::OR)},
+             congEq);
+     // add an equality resolution step to derive normalize clause
+     addStep(ProofRule::EQ_RESOLVE, {oldn, congEq}, {}, n);
+diff --git a/src/proof/trust_id.cpp b/src/proof/trust_id.cpp
+index ddefef08d..53212222f 100644
+--- a/src/proof/trust_id.cpp
++++ b/src/proof/trust_id.cpp
+@@ -114,10 +114,9 @@ std::ostream& operator<<(std::ostream& out, TrustId id)
+   return out;
+ }
+ 
+-Node mkTrustId(TrustId id)
++Node mkTrustId(NodeManager* nm, TrustId id)
+ {
+-  return NodeManager::currentNM()->mkConstInt(
+-      Rational(static_cast<uint32_t>(id)));
++  return nm->mkConstInt(Rational(static_cast<uint32_t>(id)));
+ }
+ 
+ bool getTrustId(TNode n, TrustId& i)
+diff --git a/src/proof/trust_id.h b/src/proof/trust_id.h
+index 4763a85c4..fa82104a0 100644
+--- a/src/proof/trust_id.h
++++ b/src/proof/trust_id.h
+@@ -207,7 +207,7 @@ const char* toString(TrustId id);
+ /** Write a trust id to out */
+ std::ostream& operator<<(std::ostream& out, TrustId id);
+ /** Make a trust id node */
+-Node mkTrustId(TrustId id);
++Node mkTrustId(NodeManager* nm, TrustId id);
+ /** get a trust identifier from a node, return false if we fail */
+ bool getTrustId(TNode n, TrustId& i);
+ 
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index 23611a342..90fc478c3 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -1221,7 +1221,7 @@ bool BasicRewriteRCons::ensureProofArithPolyNormRel(CDProof* cdp,
+     Trace("brc-macro") << "...fail premise" << std::endl;
+     return false;
+   }
+-  Node kn = ProofRuleChecker::mkKindNode(eq[0].getKind());
++  Node kn = ProofRuleChecker::mkKindNode(nodeManager(), eq[0].getKind());
+   if (!cdp->addStep(eq, ProofRule::ARITH_POLY_NORM_REL, {premise}, {kn}))
+   {
+     Trace("brc-macro") << "...fail application" << std::endl;
+diff --git a/src/rewriter/rewrite_db_proof_cons.cpp b/src/rewriter/rewrite_db_proof_cons.cpp
+index c70456290..726e69708 100644
+--- a/src/rewriter/rewrite_db_proof_cons.cpp
++++ b/src/rewriter/rewrite_db_proof_cons.cpp
+@@ -1217,7 +1217,7 @@ bool RewriteDbProofCons::ensureProofInternal(
+           cdp->addStep(cur,
+                        ProofRule::ARITH_POLY_NORM_REL,
+                        {pcur.d_vars[0]},
+-                       {ProofRuleChecker::mkKindNode(cur[0].getKind())});
++                       {ProofRuleChecker::mkKindNode(nm, cur[0].getKind())});
+         }
+       }
+       else if (pcur.d_id == RewriteProofStatus::DSL
+diff --git a/src/smt/proof_post_processor.cpp b/src/smt/proof_post_processor.cpp
+index 3b2d1f229..168abd5ce 100644
+--- a/src/smt/proof_post_processor.cpp
++++ b/src/smt/proof_post_processor.cpp
+@@ -580,7 +580,8 @@ Node ProofPostprocessCallback::expandMacros(ProofRule id,
+       Trace("crowding-lits") << "..premises: " << children << "\n";
+       Trace("crowding-lits") << "..args: " << args << "\n";
+       chainConclusion =
+-          proof::eliminateCrowdingLits(d_env.getOptions().proof.optResReconSize,
++          proof::eliminateCrowdingLits(nm,
++                                       d_env.getOptions().proof.optResReconSize,
+                                        chainConclusionLits,
+                                        conclusionLits,
+                                        children,
+@@ -927,7 +928,7 @@ Node ProofPostprocessCallback::expandMacros(ProofRule id,
+         {
+           // will expand this as a default rewrite if needed
+           Node eqd = retCurr.eqNode(retDef);
+-          Node mid = mkMethodId(midi);
++          Node mid = mkMethodId(nodeManager(), midi);
+           cdp->addStep(eqd, ProofRule::MACRO_REWRITE, {}, {retCurr, mid});
+           transEq.push_back(eqd);
+         }
+diff --git a/src/smt/solver_engine.cpp b/src/smt/solver_engine.cpp
+index 4c5a15ce8..0e78ce69e 100644
+--- a/src/smt/solver_engine.cpp
++++ b/src/smt/solver_engine.cpp
+@@ -1022,8 +1022,9 @@ Node SolverEngine::findSynth(modes::FindSynthTarget fst, const TypeNode& gtn)
+     }
+     uint64_t nvars = options().quantifiers.sygusRewSynthInputNVars;
+     std::vector<Node> asserts = getAssertionsInternal();
+-    gtnu = preprocessing::passes::SynthRewRulesPass::getGrammarsFrom(asserts,
+-                                                                     nvars);
++    NodeManager* nm = d_env->getNodeManager();
++    gtnu = preprocessing::passes::SynthRewRulesPass::getGrammarsFrom(
++        nm, asserts, nvars);
+     if (gtnu.empty())
+     {
+       Warning() << "Could not find grammar in find-synth :rewrite_input"
+diff --git a/src/theory/arrays/inference_manager.cpp b/src/theory/arrays/inference_manager.cpp
+index 0298b36e3..8481ec76b 100644
+--- a/src/theory/arrays/inference_manager.cpp
++++ b/src/theory/arrays/inference_manager.cpp
+@@ -127,7 +127,7 @@ void InferenceManager::convert(ProofRule& id,
+         Assert(false) << "Unknown rule " << id << "\n";
+       }
+       children.push_back(exp);
+-      args.push_back(mkTrustId(TrustId::THEORY_INFERENCE));
++      args.push_back(mkTrustId(nodeManager(), TrustId::THEORY_INFERENCE));
+       args.push_back(conc);
+       args.push_back(
+           builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_ARRAYS));
+diff --git a/src/theory/datatypes/infer_proof_cons.cpp b/src/theory/datatypes/infer_proof_cons.cpp
+index 0bcd4ef62..681ea13d3 100644
+--- a/src/theory/datatypes/infer_proof_cons.cpp
++++ b/src/theory/datatypes/infer_proof_cons.cpp
+@@ -188,7 +188,7 @@ void InferProofCons::convert(InferenceId infer, TNode conc, TNode exp, CDProof*
+         // s(exp[0]) = s(exp[1])             s(exp[1]) = r
+         // --------------------------------------------------- TRANS
+         // s(exp[0]) = r
+-        Node asn = ProofRuleChecker::mkKindNode(Kind::APPLY_SELECTOR);
++        Node asn = ProofRuleChecker::mkKindNode(nm, Kind::APPLY_SELECTOR);
+         Node seq = sl.eqNode(sr);
+         cdp->addStep(seq, ProofRule::CONG, {exp}, {asn, sop});
+         Node sceq = sr.eqNode(concEq[1]);
+diff --git a/src/theory/quantifiers/alpha_equivalence.cpp b/src/theory/quantifiers/alpha_equivalence.cpp
+index 23a165554..2376c9965 100644
+--- a/src/theory/quantifiers/alpha_equivalence.cpp
++++ b/src/theory/quantifiers/alpha_equivalence.cpp
+@@ -310,7 +310,8 @@ TrustNode AlphaEquivalence::reduceQuantifier(Node q)
+         // sret = q
+         std::vector<Node> pfArgs2;
+         pfArgs2.push_back(eq2);
+-        addMethodIds(pfArgs2,
++        addMethodIds(nodeManager(),
++                     pfArgs2,
+                      MethodId::SB_DEFAULT,
+                      MethodId::SBA_SEQUENTIAL,
+                      MethodId::RW_EXT_REWRITE);
+diff --git a/src/theory/rewriter.cpp b/src/theory/rewriter.cpp
+index 78fb9b7ad..82c647311 100644
+--- a/src/theory/rewriter.cpp
++++ b/src/theory/rewriter.cpp
+@@ -402,7 +402,7 @@ Node Rewriter::rewriteTo(theory::TheoryId theoryId,
+             Node eq = rewriteStackTop.d_node.eqNode(cached);
+             // we make this a post-rewrite, since we are processing a node that
+             // has finished post-rewriting above
+-            Node trrid = mkTrustId(TrustId::REWRITE_NO_ELABORATE);
++            Node trrid = mkTrustId(d_nm, TrustId::REWRITE_NO_ELABORATE);
+             tcpg->addRewriteStep(rewriteStackTop.d_node,
+                                  cached,
+                                  ProofRule::TRUST,
+@@ -490,7 +490,8 @@ RewriteResponse Rewriter::processTrustRewriteResponse(
+     {
+       Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(theoryId);
+       // add small step trusted rewrite
+-      Node rid = mkMethodId(isPre ? MethodId::RW_REWRITE_THEORY_PRE
++      Node rid = mkMethodId(d_nm,
++                            isPre ? MethodId::RW_REWRITE_THEORY_PRE
+                                   : MethodId::RW_REWRITE_THEORY_POST);
+       tcpg->addRewriteStep(proven[0],
+                            proven[1],
+diff --git a/src/theory/sep/theory_sep.cpp b/src/theory/sep/theory_sep.cpp
+index bbe42d6e1..7306f0062 100644
+--- a/src/theory/sep/theory_sep.cpp
++++ b/src/theory/sep/theory_sep.cpp
+@@ -58,7 +58,7 @@ TheorySep::TheorySep(Env& env, OutputChannel& out, Valuation valuation)
+ {
+   d_true = nodeManager()->mkConst<bool>(true);
+   d_false = nodeManager()->mkConst<bool>(false);
+-  d_tiid = mkTrustId(TrustId::THEORY_INFERENCE);
++  d_tiid = mkTrustId(nodeManager(), TrustId::THEORY_INFERENCE);
+   d_tsid = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_SEP);
+ 
+   // indicate we are using the default theory state object
+diff --git a/src/theory/sets/inference_manager.cpp b/src/theory/sets/inference_manager.cpp
+index cbdbae136..49cbdf41f 100644
+--- a/src/theory/sets/inference_manager.cpp
++++ b/src/theory/sets/inference_manager.cpp
+@@ -37,7 +37,7 @@ InferenceManager::InferenceManager(Env& env,
+ {
+   d_true = nodeManager()->mkConst(true);
+   d_false = nodeManager()->mkConst(false);
+-  d_tid = mkTrustId(TrustId::THEORY_INFERENCE);
++  d_tid = mkTrustId(nodeManager(), TrustId::THEORY_INFERENCE);
+   d_tsid = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_SETS);
+ }
+ 
+diff --git a/src/theory/strings/infer_proof_cons.cpp b/src/theory/strings/infer_proof_cons.cpp
+index 3220b2be1..b3aa955c4 100644
+--- a/src/theory/strings/infer_proof_cons.cpp
++++ b/src/theory/strings/infer_proof_cons.cpp
+@@ -485,7 +485,8 @@ void InferProofCons::convert(InferenceId infer,
+         // above. Notice we need both in sequence since ext equality rewriting
+         // is not recursive.
+         std::vector<Node> argsERew;
+-        addMethodIds(argsERew,
++        addMethodIds(nm,
++                     argsERew,
+                      MethodId::SB_DEFAULT,
+                      MethodId::SBA_SEQUENTIAL,
+                      MethodId::RW_REWRITE_EQ_EXT);
+@@ -1125,7 +1126,7 @@ void InferProofCons::convert(InferenceId infer,
+     // untrustworthy conversion, the argument of THEORY_INFERENCE is its
+     // conclusion
+     ps.d_args.clear();
+-    ps.d_args.push_back(mkTrustId(TrustId::THEORY_INFERENCE));
++    ps.d_args.push_back(mkTrustId(nm, TrustId::THEORY_INFERENCE));
+     ps.d_args.push_back(conc);
+     Node t = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_STRINGS);
+     ps.d_args.push_back(t);
+diff --git a/src/theory/theory_preprocessor.cpp b/src/theory/theory_preprocessor.cpp
+index f25f219b8..5ebca4fe7 100644
+--- a/src/theory/theory_preprocessor.cpp
++++ b/src/theory/theory_preprocessor.cpp
+@@ -67,7 +67,7 @@ TheoryPreprocessor::TheoryPreprocessor(Env& env, TheoryEngine& engine)
+     ts.push_back(d_tpg.get());
+     d_tspg.reset(new TConvSeqProofGenerator(
+         pnm, ts, userContext(), "TheoryPreprocessor::sequence"));
+-    d_tpid = mkTrustId(TrustId::THEORY_PREPROCESS);
++    d_tpid = mkTrustId(nodeManager(), TrustId::THEORY_PREPROCESS);
+   }
+ }
+ 
+diff --git a/src/theory/uf/eq_proof.cpp b/src/theory/uf/eq_proof.cpp
+index c7db8551d..012bbfa59 100644
+--- a/src/theory/uf/eq_proof.cpp
++++ b/src/theory/uf/eq_proof.cpp
+@@ -481,7 +481,7 @@ bool EqProof::expandTransitivityForDisequalities(
+     p->addStep(congConclusion,
+                ProofRule::CONG,
+                substPremises,
+-               {ProofRuleChecker::mkKindNode(Kind::EQUAL)},
++               {ProofRuleChecker::mkKindNode(nm, Kind::EQUAL)},
+                true);
+     Trace("eqproof-conv") << "EqProof::expandTransitivityForDisequalities: via "
+                              "congruence derived "
+@@ -609,10 +609,11 @@ bool EqProof::expandTransitivityForTheoryDisequalities(
+       << "EqProof::expandTransitivityForTheoryDisequalities: adding  "
+       << ProofRule::CONG << " step for " << congConclusion << " from "
+       << subChildren << "\n";
++  NodeManager* nm = NodeManager::currentNM();
+   p->addStep(congConclusion,
+              ProofRule::CONG,
+              {subChildren},
+-             {ProofRuleChecker::mkKindNode(Kind::EQUAL)},
++             {ProofRuleChecker::mkKindNode(nm, Kind::EQUAL)},
+              true);
+   Trace("eqproof-conv") << "EqProof::expandTransitivityForDisequalities: via "
+                            "congruence derived "
+@@ -1465,7 +1466,7 @@ Node EqProof::addToProof(CDProof* p,
+     p->addStep(conclusion,
+                ProofRule::HO_CONG,
+                children,
+-               {ProofRuleChecker::mkKindNode(Kind::APPLY_UF)},
++               {ProofRuleChecker::mkKindNode(nm, Kind::APPLY_UF)},
+                true);
+   }
+   // If the conclusion of the congruence step changed due to the n-ary handling,
+-- 
+2.47.1
+

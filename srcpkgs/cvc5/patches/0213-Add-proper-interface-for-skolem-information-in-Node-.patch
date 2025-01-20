@@ -1,0 +1,586 @@
+From 19a0ac9ae0113cb634ce73332ca3d8d8a3670746 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 3 Dec 2024 19:08:33 -0600
+Subject: [PATCH 213/312] Add proper interface for skolem information in Node
+ (#11404)
+
+Currently, to know information about what kind of skolem a Node is
+requires manually looking up the appropriate `SkolemManager`.
+
+This PR adds a proper interface to get skolem information from a `Node`.
+
+This will be useful when eliminating calls to `NodeManager::currentNM`,
+as this information no longer needs to be accessed manually.
+
+This PR cleans up a few low-level instances of this.
+---
+ src/api/cpp/cvc5.cpp                          | 29 ++------
+ src/expr/CMakeLists.txt                       |  2 +
+ src/expr/dtype_cons.cpp                       |  4 +-
+ src/expr/internal_skolem_id.cpp               | 49 +++++++++++++
+ src/expr/internal_skolem_id.h                 | 70 +++++++++++++++++++
+ src/expr/node.cpp                             | 37 ++++++++++
+ src/expr/node.h                               | 24 +++++++
+ src/expr/skolem_manager.cpp                   | 49 ++++++-------
+ src/expr/skolem_manager.h                     | 52 +++-----------
+ src/expr/sygus_grammar.cpp                    |  8 +--
+ src/theory/datatypes/sygus_datatype_utils.cpp |  4 +-
+ .../quantifiers/sygus/term_database_sygus.cpp | 11 ++-
+ 12 files changed, 228 insertions(+), 111 deletions(-)
+ create mode 100644 src/expr/internal_skolem_id.cpp
+ create mode 100644 src/expr/internal_skolem_id.h
+
+diff --git a/src/api/cpp/cvc5.cpp b/src/api/cpp/cvc5.cpp
+index fa3ae14c9..7216253d4 100644
+--- a/src/api/cpp/cvc5.cpp
++++ b/src/api/cpp/cvc5.cpp
+@@ -3718,11 +3718,10 @@ SkolemId Term::getSkolemId() const
+ {
+   CVC5_API_TRY_CATCH_BEGIN;
+   CVC5_API_CHECK_NOT_NULL;
+-  internal::SkolemManager* skm = d_tm->d_nm->getSkolemManager();
+-  CVC5_API_ARG_CHECK_EXPECTED(skm->isSkolemFunction(*d_node), *d_node)
++  CVC5_API_ARG_CHECK_EXPECTED(d_node->isSkolem(), *d_node)
+       << "Term to be a skolem when calling getSkolemId";
+   //////// all checks before this line
+-  return skm->getId(*d_node);
++  return d_node->getSkolemId();
+   ////////
+   CVC5_API_TRY_CATCH_END;
+ }
+@@ -3731,29 +3730,11 @@ std::vector<Term> Term::getSkolemIndices() const
+ {
+   CVC5_API_TRY_CATCH_BEGIN;
+   CVC5_API_CHECK_NOT_NULL;
+-  internal::SkolemManager* skm = d_tm->d_nm->getSkolemManager();
+-  CVC5_API_ARG_CHECK_EXPECTED(skm->isSkolemFunction(*d_node), *d_node)
++  CVC5_API_ARG_CHECK_EXPECTED(d_node->isSkolem(), *d_node)
+       << "Term to be a skolem when calling getSkolemIndices";
+   //////// all checks before this line
+-  internal::Node cacheVal;
+-  SkolemId id;
+-  skm->isSkolemFunction(*d_node, id, cacheVal);
+-  std::vector<Term> args;
+-  if (!cacheVal.isNull())
+-  {
+-    if (cacheVal.getKind() == internal::Kind::SEXPR)
+-    {
+-      for (const internal::Node& nc : cacheVal)
+-      {
+-        args.push_back(Term(d_tm, nc));
+-      }
+-    }
+-    else
+-    {
+-      args.push_back(Term(d_tm, cacheVal));
+-    }
+-  }
+-  return args;
++  std::vector<internal::Node> indices = d_node->getSkolemIndices();
++  return Term::nodeVectorToTerms(d_tm, indices);
+   ////////
+   CVC5_API_TRY_CATCH_END;
+ }
+diff --git a/src/expr/CMakeLists.txt b/src/expr/CMakeLists.txt
+index 1442bf54b..44d2fc634 100644
+--- a/src/expr/CMakeLists.txt
++++ b/src/expr/CMakeLists.txt
+@@ -43,6 +43,8 @@ libcvc5_add_sources(
+   free_var_cache.h
+   function_array_const.cpp
+   function_array_const.h
++  internal_skolem_id.cpp
++  internal_skolem_id.h
+   kind_map.h
+   match_trie.cpp
+   match_trie.h
+diff --git a/src/expr/dtype_cons.cpp b/src/expr/dtype_cons.cpp
+index dafc5e41f..e29f2ac1f 100644
+--- a/src/expr/dtype_cons.cpp
++++ b/src/expr/dtype_cons.cpp
+@@ -112,9 +112,7 @@ void DTypeConstructor::setSygus(Node op)
+   if (op.getKind() == Kind::SKOLEM)
+   {
+     // check if stands for the "any constant" constructor
+-    NodeManager* nm = NodeManager::currentNM();
+-    SkolemManager* sm = nm->getSkolemManager();
+-    if (sm->getInternalId(op) == InternalSkolemId::SYGUS_ANY_CONSTANT)
++    if (op.getInternalSkolemId() == InternalSkolemId::SYGUS_ANY_CONSTANT)
+     {
+       // mark with attribute, which is a faster lookup
+       SygusAnyConstAttribute saca;
+diff --git a/src/expr/internal_skolem_id.cpp b/src/expr/internal_skolem_id.cpp
+new file mode 100644
+index 000000000..2bef745a3
+--- /dev/null
++++ b/src/expr/internal_skolem_id.cpp
+@@ -0,0 +1,49 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds, Mudathir Mohamed, Aina Niemetz
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Implementation of skolem manager class.
++ */
++
++#include "expr/internal_skolem_id.h"
++
++#include <sstream>
++
++namespace cvc5::internal {
++
++const char* toString(InternalSkolemId id)
++{
++  switch (id)
++  {
++    case InternalSkolemId::SEQ_MODEL_BASE_ELEMENT:
++      return "SEQ_MODEL_BASE_ELEMENT";
++    case InternalSkolemId::IEVAL_NONE: return "IEVAL_NONE";
++    case InternalSkolemId::IEVAL_SOME: return "IEVAL_SOME";
++    case InternalSkolemId::SYGUS_ANY_CONSTANT: return "SYGUS_ANY_CONSTANT";
++    case InternalSkolemId::QUANTIFIERS_SYNTH_FUN_EMBED:
++      return "QUANTIFIERS_SYNTH_FUN_EMBED";
++    case InternalSkolemId::HO_TYPE_MATCH_PRED: return "HO_TYPE_MATCH_PRED";
++    case InternalSkolemId::MBQI_INPUT: return "MBQI_INPUT";
++    case InternalSkolemId::ABSTRACT_VALUE: return "ABSTRACT_VALUE";
++    case InternalSkolemId::QE_CLOSED_INPUT: return "QE_CLOSED_INPUT";
++    case InternalSkolemId::QUANTIFIERS_ATTRIBUTE_INTERNAL:
++      return "QUANTIFIERS_ATTRIBUTE_INTERNAL";
++    default: return "?";
++  }
++}
++
++std::ostream& operator<<(std::ostream& out, InternalSkolemId id)
++{
++  out << toString(id);
++  return out;
++}
++
++}  // namespace cvc5::internal
+diff --git a/src/expr/internal_skolem_id.h b/src/expr/internal_skolem_id.h
+new file mode 100644
+index 000000000..b70d08432
+--- /dev/null
++++ b/src/expr/internal_skolem_id.h
+@@ -0,0 +1,70 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds, Mudathir Mohamed, Kshitij Bansal
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Skolem manager utility.
++ */
++
++#include "cvc5_private.h"
++
++#ifndef CVC5__EXPR__INTERNAL_SKOLEM_ID_H
++#define CVC5__EXPR__INTERNAL_SKOLEM_ID_H
++
++#include <string>
++
++#include "expr/internal_skolem_id.h"
++
++namespace cvc5::internal {
++
++/**
++ * Internal skolem function identifier, used for identifying internal skolems
++ * that are not exported as part of the API.
++ *
++ * This is a subclassification of skolems whose SkolemId is INTERNAL. It is
++ * used to generate canonical skolems but without exporting to the API. Skolems
++ * can be created using mkInternalSkolemFunction below.
++ */
++enum class InternalSkolemId
++{
++  NONE,
++  /** Sequence model construction, element for base */
++  SEQ_MODEL_BASE_ELEMENT,
++  /** the "none" term, for instantiation evaluation */
++  IEVAL_NONE,
++  /** the "some" term, for instantiation evaluation */
++  IEVAL_SOME,
++  /** sygus "any constant" placeholder */
++  SYGUS_ANY_CONSTANT,
++  /**
++   * Quantifiers synth fun embedding, for function-to-synthesize, this the
++   * first order datatype variable for f.
++   */
++  QUANTIFIERS_SYNTH_FUN_EMBED,
++  /** Higher-order type match predicate, see HoTermDb */
++  HO_TYPE_MATCH_PRED,
++  /** Input variables for MBQI */
++  MBQI_INPUT,
++  /** abstract value for a term t */
++  ABSTRACT_VALUE,
++  /** Input variables for quantifier elimination of closed formulas */
++  QE_CLOSED_INPUT,
++  /** Skolem used for marking a quantified attribute */
++  QUANTIFIERS_ATTRIBUTE_INTERNAL
++};
++/** Converts an internal skolem function name to a string. */
++const char* toString(InternalSkolemId id);
++/** Writes an internal skolem function name to a stream. */
++std::ostream& operator<<(std::ostream& out, InternalSkolemId id);
++
++
++}  // namespace cvc5::internal
++
++#endif /* CVC5__EXPR__INTERNAL_SKOLEM_ID_H */
+diff --git a/src/expr/node.cpp b/src/expr/node.cpp
+index 4d98b76a5..abec0d311 100644
+--- a/src/expr/node.cpp
++++ b/src/expr/node.cpp
+@@ -22,6 +22,7 @@
+ #include "base/output.h"
+ #include "expr/attribute.h"
+ #include "expr/node_manager_attributes.h"
++#include "expr/skolem_manager.h"
+ #include "expr/type_checker.h"
+ 
+ using namespace std;
+@@ -129,6 +130,42 @@ std::string NodeTemplate<ref_count>::getName() const
+ template std::string NodeTemplate<true>::getName() const;
+ template std::string NodeTemplate<false>::getName() const;
+ 
++template <bool ref_count>
++bool NodeTemplate<ref_count>::isSkolem() const
++{
++  return getKind() == Kind::SKOLEM;
++}
++
++template bool NodeTemplate<true>::isSkolem() const;
++template bool NodeTemplate<false>::isSkolem() const;
++
++template <bool ref_count>
++SkolemId NodeTemplate<ref_count>::getSkolemId() const
++{
++  return d_nv->getNodeManager()->getSkolemManager()->getId(*this);
++}
++
++template SkolemId NodeTemplate<true>::getSkolemId() const;
++template SkolemId NodeTemplate<false>::getSkolemId() const;
++
++template <bool ref_count>
++std::vector<Node> NodeTemplate<ref_count>::getSkolemIndices() const
++{
++  return d_nv->getNodeManager()->getSkolemManager()->getIndices(*this);
++}
++
++template std::vector<Node> NodeTemplate<true>::getSkolemIndices() const;
++template std::vector<Node> NodeTemplate<false>::getSkolemIndices() const;
++
++template <bool ref_count>
++InternalSkolemId NodeTemplate<ref_count>::getInternalSkolemId() const
++{
++  return d_nv->getNodeManager()->getSkolemManager()->getInternalId(*this);
++}
++
++template InternalSkolemId NodeTemplate<true>::getInternalSkolemId() const;
++template InternalSkolemId NodeTemplate<false>::getInternalSkolemId() const;
++
+ }  // namespace cvc5::internal
+ 
+ namespace std {
+diff --git a/src/expr/node.h b/src/expr/node.h
+index 46d28abcd..a15ab3ce5 100644
+--- a/src/expr/node.h
++++ b/src/expr/node.h
+@@ -18,6 +18,8 @@
+ #ifndef CVC5__NODE_H
+ #define CVC5__NODE_H
+ 
++#include <cvc5/cvc5_skolem_id.h>
++
+ #include <iostream>
+ #include <map>
+ #include <sstream>
+@@ -30,6 +32,7 @@
+ #include "base/check.h"
+ #include "base/exception.h"
+ #include "base/output.h"
++#include "expr/internal_skolem_id.h"
+ #include "expr/kind.h"
+ #include "expr/metakind.h"
+ #include "expr/node_value.h"
+@@ -563,6 +566,27 @@ public:
+   template <class T>
+   inline const T& getConst() const;
+ 
++  /**
++   * @return true if this is a skolem function.
++   */
++  bool isSkolem() const;
++
++  /**
++   * @return the skolem identifier of this node.
++   */
++  SkolemId getSkolemId() const;
++
++  /**
++   * @return the skolem indices of this node.
++   */
++  std::vector<Node> getSkolemIndices() const;
++
++  /**
++   * @return the internal skolem function id, for skolems whose id is
++   * SkolemId::INTERNAL.
++   */
++  InternalSkolemId getInternalSkolemId() const;
++
+   /**
+    * Returns the reference count of this node.
+    * @return the refcount
+diff --git a/src/expr/skolem_manager.cpp b/src/expr/skolem_manager.cpp
+index 97a5f4760..691b480d7 100644
+--- a/src/expr/skolem_manager.cpp
++++ b/src/expr/skolem_manager.cpp
+@@ -39,33 +39,6 @@ struct UnpurifiedFormAttributeId
+ };
+ typedef expr::Attribute<UnpurifiedFormAttributeId, Node> UnpurifiedFormAttribute;
+ 
+-const char* toString(InternalSkolemId id)
+-{
+-  switch (id)
+-  {
+-    case InternalSkolemId::SEQ_MODEL_BASE_ELEMENT:
+-      return "SEQ_MODEL_BASE_ELEMENT";
+-    case InternalSkolemId::IEVAL_NONE: return "IEVAL_NONE";
+-    case InternalSkolemId::IEVAL_SOME: return "IEVAL_SOME";
+-    case InternalSkolemId::SYGUS_ANY_CONSTANT: return "SYGUS_ANY_CONSTANT";
+-    case InternalSkolemId::QUANTIFIERS_SYNTH_FUN_EMBED:
+-      return "QUANTIFIERS_SYNTH_FUN_EMBED";
+-    case InternalSkolemId::HO_TYPE_MATCH_PRED: return "HO_TYPE_MATCH_PRED";
+-    case InternalSkolemId::MBQI_INPUT: return "MBQI_INPUT";
+-    case InternalSkolemId::ABSTRACT_VALUE: return "ABSTRACT_VALUE";
+-    case InternalSkolemId::QE_CLOSED_INPUT: return "QE_CLOSED_INPUT";
+-    case InternalSkolemId::QUANTIFIERS_ATTRIBUTE_INTERNAL:
+-      return "QUANTIFIERS_ATTRIBUTE_INTERNAL";
+-    default: return "?";
+-  }
+-}
+-
+-std::ostream& operator<<(std::ostream& out, InternalSkolemId id)
+-{
+-  out << toString(id);
+-  return out;
+-}
+-
+ SkolemManager::SkolemManager() : d_skolemCounter(0) {}
+ 
+ Node SkolemManager::mkPurifySkolem(Node t)
+@@ -219,6 +192,28 @@ SkolemId SkolemManager::getId(TNode k) const
+   return SkolemId::NONE;
+ }
+ 
++std::vector<Node> SkolemManager::getIndices(TNode k) const
++{
++  std::vector<Node> vec;
++  SkolemId id;
++  Node cacheVal;
++  if (isSkolemFunction(k, id, cacheVal))
++  {
++    if (!cacheVal.isNull())
++    {
++      if (cacheVal.getKind() == Kind::SEXPR)
++      {
++        vec.insert(vec.end(), cacheVal.begin(), cacheVal.end());
++      }
++      else
++      {
++        vec.push_back(cacheVal);
++      }
++    }
++  }
++  return vec;
++}
++
+ InternalSkolemId SkolemManager::getInternalId(TNode k) const
+ {
+   SkolemId id;
+diff --git a/src/expr/skolem_manager.h b/src/expr/skolem_manager.h
+index d03f05613..d4ffab605 100644
+--- a/src/expr/skolem_manager.h
++++ b/src/expr/skolem_manager.h
+@@ -22,52 +22,13 @@
+ 
+ #include <string>
+ 
++#include "expr/internal_skolem_id.h"
+ #include "expr/node.h"
+ 
+ namespace cvc5::internal {
+ 
+ class ProofGenerator;
+ 
+-/**
+- * Internal skolem function identifier, used for identifying internal skolems
+- * that are not exported as part of the API.
+- *
+- * This is a subclassification of skolems whose SkolemId is INTERNAL. It is
+- * used to generate canonical skolems but without exporting to the API. Skolems
+- * can be created using mkInternalSkolemFunction below.
+- */
+-enum class InternalSkolemId
+-{
+-  NONE,
+-  /** Sequence model construction, element for base */
+-  SEQ_MODEL_BASE_ELEMENT,
+-  /** the "none" term, for instantiation evaluation */
+-  IEVAL_NONE,
+-  /** the "some" term, for instantiation evaluation */
+-  IEVAL_SOME,
+-  /** sygus "any constant" placeholder */
+-  SYGUS_ANY_CONSTANT,
+-  /**
+-   * Quantifiers synth fun embedding, for function-to-synthesize, this the
+-   * first order datatype variable for f.
+-   */
+-  QUANTIFIERS_SYNTH_FUN_EMBED,
+-  /** Higher-order type match predicate, see HoTermDb */
+-  HO_TYPE_MATCH_PRED,
+-  /** Input variables for MBQI */
+-  MBQI_INPUT,
+-  /** abstract value for a term t */
+-  ABSTRACT_VALUE,
+-  /** Input variables for quantifier elimination of closed formulas */
+-  QE_CLOSED_INPUT,
+-  /** Skolem used for marking a quantified attribute */
+-  QUANTIFIERS_ATTRIBUTE_INTERNAL
+-};
+-/** Converts an internal skolem function name to a string. */
+-const char* toString(InternalSkolemId id);
+-/** Writes an internal skolem function name to a stream. */
+-std::ostream& operator<<(std::ostream& out, InternalSkolemId id);
+-
+ /**
+  * A manager for skolems that can be used in proofs. This is designed to be
+  * a trusted interface for constructing variables of SKOLEM type, where one
+@@ -207,11 +168,18 @@ class SkolemManager
+    */
+   bool isSkolemFunction(TNode k, SkolemId& id, Node& cacheVal) const;
+   /**
+-   * Get skolem function id
++   * @param k The skolem.
++   * @return skolem function id for k.
+    */
+   SkolemId getId(TNode k) const;
+   /**
+-   * Get the internal skolem function id, for skolems whose id is
++   * @param k The skolem.
++   * @return The list of skolem indices for k.
++   */
++  std::vector<Node> getIndices(TNode k) const;
++  /**
++   * @param k The skolem.
++   * @return the internal skolem function id, for skolem k whose id is
+    * SkolemId::INTERNAL.
+    */
+   InternalSkolemId getInternalId(TNode k) const;
+diff --git a/src/expr/sygus_grammar.cpp b/src/expr/sygus_grammar.cpp
+index 0eaa31c0c..d81c39749 100644
+--- a/src/expr/sygus_grammar.cpp
++++ b/src/expr/sygus_grammar.cpp
+@@ -19,10 +19,10 @@
+ 
+ #include "expr/dtype.h"
+ #include "expr/dtype_cons.h"
+-#include "expr/skolem_manager.h"
+ #include "printer/printer.h"
+ #include "printer/smt2/smt2_printer.h"
+ #include "theory/datatypes/sygus_datatype_utils.h"
++#include "expr/skolem_manager.h"
+ #include "util/hash.h"
+ 
+ namespace cvc5::internal {
+@@ -234,10 +234,9 @@ void addSygusConstructor(DType& dt,
+                          const std::unordered_map<Node, TypeNode>& ntsToUnres)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
+   std::stringstream ss;
+   if (rule.getKind() == Kind::SKOLEM
+-      && sm->getInternalId(rule) == InternalSkolemId::SYGUS_ANY_CONSTANT)
++      && rule.getInternalSkolemId() == InternalSkolemId::SYGUS_ANY_CONSTANT)
+   {
+     ss << dt.getName() << "_any_constant";
+     dt.addSygusConstructor(rule, ss.str(), {rule.getType()}, 0);
+@@ -298,7 +297,6 @@ TypeNode SygusGrammar::resolve(bool allowAny)
+   if (!isResolved())
+   {
+     NodeManager* nm = NodeManager::currentNM();
+-    SkolemManager* sm = nm->getSkolemManager();
+     Node bvl;
+     if (!d_sygusVars.empty())
+     {
+@@ -323,7 +321,7 @@ TypeNode SygusGrammar::resolve(bool allowAny)
+       for (const Node& rule : d_rules[ntSym])
+       {
+         if (rule.getKind() == Kind::SKOLEM
+-            && sm->getInternalId(rule) == InternalSkolemId::SYGUS_ANY_CONSTANT)
++            && rule.getInternalSkolemId() == InternalSkolemId::SYGUS_ANY_CONSTANT)
+         {
+           allowConsts.insert(ntSym);
+         }
+diff --git a/src/theory/datatypes/sygus_datatype_utils.cpp b/src/theory/datatypes/sygus_datatype_utils.cpp
+index 376c5cb03..665db5607 100644
+--- a/src/theory/datatypes/sygus_datatype_utils.cpp
++++ b/src/theory/datatypes/sygus_datatype_utils.cpp
+@@ -20,7 +20,6 @@
+ #include "expr/dtype.h"
+ #include "expr/dtype_cons.h"
+ #include "expr/node_algorithm.h"
+-#include "expr/skolem_manager.h"
+ #include "expr/sygus_datatype.h"
+ #include "smt/env.h"
+ #include "theory/evaluator.h"
+@@ -153,8 +152,7 @@ Node mkSygusTerm(const Node& op,
+                  bool doBetaReduction)
+ {
+   NodeManager* nm = NodeManager::currentNM();
+-  Assert(nm->getSkolemManager()->getInternalId(op)
+-         != InternalSkolemId::SYGUS_ANY_CONSTANT);
++  Assert(op.getInternalSkolemId() != InternalSkolemId::SYGUS_ANY_CONSTANT);
+   Trace("dt-sygus-util") << "Operator is " << op << std::endl;
+   if (children.empty())
+   {
+diff --git a/src/theory/quantifiers/sygus/term_database_sygus.cpp b/src/theory/quantifiers/sygus/term_database_sygus.cpp
+index 94cbd18e1..5e997633d 100644
+--- a/src/theory/quantifiers/sygus/term_database_sygus.cpp
++++ b/src/theory/quantifiers/sygus/term_database_sygus.cpp
+@@ -534,15 +534,12 @@ void TermDbSygus::registerEnumerator(Node e,
+     d_env.output(OutputTag::SYGUS_ENUMERATOR) << "(sygus-enumerator";
+     if (!f.isNull())
+     {
+-      SkolemManager* sm = nm->getSkolemManager();
+-      Assert(sm->getInternalId(f)
++      Assert(f.getInternalSkolemId()
+              == InternalSkolemId::QUANTIFIERS_SYNTH_FUN_EMBED);
+-      Node ff;
+-      SkolemId id;
+-      sm->isSkolemFunction(f, id, ff);
++      std::vector<Node> ski = f.getSkolemIndices();
+       // get the argument, which is stored after the internal identifier
+-      Assert(ff.getKind() == Kind::SEXPR && ff.getNumChildren() == 2);
+-      d_env.output(OutputTag::SYGUS_ENUMERATOR) << " :synth-fun " << ff[1];
++      Assert(ski.size() == 2);
++      d_env.output(OutputTag::SYGUS_ENUMERATOR) << " :synth-fun " << ski[1];
+     }
+     d_env.output(OutputTag::SYGUS_ENUMERATOR) << " :role " << erole;
+     std::stringstream ss;
+-- 
+2.47.1
+

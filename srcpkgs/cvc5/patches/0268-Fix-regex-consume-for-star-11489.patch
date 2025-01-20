@@ -1,0 +1,162 @@
+From f3fc80e36258b228e6e37ce57fbf378df3de13bc Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Sun, 5 Jan 2025 09:11:18 -0600
+Subject: [PATCH 268/312] Fix regex consume for star (#11489)
+
+Fixes a potential soundness bug in the previous commit.
+---
+ proofs/eo/cpc/programs/Strings.eo             | 14 +++--
+ src/theory/strings/sequences_rewriter.cpp     | 55 ++++++++++---------
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/strings/re-consume-star.smt2 |  6 ++
+ 4 files changed, 46 insertions(+), 30 deletions(-)
+ create mode 100644 test/regress/cli/regress0/strings/re-consume-star.smt2
+
+diff --git a/proofs/eo/cpc/programs/Strings.eo b/proofs/eo/cpc/programs/Strings.eo
+index c3f217d16..0a5ff1a53 100644
+--- a/proofs/eo/cpc/programs/Strings.eo
++++ b/proofs/eo/cpc/programs/Strings.eo
+@@ -1498,6 +1498,7 @@
+ ; args:
+ ; - s String: The string argument of the membership to rewrite.
+ ; - r RegLan: The regular expression argument of the membership to rewrite.
++; - oneDir Bool: If true, we only strip from a single end.
+ ; returns: >
+ ;   false if `(str.in_re s r)` can be shown to be equivalent to false, or
+ ;   otherwise `(str.in_re sr rr)` where sr and rr are the result of "consuming"
+@@ -1505,21 +1506,24 @@
+ ;   reversing them initially and converting them to flat forms. We then reverse
+ ;   them again and consume from the beginning of the remainder. Finally, we convert
+ ;   back from flat form when applicable.
+-(define $str_re_consume_process ((s String) (r RegLan))
++(define $str_re_consume_process ((s String) (r RegLan) (oneDir Bool))
+   (eo::define ((ss ($str_to_flat_form s true)))  
+   (eo::define ((rr ($re_to_flat_form r true)))
+   (eo::match ((s1 String) (r1 RegLan))
+       ($str_re_consume_rec ss rr @result.null true)
+       (
+         (false              false)
+-        ((str.in_re s1 r1)  (eo::define ((s1r ($str_rev true s1)) (r1r ($re_to_flat_form r1 true)))
++        ((str.in_re s1 r1)  ; we revert if oneDir is true and we didn't fully consume
++                            (eo::define ((revert (eo::and oneDir (eo::not (eo::is_eq r1 @re.empty)))))
++                            (eo::define ((s1r ($str_rev true (eo::ite revert ss s1)))
++                                         (r1r ($re_to_flat_form (eo::ite revert rr r1) true)))
+                             (eo::match ((s2 String) (r2 RegLan))
+                               ($str_re_consume_rec s1r r1r @result.null false)
+                               (
+                                 (false              false)
+                                 ((str.in_re s2 r2)  (str.in_re ($str_from_flat_form s2 false) ($re_from_flat_form r2 false)))
+                               )
+-                            ))
++                            )))
+         )
+       )
+   )))
+@@ -1541,12 +1545,12 @@
+   (
+   (($str_re_consume s (re.* r))
+     (eo::match ((s1 String))
+-        ($str_re_consume_process s r)
++        ($str_re_consume_process s r true)  ; only process in a single direction
+         (
+           (false                    false)  ; conflict
+           ((str.in_re s1 @re.empty) (str.in_re s1 (re.* r))) ; one full copy
+         )
+     ))
+-  (($str_re_consume s r) ($str_re_consume_process s r))
++  (($str_re_consume s r) ($str_re_consume_process s r false))
+   )
+ )
+diff --git a/src/theory/strings/sequences_rewriter.cpp b/src/theory/strings/sequences_rewriter.cpp
+index 5dca280a0..cc21a9830 100644
+--- a/src/theory/strings/sequences_rewriter.cpp
++++ b/src/theory/strings/sequences_rewriter.cpp
+@@ -1563,31 +1563,36 @@ Node SequencesRewriter::rewriteViaStrInReConsume(const Node& node)
+   std::vector<Node> children;
+   // if star, we consider the body of the star
+   bool isStar = (node[1].getKind()==Kind::REGEXP_STAR);
+-  Node r = isStar ? node[1][0] : node[1];
+-  utils::getConcat(r, children);
+-  std::vector<Node> mchildren;
+-  utils::getConcat(node[0], mchildren);
+-  Node scn = RegExpEntail::simpleRegexpConsume(mchildren, children);
+-  if (!scn.isNull())
+-  {
+-    return scn;
+-  }
+-  else if (!isStar || children.empty())
+-  {
+-    // Given a membership (str.++ x1 ... xn) in (re.++ r1 ... rm),
+-    // above, we strip components to construct an equivalent membership:
+-    // (str.++ xi .. xj) in (re.++ rk ... rl).
+-    Node xn = utils::mkConcat(mchildren, node[0].getType());
+-    // if we considered the body of the star, we revert to the original RE
+-    Node rn = isStar ? node[1] : utils::mkConcat(children, node[1].getType());
+-    // construct the updated regular expression
+-    Node newMem =
+-        nodeManager()->mkNode(Kind::STRING_IN_REGEXP,
+-                              xn,
+-                              rn);
+-    if (newMem != node)
+-    {
+-      return newMem;
++  size_t numIter = isStar ? 2 : 1;
++  for (size_t i=0; i<numIter; i++)
++  {
++    int dir = isStar ? (i==0 ? 0 : 1) : -1;
++    Node r = isStar ? node[1][0] : node[1];
++    utils::getConcat(r, children);
++    std::vector<Node> mchildren;
++    utils::getConcat(node[0], mchildren);
++    Node scn = RegExpEntail::simpleRegexpConsume(mchildren, children, dir);
++    if (!scn.isNull())
++    {
++      return scn;
++    }
++    else if (!isStar || children.empty())
++    {
++      // Given a membership (str.++ x1 ... xn) in (re.++ r1 ... rm),
++      // above, we strip components to construct an equivalent membership:
++      // (str.++ xi .. xj) in (re.++ rk ... rl).
++      Node xn = utils::mkConcat(mchildren, node[0].getType());
++      // if we considered the body of the star, we revert to the original RE
++      Node rn = isStar ? node[1] : utils::mkConcat(children, node[1].getType());
++      // construct the updated regular expression
++      Node newMem =
++          nodeManager()->mkNode(Kind::STRING_IN_REGEXP,
++                                xn,
++                                rn);
++      if (newMem != node)
++      {
++        return newMem;
++      }
+     }
+   }
+   return Node::null();
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 928ef93ad..3f42ce67c 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1902,6 +1902,7 @@ set(regress_0_tests
+   regress0/strings/quad-138-4-2-unsat.smt2
+   regress0/strings/re-consume-bi-dir.smt2
+   regress0/strings/re-consume-inter.smt2
++  regress0/strings/re-consume-star.smt2
+   regress0/strings/re-consume-sym.smt2
+   regress0/strings/re-consume-sym-sigma.smt2
+   regress0/strings/re-include-union.smt2
+diff --git a/test/regress/cli/regress0/strings/re-consume-star.smt2 b/test/regress/cli/regress0/strings/re-consume-star.smt2
+new file mode 100644
+index 000000000..74c0b98e7
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/re-consume-star.smt2
+@@ -0,0 +1,6 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun x () String)
++(assert (or (str.suffixof "B" x) (str.suffixof "AB" x)))
++(assert (str.in_re (str.++ "A" x "B") (re.* (str.to_re "AB"))))
++(check-sat)
+-- 
+2.47.1
+

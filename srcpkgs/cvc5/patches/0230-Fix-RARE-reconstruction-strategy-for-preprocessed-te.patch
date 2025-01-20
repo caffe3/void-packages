@@ -1,0 +1,212 @@
+From a935292939cd492c9207182d21f8f3d60d5f3bb7 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 10 Dec 2024 08:43:38 -0600
+Subject: [PATCH 230/312] Fix RARE reconstruction strategy for preprocessed
+ terms (#11416)
+
+The RARE reconstruction algorithm was not trying ad-hoc theory rewrites
+marked PRE_DSL or POST_DSL on the *preprocessed* form of terms. This
+fixes the issue, which fills in several remaining holes, e.g. for
+quantified formulas with patterns.
+---
+ src/rewriter/rewrite_db_proof_cons.cpp | 96 +++++++++++++++++---------
+ src/rewriter/rewrite_db_proof_cons.h   | 25 ++++++-
+ 2 files changed, 86 insertions(+), 35 deletions(-)
+
+diff --git a/src/rewriter/rewrite_db_proof_cons.cpp b/src/rewriter/rewrite_db_proof_cons.cpp
+index 4b09a5554..efd32c55c 100644
+--- a/src/rewriter/rewrite_db_proof_cons.cpp
++++ b/src/rewriter/rewrite_db_proof_cons.cpp
+@@ -95,54 +95,48 @@ bool RewriteDbProofCons::prove(
+       }
+     } while (!eqp.isNull() && eqp[0].isClosure());
+   }
+-  Trace("rpc-debug") << "- prove basic" << std::endl;
+-  // first, try with the basic utility
++  ++d_statTotalInputs;
+   bool success = false;
+-  if (d_trrc.prove(cdp, eq[0], eq[1], subgoals, tmode))
++  // first try unconverted
++  Node eqi;
++  if (proveEqStratified(cdp, eq, eq, recLimit, stepLimit, subgoals, tmode))
+   {
+-    Trace("rpc") << "...success (basic)" << std::endl;
+     success = true;
+   }
+   else
+   {
+-    ++d_statTotalInputs;
+-    Trace("rpc-debug") << "- convert to internal" << std::endl;
+-    // prove the equality
+-    for (int64_t i = 0; i <= recLimit; i++)
++    eqi = d_rdnc.convert(eq);
++    // if converter didn't make a difference, don't try to prove again
++    if (eqi != eq)
+     {
+-      Trace("rpc-debug") << "* Try recursion depth " << i << std::endl;
+-      if (proveEq(cdp, eq, eq, i, stepLimit, subgoals))
++      Trace("rpc-debug") << "...now try converted" << std::endl;
++      if (proveEqStratified(cdp, eq, eqi, recLimit, stepLimit, subgoals, tmode))
+       {
+         success = true;
+-        break;
+       }
+     }
+-    if (!success)
++    else
+     {
+-      Node eqi = d_rdnc.convert(eq);
+-      // if converter didn't make a difference, don't try to prove again
+-      if (eqi != eq)
+-      {
+-        for (int64_t i = 0; i <= recLimit; i++)
+-        {
+-          Trace("rpc-debug") << "* Try recursion depth " << i << std::endl;
+-          if (proveEq(cdp, eq, eqi, i, stepLimit, subgoals))
+-          {
+-            success = true;
+-            break;
+-          }
+-        }
+-      }
++      Trace("rpc-debug") << "...do not try converted, did not change"
++                         << std::endl;
+     }
+   }
+   if (!success)
+   {
+-    // now try the "post-prove" method as a last resort
++    // Now try the "post-prove" method as a last resort. We try the unconverted
++    // then the converted form of eq, if applicable.
+     if (d_trrc.postProve(cdp, eq[0], eq[1], subgoals, tmode))
+     {
+       Trace("rpc") << "...success (post-prove basic)" << std::endl;
+       success = true;
+     }
++    else if (eqi != eq
++             && d_trrc.postProve(cdp, eqi[0], eqi[1], subgoals, tmode))
++    {
++      Trace("rpc") << "...success (post-prove basic)" << std::endl;
++      d_trrc.ensureProofForEncodeTransform(cdp, eq, eqi);
++      success = true;
++    }
+     else
+     {
+       Trace("rpc") << "...fail" << std::endl;
+@@ -155,6 +149,48 @@ bool RewriteDbProofCons::prove(
+   return success;
+ }
+ 
++bool RewriteDbProofCons::proveEqStratified(
++    CDProof* cdp,
++    const Node& eq,
++    const Node& eqi,
++    int64_t recLimit,
++    int64_t stepLimit,
++    std::vector<std::shared_ptr<ProofNode>>& subgoals,
++    TheoryRewriteMode tmode)
++{
++  bool success = false;
++  // first, try the basic utility
++  if (d_trrc.prove(cdp, eqi[0], eqi[1], subgoals, tmode))
++  {
++    Trace("rpc") << "...success (basic)" << std::endl;
++    success = true;
++  }
++  else
++  {
++    // prove the equality
++    for (int64_t i = 0; i <= recLimit; i++)
++    {
++      Trace("rpc-debug") << "* Try recursion depth " << i << std::endl;
++      if (proveEq(cdp, eqi, i, stepLimit, subgoals))
++      {
++        Trace("rpc") << "...success" << std::endl;
++        success = true;
++        break;
++      }
++    }
++  }
++  if (success)
++  {
++    // if eqi was converted, update the proof to account for this
++    if (eq != eqi)
++    {
++      d_trrc.ensureProofForEncodeTransform(cdp, eq, eqi);
++    }
++    return true;
++  }
++  return false;
++}
++
+ Node RewriteDbProofCons::preprocessClosureEq(CDProof* cdp,
+                                              const Node& a,
+                                              const Node& b)
+@@ -276,7 +312,6 @@ Node RewriteDbProofCons::preprocessClosureEq(CDProof* cdp,
+ 
+ bool RewriteDbProofCons::proveEq(
+     CDProof* cdp,
+-    const Node& eq,
+     const Node& eqi,
+     int64_t recLimit,
+     int64_t stepLimit,
+@@ -300,11 +335,6 @@ bool RewriteDbProofCons::proveEq(
+   {
+     ++d_statTotalInputSuccess;
+     Trace("rpc-debug") << "- ensure proof" << std::endl;
+-    // if it changed encoding, account for this
+-    if (eq != eqi)
+-    {
+-      d_trrc.ensureProofForEncodeTransform(cdp, eq, eqi);
+-    }
+     ensureProofInternal(cdp, eqi, subgoals);
+     AlwaysAssert(cdp->hasStep(eqi)) << eqi;
+     Trace("rpc-debug") << "- finish ensure proof" << std::endl;
+diff --git a/src/rewriter/rewrite_db_proof_cons.h b/src/rewriter/rewrite_db_proof_cons.h
+index 05b32533f..bb9754883 100644
+--- a/src/rewriter/rewrite_db_proof_cons.h
++++ b/src/rewriter/rewrite_db_proof_cons.h
+@@ -173,7 +173,8 @@ class RewriteDbProofCons : protected EnvObj
+   };
+   /**
+    * Prove and store the proof of eq with internal form eqi in cdp if possible,
+-   * return true if successful.
++   * return true if successful. Tries the basic utility and all recursion depths
++   * up to recLimit.
+    *
+    * @param cdp The object to add the proof of eq to.
+    * @param eq The equality we are trying to prove.
+@@ -183,9 +184,29 @@ class RewriteDbProofCons : protected EnvObj
+    * @param stepLimit The step limit for this call.
+    * @param subgoals The list of proofs introduced when proving eq that
+    * are trusted steps.
++   * @param tmode Determines if/when to try THEORY_REWRITE.
++   * @return true if we successfully added a proof of (= a b) to cdp
++   */
++  bool proveEqStratified(CDProof* cdp,
++                         const Node& eq,
++                         const Node& eqi,
++                         int64_t recLimit,
++                         int64_t stepLimit,
++                         std::vector<std::shared_ptr<ProofNode>>& subgoals,
++                         TheoryRewriteMode tmode);
++  /**
++   * Prove and store the proof of eq with internal form eqi in cdp if possible,
++   * return true if successful. Tries a single recursion depth.
++   *
++   * @param cdp The object to add the proof of eq to.
++   * @param eqi The equality we are trying to prove.
++   * @param recLimit The recursion limit for this call.
++   * @param stepLimit The step limit for this call.
++   * @param subgoals The list of proofs introduced when proving eq that
++   * are trusted steps.
++   * @return true if we successfully added a proof of (= a b) to cdp
+    */
+   bool proveEq(CDProof* cdp,
+-               const Node& eq,
+                const Node& eqi,
+                int64_t recLimit,
+                int64_t stepLimit,
+-- 
+2.47.1
+

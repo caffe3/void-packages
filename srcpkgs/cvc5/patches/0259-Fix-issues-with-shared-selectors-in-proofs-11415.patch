@@ -1,0 +1,218 @@
+From b47cbd4079971a6a9f1c9172b52f625e4604dab3 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 20 Dec 2024 11:04:26 -0600
+Subject: [PATCH 259/312] Fix issues with shared selectors in proofs (#11415)
+
+We do not generally support shared selectors in proofs.
+
+This disables them when full strict proofs are enabled, and makes the
+internal proof checker not support them.
+
+It also adds proper printing support for them in the Eunoia signature in
+case they are enabled.
+---
+ proofs/eo/cpc/theories/Datatypes.eo           |  4 +--
+ src/proof/alf/alf_node_converter.cpp          | 33 ++++++++++++-------
+ src/smt/set_defaults.cpp                      |  4 ++-
+ src/theory/datatypes/datatypes_rewriter.cpp   | 11 +++++--
+ src/theory/datatypes/proof_checker.cpp        |  5 ++-
+ src/theory/datatypes/proof_checker.h          |  4 +--
+ src/theory/datatypes/theory_datatypes.cpp     |  2 +-
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/datatypes/pf-v2l60078.smt2   |  6 ++++
+ 9 files changed, 46 insertions(+), 24 deletions(-)
+ create mode 100644 test/regress/cli/regress0/datatypes/pf-v2l60078.smt2
+
+diff --git a/proofs/eo/cpc/theories/Datatypes.eo b/proofs/eo/cpc/theories/Datatypes.eo
+index 47545f10e..8b396d30c 100644
+--- a/proofs/eo/cpc/theories/Datatypes.eo
++++ b/proofs/eo/cpc/theories/Datatypes.eo
+@@ -59,5 +59,5 @@
+ ; disclaimer: This function is not in the SMT-LIB standard.
+ (declare-const nullable.lift (-> (! Type :var F :implicit) F ($get_type_nullable_lift F)))
+ 
+-; skolems
+-;SHARED_SELECTOR
++; shared selector
++(declare-const @shared_selector (-> (! Type :var D) (! Type :var T) Int D T))
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index 17852b377..17df4681d 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -25,6 +25,7 @@
+ #include "expr/dtype.h"
+ #include "expr/dtype_cons.h"
+ #include "expr/sequence.h"
++#include "expr/sort_to_term.h"
+ #include "printer/smt2/smt2_printer.h"
+ #include "theory/builtin/generic_op.h"
+ #include "theory/bv/theory_bv_utils.h"
+@@ -545,22 +546,30 @@ Node AlfNodeConverter::getOperatorOfTerm(Node n, bool reqCast)
+     else if (k == Kind::APPLY_SELECTOR)
+     {
+       // maybe a shared selector
+-      ret = maybeMkSkolemFun(op);
+-      if (!ret.isNull())
++      if (op.getSkolemId() == SkolemId::SHARED_SELECTOR)
+       {
+-        return ret;
+-      }
+-      unsigned index = DType::indexOf(op);
+-      const DType& dt = DType::datatypeOf(op);
+-      if (dt.isTuple())
+-      {
+-        indices.push_back(d_nm->mkConstInt(index));
+-        opName << "tuple.select";
++        std::vector<Node> kindices = op.getSkolemIndices();
++        opName << "@shared_selector";
++        indices.push_back(
++            typeAsNode(kindices[0].getConst<SortToTerm>().getType()));
++        indices.push_back(
++            typeAsNode(kindices[1].getConst<SortToTerm>().getType()));
++        indices.push_back(kindices[2]);
+       }
+       else
+       {
+-        unsigned cindex = DType::cindexOf(op);
+-        opName << dt[cindex][index].getSelector();
++        unsigned index = DType::indexOf(op);
++        const DType& dt = DType::datatypeOf(op);
++        if (dt.isTuple())
++        {
++          indices.push_back(d_nm->mkConstInt(index));
++          opName << "tuple.select";
++        }
++        else
++        {
++          unsigned cindex = DType::cindexOf(op);
++          opName << dt[cindex][index].getSelector();
++        }
+       }
+     }
+     else
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index 7441fd8e0..66a888d2e 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -1139,11 +1139,13 @@ bool SetDefaults::incompatibleWithProofs(Options& opts,
+   if (opts.smt.proofMode == options::ProofMode::FULL_STRICT)
+   {
+     // symmetry breaking does not have proof support
+-    SET_AND_NOTIFY_VAL_SYM(uf, ufSymmetryBreaker, false, "full strict proofs");
++    SET_AND_NOTIFY(uf, ufSymmetryBreaker, false, "full strict proofs");
+     // CEGQI with deltas and infinities is not supported
+     SET_AND_NOTIFY(quantifiers, cegqiMidpoint, true, "full strict proofs");
+     SET_AND_NOTIFY(quantifiers, cegqiUseInfInt, false, "full strict proofs");
+     SET_AND_NOTIFY(quantifiers, cegqiUseInfReal, false, "full strict proofs");
++    // shared selectors are not supported
++    SET_AND_NOTIFY(datatypes, dtSharedSelectors, false, "full strict proofs");
+   }
+   return false;
+ }
+diff --git a/src/theory/datatypes/datatypes_rewriter.cpp b/src/theory/datatypes/datatypes_rewriter.cpp
+index b57b00912..aa3cba4b4 100644
+--- a/src/theory/datatypes/datatypes_rewriter.cpp
++++ b/src/theory/datatypes/datatypes_rewriter.cpp
+@@ -78,8 +78,10 @@ Node DatatypesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       Assert(tn.isDatatype());
+       const DType& dt = tn.getDType();
+       size_t i = utils::indexOf(n.getOperator());
+-      bool sharedSel = d_opts.datatypes.dtSharedSelectors;
+-      Node ticons = utils::getInstCons(t, dt, i, sharedSel);
++      // Note that we set shared selectors to false. This proof rule will
++      // be (unintentionally) unsuccessful when reconstructing proofs of the
++      // rewriter when using shared selectors.
++      Node ticons = utils::getInstCons(t, dt, i, false);
+       return t.eqNode(ticons);
+     }
+     case ProofRewriteRule::DT_COLLAPSE_SELECTOR:
+@@ -90,6 +92,11 @@ Node DatatypesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+         return Node::null();
+       }
+       Node selector = n.getOperator();
++      // shared selectors are not supported
++      if (selector.getSkolemId() == SkolemId::SHARED_SELECTOR)
++      {
++        return Node::null();
++      }
+       size_t constructorIndex = utils::indexOf(n[0].getOperator());
+       const DType& dt = utils::datatypeOf(selector);
+       const DTypeConstructor& c = dt[constructorIndex];
+diff --git a/src/theory/datatypes/proof_checker.cpp b/src/theory/datatypes/proof_checker.cpp
+index 623f5e0d2..3260fce7e 100644
+--- a/src/theory/datatypes/proof_checker.cpp
++++ b/src/theory/datatypes/proof_checker.cpp
+@@ -23,9 +23,8 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace datatypes {
+ 
+-DatatypesProofRuleChecker::DatatypesProofRuleChecker(NodeManager* nm,
+-                                                     bool sharedSel)
+-    : ProofRuleChecker(nm), d_sharedSel(sharedSel)
++DatatypesProofRuleChecker::DatatypesProofRuleChecker(NodeManager* nm)
++    : ProofRuleChecker(nm)
+ {
+ }
+ 
+diff --git a/src/theory/datatypes/proof_checker.h b/src/theory/datatypes/proof_checker.h
+index 42bab401b..c31a51ac5 100644
+--- a/src/theory/datatypes/proof_checker.h
++++ b/src/theory/datatypes/proof_checker.h
+@@ -30,7 +30,7 @@ namespace datatypes {
+ class DatatypesProofRuleChecker : public ProofRuleChecker
+ {
+  public:
+-  DatatypesProofRuleChecker(NodeManager* nm, bool sharedSel);
++  DatatypesProofRuleChecker(NodeManager* nm);
+ 
+   /** Register all rules owned by this rule checker into pc. */
+   void registerTo(ProofChecker* pc) override;
+@@ -40,8 +40,6 @@ class DatatypesProofRuleChecker : public ProofRuleChecker
+   Node checkInternal(ProofRule id,
+                      const std::vector<Node>& children,
+                      const std::vector<Node>& args) override;
+-  /** Whether we are using shared selectors */
+-  bool d_sharedSel;
+ };
+ 
+ }  // namespace datatypes
+diff --git a/src/theory/datatypes/theory_datatypes.cpp b/src/theory/datatypes/theory_datatypes.cpp
+index edbab9eef..055e6b792 100644
+--- a/src/theory/datatypes/theory_datatypes.cpp
++++ b/src/theory/datatypes/theory_datatypes.cpp
+@@ -64,7 +64,7 @@ TheoryDatatypes::TheoryDatatypes(Env& env,
+       d_state(env, valuation),
+       d_im(env, *this, d_state),
+       d_notify(d_im, *this),
+-      d_checker(nodeManager(), options().datatypes.dtSharedSelectors),
++      d_checker(nodeManager()),
+       d_cpacb(*this)
+ {
+   d_true = nodeManager()->mkConst(true);
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 138f90df7..f02fec093 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -724,6 +724,7 @@ set(regress_0_tests
+   regress0/datatypes/pair-real-bool.smt2
+   regress0/datatypes/par-updater-type-rule.smt2
+   regress0/datatypes/parametric-alt-list.cvc.smt2
++  regress0/datatypes/pf-v2l60078.smt2
+   regress0/datatypes/proj-issue172.smt2
+   regress0/datatypes/proj-issue474-app-cons-value.smt2
+   regress0/datatypes/proj-issue578-clash-pf.smt2
+diff --git a/test/regress/cli/regress0/datatypes/pf-v2l60078.smt2 b/test/regress/cli/regress0/datatypes/pf-v2l60078.smt2
+new file mode 100644
+index 000000000..f58dabb38
+--- /dev/null
++++ b/test/regress/cli/regress0/datatypes/pf-v2l60078.smt2
+@@ -0,0 +1,6 @@
++; EXPECT: unsat
++(set-logic QF_DT)
++(declare-datatypes ((n 0) (l 0) (t 0)) (((z)) ((ln) (n (r l))) ((f))))
++(declare-fun x () l)
++(assert (and (not (= ln (r x))) (not ((_ is n) (r x)))))
++(check-sat)
+-- 
+2.47.1
+

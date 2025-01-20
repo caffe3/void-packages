@@ -1,0 +1,24 @@
+From b76c2b5f1df7b523d90a086eb77f5d811049bddc Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Thu, 19 Dec 2024 13:54:23 -0600
+Subject: [PATCH 256/312] Disable lfsc tester on t3_rw903 (#11464)
+
+This fixes a timeout in the nightlies.
+---
+ test/regress/cli/regress0/proofs/t3_rw903.smt2 | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/test/regress/cli/regress0/proofs/t3_rw903.smt2 b/test/regress/cli/regress0/proofs/t3_rw903.smt2
+index 93cc7ebfb..890ac0684 100644
+--- a/test/regress/cli/regress0/proofs/t3_rw903.smt2
++++ b/test/regress/cli/regress0/proofs/t3_rw903.smt2
+@@ -1,5 +1,6 @@
+ ; EXPECT: unsat
+ ; DISABLE-TESTER: unsat-core
++; DISABLE-TESTER: lfsc
+ (set-logic UFNIA)
+ (declare-fun pow2 (Int) Int)
+ (declare-fun intor (Int Int Int) Int)
+-- 
+2.47.1
+

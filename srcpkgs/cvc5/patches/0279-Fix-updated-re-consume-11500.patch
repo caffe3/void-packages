@@ -1,0 +1,65 @@
+From 054632c10a173fc616abfb365db5888be0656a21 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 8 Jan 2025 11:47:29 -0600
+Subject: [PATCH 279/312] Fix updated re consume (#11500)
+
+Fix in
+https://github.com/cvc5/cvc5/commit/f3fc80e36258b228e6e37ce57fbf378df3de13bc
+had a mistake where we did not reset the string we are consuming when
+considering the reverse direction.
+---
+ src/theory/strings/sequences_rewriter.cpp               | 2 +-
+ test/regress/cli/CMakeLists.txt                         | 1 +
+ test/regress/cli/regress1/strings/norn-153-consume.smt2 | 8 ++++++++
+ 3 files changed, 10 insertions(+), 1 deletion(-)
+ create mode 100644 test/regress/cli/regress1/strings/norn-153-consume.smt2
+
+diff --git a/src/theory/strings/sequences_rewriter.cpp b/src/theory/strings/sequences_rewriter.cpp
+index cc21a9830..adf0e193c 100644
+--- a/src/theory/strings/sequences_rewriter.cpp
++++ b/src/theory/strings/sequences_rewriter.cpp
+@@ -1560,7 +1560,6 @@ Node SequencesRewriter::rewriteViaStrInReConsume(const Node& node)
+   {
+     return Node::null();
+   }
+-  std::vector<Node> children;
+   // if star, we consider the body of the star
+   bool isStar = (node[1].getKind()==Kind::REGEXP_STAR);
+   size_t numIter = isStar ? 2 : 1;
+@@ -1568,6 +1567,7 @@ Node SequencesRewriter::rewriteViaStrInReConsume(const Node& node)
+   {
+     int dir = isStar ? (i==0 ? 0 : 1) : -1;
+     Node r = isStar ? node[1][0] : node[1];
++    std::vector<Node> children;
+     utils::getConcat(r, children);
+     std::vector<Node> mchildren;
+     utils::getConcat(node[0], mchildren);
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index a7cc6e290..1393fd394 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -3292,6 +3292,7 @@ set(regress_1_tests
+   regress1/strings/non_termination_regular_expression4.smt2
+   regress1/strings/non-terminating-rewrite-aent.smt2
+   regress1/strings/norn-13.smt2
++  regress1/strings/norn-153-consume.smt2
+   regress1/strings/norn-360.smt2
+   regress1/strings/norn-ab.smt2
+   regress1/strings/norn-re-inter-none.smt2
+diff --git a/test/regress/cli/regress1/strings/norn-153-consume.smt2 b/test/regress/cli/regress1/strings/norn-153-consume.smt2
+new file mode 100644
+index 000000000..23819b815
+--- /dev/null
++++ b/test/regress/cli/regress1/strings/norn-153-consume.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic QF_SLIA)
++(declare-fun var_4 () String)
++(declare-fun var_5 () String)
++(assert (str.in_re (str.++ var_4 "z" var_5 ) (re.++ (re.* (re.++ (str.to_re "a") (re.++ (re.* (re.union (str.to_re "b") (str.to_re "a"))) (str.to_re "z")))) (re.++ (str.to_re "a") (re.* (re.union (str.to_re "b") (str.to_re "a")))))))
++(assert (str.in_re var_5 (re.* (str.to_re "b"))))
++(assert (str.in_re var_4 (re.* (str.to_re "a"))))
++(check-sat)
+-- 
+2.47.1
+

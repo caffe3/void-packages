@@ -1,0 +1,430 @@
+From de042e99abf53cc571846793c92c575cfb31f5ba Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 24 Oct 2024 14:01:38 -0500
+Subject: [PATCH 141/312] Initial proof setup for bv-to-int (#11312)
+
+Makes IntBlaster a proof generator that justifies the rewrites and
+lemmas it sends. For now, it gives trust steps of new id
+`TrustId::INT_BLASTER`.
+---
+ src/preprocessing/passes/bv_to_int.cpp        | 44 +++++++++----
+ src/preprocessing/passes/bv_to_int.h          |  5 +-
+ src/proof/trust_id.cpp                        |  1 +
+ src/proof/trust_id.h                          |  2 +
+ src/theory/bv/int_blaster.cpp                 | 65 +++++++++++++++----
+ src/theory/bv/int_blaster.h                   | 36 +++++++---
+ .../theory/theory_bv_int_blaster_white.cpp    | 10 +--
+ 7 files changed, 121 insertions(+), 42 deletions(-)
+
+diff --git a/src/preprocessing/passes/bv_to_int.cpp b/src/preprocessing/passes/bv_to_int.cpp
+index 5db06dc27..f3e30b742 100644
+--- a/src/preprocessing/passes/bv_to_int.cpp
++++ b/src/preprocessing/passes/bv_to_int.cpp
+@@ -53,18 +53,35 @@ PreprocessingPassResult BVToInt::applyInternal(
+   // this will always contain range constraints
+   // and for options::SolveBVAsIntMode::BITWISE, it will
+   // also include bitwise assertion constraints
+-  std::vector<Node> additionalConstraints;
++  std::vector<TrustNode> additionalConstraints;
+   std::map<Node, Node> skolems;
+   for (uint64_t i = 0; i < assertionsToPreprocess->size(); ++i)
+   {
++    // ensure bv rewritten
+     Node bvNode = (*assertionsToPreprocess)[i];
+-    Node intNode =
+-        d_intBlaster.intBlast(bvNode, additionalConstraints, skolems);
+-    Node rwNode = rewrite(intNode);
++    Node bvnr = rewrite(bvNode);
++    if (bvnr != bvNode)
++    {
++      assertionsToPreprocess->replace(i, bvnr);
++      bvNode = bvnr;
++    }
++    TrustNode tr =
++        d_intBlaster.trustedIntBlast(bvNode, additionalConstraints, skolems);
++    if (tr.isNull())
++    {
++      // int blaster did not apply
++      continue;
++    }
+     Trace("bv-to-int-debug") << "bv node: " << bvNode << std::endl;
+-    Trace("bv-to-int-debug") << "int node: " << intNode << std::endl;
+-    Trace("bv-to-int-debug") << "rw node: " << rwNode << std::endl;
+-    assertionsToPreprocess->replace(i, rwNode);
++    Trace("bv-to-int-debug") << "int node: " << tr.getProven()[1] << std::endl;
++    assertionsToPreprocess->replaceTrusted(i, tr);
++    // ensure integer rewritten
++    Node intNode = (*assertionsToPreprocess)[i];
++    Node inr = rewrite(intNode);
++    if (inr != intNode)
++    {
++      assertionsToPreprocess->replace(i, inr);
++    }
+   }
+   addFinalizeAssertions(assertionsToPreprocess, additionalConstraints);
+   addSkolemDefinitions(skolems);
+@@ -96,13 +113,14 @@ void BVToInt::addSkolemDefinitions(const std::map<Node, Node>& skolems)
+ 
+ void BVToInt::addFinalizeAssertions(
+     AssertionPipeline* assertionsToPreprocess,
+-    const std::vector<Node>& additionalConstraints)
++    const std::vector<TrustNode>& additionalConstraints)
+ {
+-  NodeManager* nm = nodeManager();
+-  Node lemmas = nm->mkAnd(additionalConstraints);
+-  assertionsToPreprocess->push_back(lemmas);
+-  Trace("bv-to-int-debug") << "range constraints: " << lemmas.toString()
+-                           << std::endl;
++  Trace("bv-to-int-debug") << "range constraints:" << std::endl;
++  for (const TrustNode& tlem : additionalConstraints)
++  {
++    Trace("bv-to-int-debug") << "- " << tlem.getProven() << std::endl;
++    assertionsToPreprocess->pushBackTrusted(tlem);
++  }
+ }
+ 
+ }  // namespace passes
+diff --git a/src/preprocessing/passes/bv_to_int.h b/src/preprocessing/passes/bv_to_int.h
+index 48b442ab4..f784081f9 100644
+--- a/src/preprocessing/passes/bv_to_int.h
++++ b/src/preprocessing/passes/bv_to_int.h
+@@ -39,8 +39,9 @@ class BVToInt : public PreprocessingPass
+       AssertionPipeline* assertionsToPreprocess) override;
+ 
+   // Add the lemmas in `additionalConstraints` to the assertions pipeline.
+-  void addFinalizeAssertions(AssertionPipeline* assertionsToPreprocess,
+-                             const std::vector<Node>& additionalConstraints);
++  void addFinalizeAssertions(
++      AssertionPipeline* assertionsToPreprocess,
++      const std::vector<TrustNode>& additionalConstraints);
+ 
+   // include the skolem map as substitutions
+   void addSkolemDefinitions(const std::map<Node, Node>& skolems);
+diff --git a/src/proof/trust_id.cpp b/src/proof/trust_id.cpp
+index 834a75f1c..cca4a00ed 100644
+--- a/src/proof/trust_id.cpp
++++ b/src/proof/trust_id.cpp
+@@ -52,6 +52,7 @@ const char* toString(TrustId id)
+       return "MACRO_THEORY_REWRITE_RCONS";
+     case TrustId::MACRO_THEORY_REWRITE_RCONS_SIMPLE:
+       return "MACRO_THEORY_REWRITE_RCONS_SIMPLE";
++    case TrustId::INT_BLASTER: return "INT_BLASTER";
+     default: return "TrustId::Unknown";
+   };
+ }
+diff --git a/src/proof/trust_id.h b/src/proof/trust_id.h
+index d5684c9c3..670a2203e 100644
+--- a/src/proof/trust_id.h
++++ b/src/proof/trust_id.h
+@@ -133,6 +133,8 @@ enum class TrustId : uint32_t
+    * require the use of theory rewrites to prove.
+    */
+   MACRO_THEORY_REWRITE_RCONS_SIMPLE,
++  /** An unproven step from the int-blaster */
++  INT_BLASTER,
+ };
+ /** Converts a trust id to a string. */
+ const char* toString(TrustId id);
+diff --git a/src/theory/bv/int_blaster.cpp b/src/theory/bv/int_blaster.cpp
+index 9be3e438a..b649b9819 100644
+--- a/src/theory/bv/int_blaster.cpp
++++ b/src/theory/bv/int_blaster.cpp
+@@ -22,11 +22,12 @@
+ #include <vector>
+ 
+ #include "expr/node.h"
+-#include "expr/node_traversal.h"
+ #include "expr/node_algorithm.h"
++#include "expr/node_traversal.h"
+ #include "expr/skolem_manager.h"
+ #include "options/option_exception.h"
+ #include "options/uf_options.h"
++#include "proof/proof.h"
+ #include "theory/bv/theory_bv_utils.h"
+ #include "theory/logic_info.h"
+ #include "theory/rewriter.h"
+@@ -67,9 +68,19 @@ IntBlaster::IntBlaster(Env& env,
+ 
+ IntBlaster::~IntBlaster() {}
+ 
++std::shared_ptr<ProofNode> IntBlaster::getProofFor(Node fact)
++{
++  // proofs not yet supported
++  CDProof cdp(d_env);
++  cdp.addTrustedStep(fact, TrustId::INT_BLASTER, {}, {});
++  return cdp.getProofFor(fact);
++}
++
++std::string IntBlaster::identify() const { return "IntBlaster"; }
++
+ void IntBlaster::addRangeConstraint(Node node,
+                                     uint32_t size,
+-                                    std::vector<Node>& lemmas)
++                                    std::vector<TrustNode>& lemmas)
+ {
+   Node rangeConstraint = mkRangeConstraint(node, size);
+   Trace("int-blaster-debug")
+@@ -79,12 +90,13 @@ void IntBlaster::addRangeConstraint(Node node,
+     Trace("int-blaster-debug")
+         << "range constraint added to cache and lemmas " << std::endl;
+     d_rangeAssertions.insert(rangeConstraint);
+-    lemmas.push_back(rangeConstraint);
++    TrustNode trn = TrustNode::mkTrustLemma(rangeConstraint, this);
++    lemmas.push_back(trn);
+   }
+ }
+ 
+ void IntBlaster::addBitwiseConstraint(Node bitwiseConstraint,
+-                                      std::vector<Node>& lemmas)
++                                      std::vector<TrustNode>& lemmas)
+ {
+   if (d_bitwiseAssertions.find(bitwiseConstraint) == d_bitwiseAssertions.end())
+   {
+@@ -92,7 +104,8 @@ void IntBlaster::addBitwiseConstraint(Node bitwiseConstraint,
+         << "bitwise constraint added to cache and lemmas: " << bitwiseConstraint
+         << std::endl;
+     d_bitwiseAssertions.insert(bitwiseConstraint);
+-    lemmas.push_back(bitwiseConstraint);
++    TrustNode trn = TrustNode::mkTrustLemma(bitwiseConstraint, this);
++    lemmas.push_back(trn);
+   }
+ }
+ 
+@@ -151,13 +164,13 @@ Node IntBlaster::makeBinary(Node n)
+ /**
+  * Translate n to Integers via post-order traversal.
+  */
+-Node IntBlaster::intBlast(Node n,
+-                          std::vector<Node>& lemmas,
+-                          std::map<Node, Node>& skolems)
++TrustNode IntBlaster::trustedIntBlast(Node n,
++                                      std::vector<TrustNode>& lemmas,
++                                      std::map<Node, Node>& skolems)
+ {
+   // make sure the node is re-written
+   Trace("int-blaster-debug") << "n before rewriting: " << n << std::endl;
+-  n = rewrite(n);
++  Assert(n == rewrite(n));
+   Trace("int-blaster-debug") << "n after rewriting: " << n << std::endl;
+ 
+   // helper vector for traversal.
+@@ -243,13 +256,37 @@ Node IntBlaster::intBlast(Node n,
+     }
+   }
+   Assert(d_intblastCache.find(n) != d_intblastCache.end());
+-  return d_intblastCache[n].get();
++  Node res = d_intblastCache[n].get();
++  if (res == n)
++  {
++    return TrustNode::null();
++  }
++  return TrustNode::mkTrustRewrite(n, res, this);
++}
++
++Node IntBlaster::intBlast(Node n,
++                          std::vector<Node>& lemmas,
++                          std::map<Node, Node>& skolems)
++{
++  std::vector<TrustNode> tlemmas;
++  TrustNode tr = trustedIntBlast(n, tlemmas, skolems);
++  for (TrustNode& tlem : tlemmas)
++  {
++    lemmas.emplace_back(tlem.getProven());
++  }
++  if (tr.isNull())
++  {
++    return n;
++  }
++  Assert(tr.getKind() == TrustNodeKind::REWRITE);
++  Assert(tr.getProven()[0] == n);
++  return tr.getProven()[1];
+ }
+ 
+ Node IntBlaster::translateWithChildren(
+     Node original,
+     const std::vector<Node>& translated_children,
+-    std::vector<Node>& lemmas)
++    std::vector<TrustNode>& lemmas)
+ {
+   // The translation of the original node is determined by the kind of
+   // the node.
+@@ -730,7 +767,7 @@ Node IntBlaster::createSignExtendNode(Node x, uint32_t bvsize, uint32_t amount)
+ }
+ 
+ Node IntBlaster::translateNoChildren(Node original,
+-                                     std::vector<Node>& lemmas,
++                                     std::vector<TrustNode>& lemmas,
+                                      std::map<Node, Node>& skolems)
+ {
+   Trace("int-blaster-debug")
+@@ -1063,7 +1100,7 @@ Node IntBlaster::translateQuantifiedFormula(Node quantifiedNode)
+ Node IntBlaster::createBVAndNode(Node x,
+                                  Node y,
+                                  uint32_t bvsize,
+-                                 std::vector<Node>& lemmas)
++                                 std::vector<TrustNode>& lemmas)
+ {
+   // We support three configurations:
+   // 1. translating to IAND
+@@ -1126,7 +1163,7 @@ Node IntBlaster::createBVAndNode(Node x,
+ Node IntBlaster::createBVOrNode(Node x,
+                                 Node y,
+                                 uint32_t bvsize,
+-                                std::vector<Node>& lemmas)
++                                std::vector<TrustNode>& lemmas)
+ {
+   // Based on Hacker's Delight section 2-2 equation h:
+   // x+y = x|y + x&y
+diff --git a/src/theory/bv/int_blaster.h b/src/theory/bv/int_blaster.h
+index 369acfa78..4c067e11c 100644
+--- a/src/theory/bv/int_blaster.h
++++ b/src/theory/bv/int_blaster.h
+@@ -22,6 +22,8 @@
+ #include "context/cdhashset.h"
+ #include "context/cdo.h"
+ #include "options/smt_options.h"
++#include "proof/proof_generator.h"
++#include "proof/trust_node.h"
+ #include "smt/env_obj.h"
+ #include "theory/arith/nl/iand_utils.h"
+ 
+@@ -91,7 +93,7 @@ namespace cvc5::internal {
+ ** op.
+ **
+ **/
+-class IntBlaster : protected EnvObj
++class IntBlaster : protected EnvObj, public ProofGenerator
+ {
+   using CDNodeMap = context::CDHashMap<Node, Node>;
+ 
+@@ -124,11 +126,26 @@ class IntBlaster : protected EnvObj
+    * ff((bv2nat x))), where k is the bit-width of the domain of f, i is the
+    * bit-width of its range, and ff is a Int->Int function that corresponds to
+    * f. For functions with other signatures this is similar
+-   * @return integer node that corresponds to n
++   * @return trust node proving (= n n_i) where n_i is an integer node that
++   * corresponds to n
+    */
++  TrustNode trustedIntBlast(Node n,
++                            std::vector<TrustNode>& lemmas,
++                            std::map<Node, Node>& skolems);
++
++  /** Version without proof tracking */
+   Node intBlast(Node n,
+                 std::vector<Node>& lemmas,
+                 std::map<Node, Node>& skolems);
++  /**
++   * Get proof for fact, where fact may correspond to:
++   * (1) An equality of the form (= n n') where n was rewritten to n' in the
++   * method trustedIntBlast.
++   * (2) A lemma added to lemmas in the method trustedIntBlast.
++   */
++  std::shared_ptr<ProofNode> getProofFor(Node fact) override;
++  /** identify */
++  std::string identify() const override;
+ 
+  protected:
+   /**
+@@ -151,10 +168,13 @@ class IntBlaster : protected EnvObj
+                        bool isLeftShift);
+ 
+   /** Adds the constraint 0 <= node < 2^size to lemmas */
+-  void addRangeConstraint(Node node, uint32_t size, std::vector<Node>& lemmas);
++  void addRangeConstraint(Node node,
++                          uint32_t size,
++                          std::vector<TrustNode>& lemmas);
+ 
+   /** Adds a constraint that encodes bitwise and */
+-  void addBitwiseConstraint(Node bitwiseConstraint, std::vector<Node>& lemmas);
++  void addBitwiseConstraint(Node bitwiseConstraint,
++                            std::vector<TrustNode>& lemmas);
+ 
+   /** Returns a node that represents the bitwise negation of n. */
+   Node createBVNotNode(Node n, uint32_t bvsize);
+@@ -167,14 +187,14 @@ class IntBlaster : protected EnvObj
+   Node createBVAndNode(Node x,
+                        Node y,
+                        uint32_t bvsize,
+-                       std::vector<Node>& lemmas);
++                       std::vector<TrustNode>& lemmas);
+ 
+   /** Returns a node that represents the bitwise or of x and y, by translation
+    * to sum and bitwise and. */
+   Node createBVOrNode(Node x,
+                       Node y,
+                       uint32_t bvsize,
+-                      std::vector<Node>& lemmas);
++                      std::vector<TrustNode>& lemmas);
+ 
+   /** Returns a node that represents the sum of x and y. */
+   Node createBVAddNode(Node x, Node y, uint32_t bvsize);
+@@ -323,7 +343,7 @@ class IntBlaster : protected EnvObj
+    */
+   Node translateWithChildren(Node original,
+                              const std::vector<Node>& translated_children,
+-                             std::vector<Node>& lemmas);
++                             std::vector<TrustNode>& lemmas);
+ 
+   /**
+    * Performs the actual translation to integers for nodes
+@@ -331,7 +351,7 @@ class IntBlaster : protected EnvObj
+    * symbols).
+    */
+   Node translateNoChildren(Node original,
+-                           std::vector<Node>& lemmas,
++                           std::vector<TrustNode>& lemmas,
+                            std::map<Node, Node>& skolems);
+ 
+   /** Caches for the different functions */
+diff --git a/test/unit/theory/theory_bv_int_blaster_white.cpp b/test/unit/theory/theory_bv_int_blaster_white.cpp
+index b2bff59df..9a36c6da5 100644
+--- a/test/unit/theory/theory_bv_int_blaster_white.cpp
++++ b/test/unit/theory/theory_bv_int_blaster_white.cpp
+@@ -45,7 +45,7 @@ TEST_F(TestTheoryWhiteBvIntblaster, intblaster_constants)
+ {
+   Env& env = d_slvEngine->getEnv();
+   // place holders for lemmas and skolem
+-  std::vector<Node> lemmas;
++  std::vector<TrustNode> lemmas;
+   std::map<Node, Node> skolems;
+ 
+   // bit-vector constant representing the integer 7, with 4 bits
+@@ -67,7 +67,7 @@ TEST_F(TestTheoryWhiteBvIntblaster, intblaster_symbolic_constant)
+ {
+   Env& env = d_slvEngine->getEnv();
+   // place holders for lemmas and skolem
+-  std::vector<Node> lemmas;
++  std::vector<TrustNode> lemmas;
+   std::map<Node, Node> skolems;
+ 
+   // bit-vector variable
+@@ -88,7 +88,7 @@ TEST_F(TestTheoryWhiteBvIntblaster, intblaster_uf)
+ {
+   Env& env = d_slvEngine->getEnv();
+   // place holders for lemmas and skolem
+-  std::vector<Node> lemmas;
++  std::vector<TrustNode> lemmas;
+   std::map<Node, Node> skolems;
+ 
+   // uf from integers and bit-vectors to Bools
+@@ -124,7 +124,7 @@ TEST_F(TestTheoryWhiteBvIntblaster, intblaster_with_children)
+ {
+   Env& env = d_slvEngine->getEnv();
+   // place holders for lemmas and skolem
+-  std::vector<Node> lemmas;
++  std::vector<TrustNode> lemmas;
+   std::map<Node, Node> skolems;
+   IntBlaster intBlaster(env, options::SolveBVAsIntMode::SUM, 1);
+ 
+@@ -272,7 +272,7 @@ TEST_F(TestTheoryWhiteBvIntblaster, intblaster_bitwise)
+ {
+   Env& env = d_slvEngine->getEnv();
+   // place holders for lemmas and skolem
+-  std::vector<Node> lemmas;
++  std::vector<TrustNode> lemmas;
+   std::map<Node, Node> skolems;
+   IntBlaster intBlaster(env, options::SolveBVAsIntMode::BITWISE, 1);
+ 
+-- 
+2.47.1
+

@@ -1,0 +1,237 @@
+From 8e166ae4d7614a756494368231cd1d7bea64c444 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 9 Sep 2024 11:54:51 -0500
+Subject: [PATCH 047/312] Add modes for assigning default values to functions
+ in models (#11189)
+
+Adds 3 modes for how models are constructed and implements them for the
+first-order and higher-order cases. We maintain the default for first
+order (the mode `first`).
+
+Note this changes our default model construction for HO functions from
+"first-enum" to "first" to be more consistent with what is done for
+first-order.
+---
+ src/options/theory_options.toml               | 18 +++++
+ src/theory/theory_model_builder.cpp           | 66 ++++++++++++++++---
+ test/regress/cli/CMakeLists.txt               |  3 +
+ .../regress0/incomplete-fun-value-first.smt2  | 10 +++
+ .../incomplete-fun-value-nullable.smt2        | 11 ++++
+ .../cli/regress0/incomplete-fun-value.smt2    | 10 +++
+ 6 files changed, 110 insertions(+), 8 deletions(-)
+ create mode 100644 test/regress/cli/regress0/incomplete-fun-value-first.smt2
+ create mode 100644 test/regress/cli/regress0/incomplete-fun-value-nullable.smt2
+ create mode 100644 test/regress/cli/regress0/incomplete-fun-value.smt2
+
+diff --git a/src/options/theory_options.toml b/src/options/theory_options.toml
+index 2a9237f0e..c3e12bfc1 100644
+--- a/src/options/theory_options.toml
++++ b/src/options/theory_options.toml
+@@ -32,6 +32,24 @@ name   = "Theory Layer"
+   default    = "true"
+   help       = "condense values for functions in models rather than explicitly representing them"
+ 
++[[option]]
++  name       = "defaultFunctionValueMode"
++  category   = "expert"
++  long       = "default-function-value-mode=MODE"
++  type       = "DefaultFunctionValueMode"
++  default    = "FIRST"
++  help       = "mode for choosing default values for functions"
++  help_mode  = "Defines mode for choosing default values for functions."
++[[option.mode.FIRST]]
++  name = "first"
++  help = "The default value is equal to the value of the first application found of that function when applicable, or the first enumerated term otherwise."
++[[option.mode.FIRST_ENUM]]
++  name = "first-enum"
++  help = "The default value is equal to the first enumerated value of its range type."
++[[option.mode.HOLE]]
++  name = "hole"
++  help = "The default value is equal to a distinguished variable."
++
+ [[option]]
+   name       = "relevanceFilter"
+   category   = "expert"
+diff --git a/src/theory/theory_model_builder.cpp b/src/theory/theory_model_builder.cpp
+index e36b31b41..24bdb15e2 100644
+--- a/src/theory/theory_model_builder.cpp
++++ b/src/theory/theory_model_builder.cpp
+@@ -16,6 +16,8 @@
+ 
+ #include "expr/dtype.h"
+ #include "expr/dtype_cons.h"
++#include "expr/skolem_manager.h"
++#include "expr/sort_to_term.h"
+ #include "expr/sort_type_size.h"
+ #include "options/quantifiers_options.h"
+ #include "options/smt_options.h"
+@@ -1295,6 +1297,8 @@ void TheoryEngineModelBuilder::assignFunction(TheoryModel* m, Node f)
+ {
+   Assert(!logicInfo().isHigherOrder());
+   uf::UfModelTree ufmt(f);
++  options::DefaultFunctionValueMode dfvm =
++      options().theory.defaultFunctionValueMode;
+   Node default_v;
+   for (size_t i = 0; i < m->d_uf_terms[f].size(); i++)
+   {
+@@ -1315,12 +1319,24 @@ void TheoryEngineModelBuilder::assignFunction(TheoryModel* m, Node f)
+     Trace("model-builder") << "  Setting (" << simp << ") to (" << v << ")"
+                            << endl;
+     ufmt.setValue(m, simp, v);
+-    default_v = v;
++    if (dfvm == options::DefaultFunctionValueMode::FIRST)
++    {
++      default_v = v;
++    }
+   }
+-  if (default_v.isNull())
++  TypeNode rangeType = f.getType().getRangeType();
++  if (dfvm == options::DefaultFunctionValueMode::HOLE)
++  {
++    NodeManager* nm = NodeManager::currentNM();
++    SkolemManager* sm = nm->getSkolemManager();
++    std::vector<Node> cacheVals;
++    cacheVals.push_back(nm->mkConst(SortToTerm(rangeType)));
++    default_v = sm->mkSkolemFunction(SkolemId::GROUND_TERM, cacheVals);
++  }
++  else if (default_v.isNull())
+   {
+     // choose default value from model if none exists
+-    TypeEnumerator te(f.getType().getRangeType());
++    TypeEnumerator te(rangeType);
+     default_v = (*te);
+   }
+   ufmt.setDefaultValue(m, default_v);
+@@ -1345,6 +1361,8 @@ void TheoryEngineModelBuilder::assignHoFunction(TheoryModel* m, Node f)
+   std::vector<TypeNode> argTypes = type.getArgTypes();
+   std::vector<Node> args;
+   std::vector<TNode> apply_args;
++  options::DefaultFunctionValueMode dfvm =
++      options().theory.defaultFunctionValueMode;
+   for (unsigned i = 0; i < argTypes.size(); i++)
+   {
+     Node v = nodeManager()->mkBoundVar(argTypes[i]);
+@@ -1354,10 +1372,30 @@ void TheoryEngineModelBuilder::assignHoFunction(TheoryModel* m, Node f)
+       apply_args.push_back(v);
+     }
+   }
+-  // start with the base return value (currently we use the same default value
+-  // for all functions)
+-  TypeEnumerator te(type.getRangeType());
+-  Node curr = (*te);
++  // Depending on the default value mode, maybe set the current value (curr).
++  // We also remember a default value (currPre) in case there are no terms
++  // to assign below.
++  TypeNode rangeType = type.getRangeType();
++  Node curr, currPre;
++  if (dfvm == options::DefaultFunctionValueMode::HOLE)
++  {
++    NodeManager* nm = NodeManager::currentNM();
++    SkolemManager* sm = nm->getSkolemManager();
++    std::vector<Node> cacheVals;
++    cacheVals.push_back(nm->mkConst(SortToTerm(rangeType)));
++    currPre = sm->mkSkolemFunction(SkolemId::GROUND_TERM, cacheVals);
++    curr = currPre;
++  }
++  else
++  {
++    TypeEnumerator te(rangeType);
++    currPre = (*te);
++    if (dfvm == options::DefaultFunctionValueMode::FIRST_ENUM)
++    {
++      curr = currPre;
++    }
++  }
++  curr = currPre;
+   std::map<Node, std::vector<Node> >::iterator itht = m->d_ho_uf_terms.find(f);
+   if (itht != m->d_ho_uf_terms.end())
+   {
+@@ -1395,9 +1433,21 @@ void TheoryEngineModelBuilder::assignHoFunction(TheoryModel* m, Node f)
+         hnv = rewrite(hnv);
+       }
+       Assert(hnv.getType() == curr.getType());
+-      curr = nodeManager()->mkNode(Kind::ITE, hni, hnv, curr);
++      if (curr.isNull())
++      {
++        curr = hnv;
++      }
++      else
++      {
++        curr = nodeManager()->mkNode(Kind::ITE, hni, hnv, curr);
++      }
+     }
+   }
++  // if curr was not set, we set it to currPre.
++  if (curr.isNull())
++  {
++    curr = currPre;
++  }
+   Node val = nodeManager()->mkNode(
+       Kind::LAMBDA, nodeManager()->mkNode(Kind::BOUND_VAR_LIST, args), curr);
+   Trace("model-builder-debug") << "...assign via ho function" << std::endl;
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index b9ccf781a..321d7d5a4 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -953,6 +953,9 @@ set(regress_0_tests
+   regress0/ho/trans.smt2
+   regress0/hung10_itesdk_output1.smt2
+   regress0/hung13sdk_output1.smt2
++  regress0/incomplete-fun-value.smt2
++  regress0/incomplete-fun-value-first.smt2
++  regress0/incomplete-fun-value-nullable.smt2
+   regress0/int2bv2nat-rew-type.smt2
+   regress0/incorrect1.smtv1.smt2
+   regress0/ineq_basic.smtv1.smt2
+diff --git a/test/regress/cli/regress0/incomplete-fun-value-first.smt2 b/test/regress/cli/regress0/incomplete-fun-value-first.smt2
+new file mode 100644
+index 000000000..674d4ec01
+--- /dev/null
++++ b/test/regress/cli/regress0/incomplete-fun-value-first.smt2
+@@ -0,0 +1,10 @@
++; COMMAND-LINE: --produce-models --default-function-value-mode=first
++; EXPECT: sat
++; EXPECT: (
++; EXPECT: (define-fun f ((_arg_1 Int)) Int 1)
++; EXPECT: )
++(set-logic ALL)
++(declare-fun f (Int) Int)
++(assert (= (f 1) 1))
++(check-sat)
++(get-model)
+diff --git a/test/regress/cli/regress0/incomplete-fun-value-nullable.smt2 b/test/regress/cli/regress0/incomplete-fun-value-nullable.smt2
+new file mode 100644
+index 000000000..395ffcc52
+--- /dev/null
++++ b/test/regress/cli/regress0/incomplete-fun-value-nullable.smt2
+@@ -0,0 +1,11 @@
++; COMMAND-LINE: --produce-models --default-function-value-mode=first-enum
++; EXPECT: sat
++; EXPECT: (
++; EXPECT: (define-fun f ((_arg_1 Int)) (Nullable Int) (ite (= _arg_1 1) (nullable.some 1) (as nullable.null (Nullable Int))))
++; EXPECT: )
++(set-logic ALL)
++(declare-fun f (Int) (Nullable Int))
++(assert (= (f 1) (nullable.some 1)))
++(assert (= (f 2) (as nullable.null (Nullable Int))))
++(check-sat)
++(get-model)
+diff --git a/test/regress/cli/regress0/incomplete-fun-value.smt2 b/test/regress/cli/regress0/incomplete-fun-value.smt2
+new file mode 100644
+index 000000000..78ba21d02
+--- /dev/null
++++ b/test/regress/cli/regress0/incomplete-fun-value.smt2
+@@ -0,0 +1,10 @@
++; COMMAND-LINE: --produce-models --default-function-value-mode=hole
++; EXPECT: sat
++; EXPECT: (
++; EXPECT: (define-fun f ((_arg_1 Int)) Int (ite (= _arg_1 0) 1 @ground_term_2))
++; EXPECT: )
++(set-logic ALL)
++(declare-fun f (Int) Int)
++(assert (= (f 0) 1))
++(check-sat)
++(get-model)
+-- 
+2.47.1
+

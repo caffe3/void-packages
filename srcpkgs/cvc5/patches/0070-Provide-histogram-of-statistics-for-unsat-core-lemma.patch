@@ -1,0 +1,94 @@
+From a67c5c715f659c41f73c7e70bf32b213aaa7e1e8 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 24 Sep 2024 16:32:34 -0500
+Subject: [PATCH 070/312] Provide histogram of statistics for unsat core lemmas
+ (#11218)
+
+We now get information on what kinds of lemmas were in the unsat core
+when `-o unsat-core-lemmas` is used, e.g.:
+```
+ppm::unsatCoreLemmaIds = { DATATYPES_CLASH_CONFLICT: 14, DATATYPES_COLLAPSE_SEL: 24, DATATYPES_INST: 29, DATATYPES_PURIFY: 12, DATATYPES_SPLIT: 8, DATATYPES_TESTER_CONFLICT: 37, EQ_CONSTANT_MERGE: 17, NONE: 126, QUANTIFIERS_INST_E_MATCHING: 84, QUANTIFIERS_INST_E_MATCHING_SIMPLE: 378, THEORY_PP_SKOLEM_LEM: 173 }
+ppm::unsatCoreLemmaSize = 902
+```
+
+Also makes proofs enabled when `--dump-unsat-cores-lemmas` is used.
+---
+ src/prop/prop_proof_manager.cpp | 16 +++++++++++++++-
+ src/prop/prop_proof_manager.h   |  9 +++++++++
+ src/smt/set_defaults.cpp        |  5 +++--
+ 3 files changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/src/prop/prop_proof_manager.cpp b/src/prop/prop_proof_manager.cpp
+index d103b66f4..56b89daca 100644
+--- a/src/prop/prop_proof_manager.cpp
++++ b/src/prop/prop_proof_manager.cpp
+@@ -69,7 +69,11 @@ PropPfManager::PropPfManager(Env& env,
+       d_lemmaClauseIds(userContext()),
+       d_lemmaClauseTimestamp(userContext()),
+       d_currLemmaId(theory::InferenceId::NONE),
+-      d_satPm(nullptr)
++      d_satPm(nullptr),
++      d_uclIds(statisticsRegistry().registerHistogram<theory::InferenceId>(
++          "ppm::unsatCoreLemmaIds")),
++      d_uclSize(statisticsRegistry().registerInt("ppm::unsatCoreLemmaSize")),
++      d_numUcl(statisticsRegistry().registerInt("ppm::unsatCoreLemmaCalls"))
+ {
+   // Add trivial assumption. This is so that we can check that the prop engine's
+   // proof is closed, as the SAT solver's refutation proof may use True as an
+@@ -145,6 +149,16 @@ std::vector<Node> PropPfManager::getUnsatCoreLemmas()
+       usedLemmas.push_back(lemma);
+     }
+   }
++  if (d_trackLemmaClauseIds)
++  {
++    ++d_numUcl;
++    uint64_t timestamp;
++    for (const Node& lemma : usedLemmas)
++    {
++      d_uclIds << getInferenceIdFor(lemma, timestamp);
++      ++d_uclSize;
++    }
++  }
+   return usedLemmas;
+ }
+ 
+diff --git a/src/prop/prop_proof_manager.h b/src/prop/prop_proof_manager.h
+index 275fc1d27..22c64436c 100644
+--- a/src/prop/prop_proof_manager.h
++++ b/src/prop/prop_proof_manager.h
+@@ -294,6 +294,15 @@ class PropPfManager : protected EnvObj
+   Node d_currPropagationProcessed;
+   /** Temporary, pointer to SAT proof manager */
+   SatProofManager* d_satPm;
++  /**
++   * Counts number of inference ids in requested unsat core lemmas. Note this is
++   * tracked only if -o unsat-core-lemmas is on.
++   */
++  HistogramStat<theory::InferenceId> d_uclIds;
++  /** Total number of unsat core lemmas */
++  IntStat d_uclSize;
++  /** Total number of times we asked for unsat core lemmas */
++  IntStat d_numUcl;
+ }; /* class PropPfManager */
+ 
+ }  // namespace prop
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index 14d855451..1645f7ae6 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -160,9 +160,10 @@ void SetDefaults::setDefaultsPre(Options& opts)
+         options::ProofGranularityMode::DSL_REWRITE,
+         "check-proof-steps");
+   }
+-  // if check-proofs, dump-proofs, or proof-mode=full, then proofs being fully
+-  // enabled is implied
++  // if check-proofs, dump-proofs, dump-unsat-cores-lemmas, or proof-mode=full,
++  // then proofs being fully enabled is implied
+   if (opts.smt.checkProofs || opts.driver.dumpProofs
++      || opts.driver.dumpUnsatCoresLemmas
+       || opts.smt.proofMode == options::ProofMode::FULL
+       || opts.smt.proofMode == options::ProofMode::FULL_STRICT)
+   {
+-- 
+2.47.1
+

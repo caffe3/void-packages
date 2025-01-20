@@ -1,0 +1,92 @@
+From e1683d0874bb83c9b5ccb1ca0a01cec4e20712a1 Mon Sep 17 00:00:00 2001
+From: mudathirmahgoub <mudathirmahgoub@gmail.com>
+Date: Mon, 18 Nov 2024 15:17:04 -0600
+Subject: [PATCH 180/312] Fix issue #11354 (#11372)
+
+---
+ src/parser/smt2/smt2_state.cpp                | 24 +++++++++++++++----
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../regress0/datatypes/nullable_checks.smt2   |  7 ++++++
+ 3 files changed, 28 insertions(+), 4 deletions(-)
+ create mode 100644 test/regress/cli/regress0/datatypes/nullable_checks.smt2
+
+diff --git a/src/parser/smt2/smt2_state.cpp b/src/parser/smt2/smt2_state.cpp
+index 857f936ca..53ec665b1 100644
+--- a/src/parser/smt2/smt2_state.cpp
++++ b/src/parser/smt2/smt2_state.cpp
+@@ -1387,7 +1387,11 @@ Term Smt2State::applyParseOp(const ParseOp& p, std::vector<Term>& args)
+         }
+         else if (p.d_name == "nullable.some")
+         {
+-          return d_tm.mkNullableSome(args[0]);
++          if (args.size() == 1)
++          {
++            return d_tm.mkNullableSome(args[0]);
++          }
++          parseError("nullable.some requires exactly one argument.");
+         }
+         else
+         {
+@@ -1400,7 +1404,11 @@ Term Smt2State::applyParseOp(const ParseOp& p, std::vector<Term>& args)
+       {
+         if (p.d_name == "nullable.val")
+         {
+-          return d_tm.mkNullableVal(args[0]);
++          if (args.size() == 1)
++          {
++            return d_tm.mkNullableVal(args[0]);
++          }
++          parseError("nullable.val requires exactly one argument.");
+         }
+         else
+         {
+@@ -1413,11 +1421,19 @@ Term Smt2State::applyParseOp(const ParseOp& p, std::vector<Term>& args)
+       {
+         if (p.d_name == "nullable.is_null")
+         {
+-          return d_tm.mkNullableIsNull(args[0]);
++          if (args.size() == 1)
++          {
++            return d_tm.mkNullableIsNull(args[0]);
++          }
++          parseError("nullable.is_null requires exactly one argument.");
+         }
+         else if (p.d_name == "nullable.is_some")
+         {
+-          return d_tm.mkNullableIsSome(args[0]);
++          if (args.size() == 1)
++          {
++            return d_tm.mkNullableIsSome(args[0]);
++          }
++          parseError("nullable.is_some requires exactly one argument.");
+         }
+         else
+         {
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 6279bd11f..0468998a9 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -716,6 +716,7 @@ set(regress_0_tests
+   regress0/datatypes/model-subterms-min.smt2
+   regress0/datatypes/mutual-rec-param-dt.smt2
+   regress0/datatypes/mutually-recursive.cvc.smt2
++  regress0/datatypes/nullable_checks.smt2
+   regress0/datatypes/pair-bool-bool.cvc.smt2
+   regress0/datatypes/pair-real-bool.smt2
+   regress0/datatypes/par-updater-type-rule.smt2
+diff --git a/test/regress/cli/regress0/datatypes/nullable_checks.smt2 b/test/regress/cli/regress0/datatypes/nullable_checks.smt2
+new file mode 100644
+index 000000000..b14230e89
+--- /dev/null
++++ b/test/regress/cli/regress0/datatypes/nullable_checks.smt2
+@@ -0,0 +1,7 @@
++; EXIT: 1
++; DISABLE-TESTER: dump
++; SCRUBBER: grep -o '(error "Parse Error:'
++; EXPECT: (error "Parse Error:
++(set-logic ALL)
++(assert (nullable.some))
++(check-sat)
+-- 
+2.47.1
+

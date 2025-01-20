@@ -1,0 +1,67 @@
+From c308f93011d23b0dbc9f51bc36c4a282ea5b99ba Mon Sep 17 00:00:00 2001
+From: Haniel Barbosa <hanielbbarbosa@gmail.com>
+Date: Wed, 18 Sep 2024 12:39:57 -0300
+Subject: [PATCH 057/312] [proofs] [alethe] Enable Alethe tester in CI (#11209)
+
+This makes it so that we run the the checking of Alethe proofs in CI.
+This is fundamental so that we do not inadvertently break the Alethe
+proofs.
+---
+ .github/actions/setup-cache/action.yml | 5 +++--
+ .github/workflows/ci.yml               | 6 +++---
+ 2 files changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/.github/actions/setup-cache/action.yml b/.github/actions/setup-cache/action.yml
+index 1d6f942c6..b4a2bc461 100644
+--- a/.github/actions/setup-cache/action.yml
++++ b/.github/actions/setup-cache/action.yml
+@@ -60,7 +60,9 @@ runs:
+     - name: Install contrib dependencies
+       if: steps.contrib-cache.outputs.cache-hit != 'true'
+       shell: ${{ inputs.shell }}
+-      run: ./contrib/get-ethos-checker
++      run: |
++        ./contrib/get-carcara-checker
++        ./contrib/get-ethos-checker
+ 
+     - name: Setup dependencies cache
+       uses: actions/cache@v4
+@@ -69,4 +71,3 @@ runs:
+           build-shared/deps
+           build-static/deps
+         key: ${{ inputs.cache-key }}-${{ runner.os }}-deps-${{ hashFiles('cmake/**') }}-${{ hashFiles('.github/**') }}
+-
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 17620455b..f71ac621d 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -43,7 +43,7 @@ jobs:
+             macos-target: 10.13
+             exclude_regress: 3-4
+             run_regression_args: --tester base --tester model --tester synth --tester abduct --tester dump
+- 
++
+           - name: macos:production-arm64
+             os: macos-14
+             config: production --auto-download --all-bindings --editline -DBUILD_GMP=1
+@@ -114,7 +114,7 @@ jobs:
+             config: production --auto-download --assertions --tracing --cln --gpl
+             cache-key: dbgclang
+             exclude_regress: 3-4
+-            run_regression_args: --tester cpc --tester base --tester model --tester synth --tester abduct --tester unsat-core --tester dump
++            run_regression_args: --tester cpc --tester alethe --tester base --tester model --tester synth --tester abduct --tester unsat-core --tester dump
+ 
+           # GPL versions
+           - name: ubuntu:production-gpl
+@@ -203,7 +203,7 @@ jobs:
+         regressions-args: ${{ matrix.build.run_regression_args }}
+         regressions-exclude: ${{ matrix.build.exclude_regress }}
+         shell: ${{ matrix.build.shell }}
+-  
++
+     - name: Run tests
+       if: matrix.build.run_regression_args
+       uses: ./.github/actions/run-tests
+-- 
+2.47.1
+

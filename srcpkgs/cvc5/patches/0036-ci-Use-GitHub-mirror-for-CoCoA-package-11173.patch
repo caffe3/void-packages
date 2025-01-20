@@ -1,0 +1,34 @@
+From 12eac7ea8cda93e074f86cd9d9d4ae5d2706c80a Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Wed, 21 Aug 2024 14:17:16 -0500
+Subject: [PATCH 036/312] ci: Use GitHub mirror for CoCoA package (#11173)
+
+We are constantly hitting timeouts on CI when trying to download CoCoA
+from the CoCoA website. We now mirror the required version in a separate
+repository and download it from there to fix this issue.
+---
+ cmake/FindCoCoA.cmake | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/cmake/FindCoCoA.cmake b/cmake/FindCoCoA.cmake
+index 82997c750..1783afe78 100644
+--- a/cmake/FindCoCoA.cmake
++++ b/cmake/FindCoCoA.cmake
+@@ -68,12 +68,12 @@ if(NOT CoCoA_FOUND_SYSTEM)
+   ExternalProject_Add(
+     CoCoA-EP
+     ${COMMON_EP_CONFIG}
+-    URL "http://cocoa.dima.unige.it/cocoa/cocoalib/tgz/CoCoALib-${CoCoA_VERSION}.tgz"
++    URL https://github.com/cvc5/cvc5-deps/blob/main/CoCoALib-${CoCoA_VERSION}.tgz?raw=true
+     URL_HASH SHA256=f8bb227e2e1729e171cf7ac2008af71df25914607712c35db7bcb5a044a928c6
+     # CoCoA requires C++14, but the check does not work with compilers that
+     # default to C++17 or newer. The patch fixes the check.
+     PATCH_COMMAND patch -p1 -d <SOURCE_DIR>
+-        -i ${CMAKE_CURRENT_LIST_DIR}/deps-utils/CoCoALib-0.99800-trace.patch
++        -i ${CMAKE_CURRENT_LIST_DIR}/deps-utils/CoCoALib-${CoCoA_VERSION}-trace.patch
+     BUILD_IN_SOURCE YES
+     CONFIGURE_COMMAND ${SHELL} ./configure --prefix=<INSTALL_DIR> --with-libgmp=${GMP_LIBRARY}
+         --with-cxx=${CMAKE_CXX_COMPILER} --with-cxxflags=${CoCoA_CXXFLAGS}
+-- 
+2.47.1
+

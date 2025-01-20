@@ -1,0 +1,256 @@
+From abbcf00bbba8b964e24a84e9a4ea507f76e70980 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 10 Dec 2024 18:29:10 -0600
+Subject: [PATCH 233/312] node/type_node/flatten: Eliminate calls to
+ NodeManager::currentNM() (#11435)
+
+---
+ src/expr/algorithm/flatten.h             |  4 ++--
+ src/expr/node.h                          |  6 +++---
+ src/expr/type_node.cpp                   | 10 +++++-----
+ src/expr/type_node.h                     | 10 +++++-----
+ src/theory/arith/arith_rewriter.cpp      |  2 +-
+ src/theory/ff/theory_ff_rewriter.cpp     |  6 +++---
+ test/unit/node/node_algorithms_black.cpp | 24 ++++++++++++------------
+ 7 files changed, 31 insertions(+), 31 deletions(-)
+
+diff --git a/src/expr/algorithm/flatten.h b/src/expr/algorithm/flatten.h
+index 3ea9f0a80..76acc0a11 100644
+--- a/src/expr/algorithm/flatten.h
++++ b/src/expr/algorithm/flatten.h
+@@ -105,7 +105,7 @@ bool canFlatten(TNode t, Kinds... kinds)
+  * @return A flattened version of t
+  */
+ template <typename... Kinds>
+-Node flatten(TNode t, Kinds... kinds)
++Node flatten(NodeManager* nm, TNode t, Kinds... kinds)
+ {
+   if (!canFlatten(t, kinds...))
+   {
+@@ -113,7 +113,7 @@ Node flatten(TNode t, Kinds... kinds)
+   }
+   std::vector<TNode> children;
+   flatten(t, children, kinds...);
+-  return NodeManager::currentNM()->mkNode(t.getKind(), children);
++  return nm->mkNode(t.getKind(), children);
+ }
+ 
+ }  // namespace cvc5::internal::expr
+diff --git a/src/expr/node.h b/src/expr/node.h
+index b07dfdf3d..6faf43df1 100644
+--- a/src/expr/node.h
++++ b/src/expr/node.h
+@@ -1315,7 +1315,7 @@ Node NodeTemplate<ref_count>::substitute(
+   }
+ 
+   // otherwise compute
+-  NodeBuilder nb(NodeManager::currentNM(), getKind());
++  NodeBuilder nb(getNodeManager(), getKind());
+   if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+     // push the operator
+     if(getOperator() == node) {
+@@ -1385,7 +1385,7 @@ Node NodeTemplate<ref_count>::substitute(
+     cache[*this] = *this;
+     return *this;
+   } else {
+-    NodeBuilder nb(NodeManager::currentNM(), getKind());
++    NodeBuilder nb(getNodeManager(), getKind());
+     if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+       // push the operator
+       nb << getOperator().substitute(nodesBegin, nodesEnd,
+@@ -1449,7 +1449,7 @@ Node NodeTemplate<ref_count>::substitute(
+     cache[*this] = *this;
+     return *this;
+   } else {
+-    NodeBuilder nb(NodeManager::currentNM(), getKind());
++    NodeBuilder nb(getNodeManager(), getKind());
+     if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+       // push the operator
+       nb << getOperator().substitute(substitutionsBegin, substitutionsEnd, cache);
+diff --git a/src/expr/type_node.cpp b/src/expr/type_node.cpp
+index 3d8de2229..d8cfab958 100644
+--- a/src/expr/type_node.cpp
++++ b/src/expr/type_node.cpp
+@@ -57,7 +57,7 @@ TypeNode TypeNode::substitute(
+   }
+ 
+   // otherwise compute
+-  NodeBuilder nb(NodeManager::currentNM(), getKind());
++  NodeBuilder nb(getNodeManager(), getKind());
+   if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+     // push the operator
+     nb << TypeNode(d_nv->d_children[0]);
+@@ -399,7 +399,7 @@ TypeNode TypeNode::unifyInternal(const TypeNode& t, bool isLub) const
+     // different arities
+     return TypeNode::null();
+   }
+-  NodeBuilder nb(NodeManager::currentNM(), k);
++  NodeBuilder nb(getNodeManager(), k);
+   for (size_t i = 0; i < nchild; i++)
+   {
+     TypeNode c = (*this)[i];
+@@ -532,7 +532,7 @@ bool TypeNode::isInstantiated() const
+ 
+ TypeNode TypeNode::instantiate(const std::vector<TypeNode>& params) const
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = getNodeManager();
+   Kind k = getKind();
+   TypeNode ret;
+   // Note that parametric datatypes we instantiate have an AST where they are
+@@ -710,7 +710,7 @@ std::string TypeNode::toString() const {
+ 
+ const DType& TypeNode::getDType() const
+ {
+-  return NodeManager::currentNM()->getDTypeFor(*this);
++  return getNodeManager()->getDTypeFor(*this);
+ }
+ 
+ bool TypeNode::isRelation() const
+@@ -761,7 +761,7 @@ TypeNode TypeNode::getRangeType() const
+ {
+   if (isDatatypeTester())
+   {
+-    return NodeManager::currentNM()->booleanType();
++    return getNodeManager()->booleanType();
+   }
+   Assert(isFunction() || isDatatypeConstructor() || isDatatypeSelector()
+          || isDatatypeUpdater())
+diff --git a/src/expr/type_node.h b/src/expr/type_node.h
+index 5c9cf464e..1f5a306ab 100644
+--- a/src/expr/type_node.h
++++ b/src/expr/type_node.h
+@@ -847,7 +847,7 @@ TypeNode TypeNode::substitute(
+     cache[*this] = *this;
+     return *this;
+   } else {
+-    NodeBuilder nb(NodeManager::currentNM(), getKind());
++    NodeBuilder nb(getNodeManager(), getKind());
+     if(getMetaKind() == kind::metakind::PARAMETERIZED) {
+       // push the operator
+       nb << TypeNode(d_nv->d_children[0]);
+@@ -909,24 +909,24 @@ inline TypeNode& TypeNode::operator=(const TypeNode& typeNode) {
+ template <class AttrKind>
+ inline typename AttrKind::value_type TypeNode::
+ getAttribute(const AttrKind&) const {
+-  return NodeManager::currentNM()->getAttribute(d_nv, AttrKind());
++  return getNodeManager()->getAttribute(d_nv, AttrKind());
+ }
+ 
+ template <class AttrKind>
+ inline bool TypeNode::
+ hasAttribute(const AttrKind&) const {
+-  return NodeManager::currentNM()->hasAttribute(d_nv, AttrKind());
++  return getNodeManager()->hasAttribute(d_nv, AttrKind());
+ }
+ 
+ template <class AttrKind>
+ inline bool TypeNode::getAttribute(const AttrKind&, typename AttrKind::value_type& ret) const {
+-  return NodeManager::currentNM()->getAttribute(d_nv, AttrKind(), ret);
++  return getNodeManager()->getAttribute(d_nv, AttrKind(), ret);
+ }
+ 
+ template <class AttrKind>
+ inline void TypeNode::
+ setAttribute(const AttrKind&, const typename AttrKind::value_type& value) {
+-  NodeManager::currentNM()->setAttribute(d_nv, AttrKind(), value);
++  getNodeManager()->setAttribute(d_nv, AttrKind(), value);
+ }
+ 
+ inline void TypeNode::printAst(std::ostream& out, int indent) const {
+diff --git a/src/theory/arith/arith_rewriter.cpp b/src/theory/arith/arith_rewriter.cpp
+index e0c24841f..4cd7e9ea1 100644
+--- a/src/theory/arith/arith_rewriter.cpp
++++ b/src/theory/arith/arith_rewriter.cpp
+@@ -500,7 +500,7 @@ RewriteResponse ArithRewriter::rewriteSub(TNode t)
+ RewriteResponse ArithRewriter::preRewritePlus(TNode t)
+ {
+   Assert(t.getKind() == Kind::ADD);
+-  return RewriteResponse(REWRITE_DONE, expr::algorithm::flatten(t));
++  return RewriteResponse(REWRITE_DONE, expr::algorithm::flatten(d_nm, t));
+ }
+ 
+ RewriteResponse ArithRewriter::postRewritePlus(TNode t)
+diff --git a/src/theory/ff/theory_ff_rewriter.cpp b/src/theory/ff/theory_ff_rewriter.cpp
+index 054562cb1..2c1640d10 100644
+--- a/src/theory/ff/theory_ff_rewriter.cpp
++++ b/src/theory/ff/theory_ff_rewriter.cpp
+@@ -70,7 +70,7 @@ Node TheoryFiniteFieldsRewriter::preRewriteFfNeg(TNode t)
+ Node TheoryFiniteFieldsRewriter::preRewriteFfAdd(TNode t)
+ {
+   Assert(t.getKind() == Kind::FINITE_FIELD_ADD);
+-  return expr::algorithm::flatten(t);
++  return expr::algorithm::flatten(d_nm, t);
+ }
+ 
+ Node TheoryFiniteFieldsRewriter::postRewriteFfAdd(TNode t)
+@@ -130,7 +130,7 @@ Node TheoryFiniteFieldsRewriter::postRewriteFfAdd(TNode t)
+     else
+     {
+       Node c = nm->mkConst(summand.second);
+-      summands.push_back(expr::algorithm::flatten(
++      summands.push_back(expr::algorithm::flatten(nm,
+           nm->mkNode(Kind::FINITE_FIELD_MULT, c, summand.first)));
+     }
+   }
+@@ -145,7 +145,7 @@ Node TheoryFiniteFieldsRewriter::postRewriteFfAdd(TNode t)
+ Node TheoryFiniteFieldsRewriter::preRewriteFfMult(TNode t)
+ {
+   Assert(t.getKind() == Kind::FINITE_FIELD_MULT);
+-  return expr::algorithm::flatten(t);
++  return expr::algorithm::flatten(d_nm, t);
+ }
+ 
+ Node TheoryFiniteFieldsRewriter::postRewriteFfMult(TNode t)
+diff --git a/test/unit/node/node_algorithms_black.cpp b/test/unit/node/node_algorithms_black.cpp
+index 39c0c468c..959dc53c5 100644
+--- a/test/unit/node/node_algorithms_black.cpp
++++ b/test/unit/node/node_algorithms_black.cpp
+@@ -38,10 +38,10 @@ TEST_F(TestNodeBlackNodeAlgorithms, flatten)
+     EXPECT_FALSE(expr::algorithm::canFlatten(n, Kind::ADD));
+     EXPECT_FALSE(expr::algorithm::canFlatten(n, Kind::MULT));
+     EXPECT_FALSE(expr::algorithm::canFlatten(n, Kind::ADD, Kind::MULT));
+-    EXPECT_EQ(expr::algorithm::flatten(n), n);
+-    EXPECT_EQ(expr::algorithm::flatten(n, Kind::ADD), n);
+-    EXPECT_EQ(expr::algorithm::flatten(n, Kind::MULT), n);
+-    EXPECT_EQ(expr::algorithm::flatten(n, Kind::ADD, Kind::MULT), n);
++    EXPECT_EQ(expr::algorithm::flatten(d_nodeManager, n), n);
++    EXPECT_EQ(expr::algorithm::flatten(d_nodeManager, n, Kind::ADD), n);
++    EXPECT_EQ(expr::algorithm::flatten(d_nodeManager, n, Kind::MULT), n);
++    EXPECT_EQ(expr::algorithm::flatten(d_nodeManager, n, Kind::ADD, Kind::MULT), n);
+ 
+     {
+       std::vector<TNode> children;
+@@ -79,10 +79,10 @@ TEST_F(TestNodeBlackNodeAlgorithms, flatten)
+     EXPECT_TRUE(expr::algorithm::canFlatten(n, Kind::ADD));
+     EXPECT_FALSE(expr::algorithm::canFlatten(n, Kind::MULT));
+     EXPECT_TRUE(expr::algorithm::canFlatten(n, Kind::ADD, Kind::MULT));
+-    EXPECT_NE(expr::algorithm::flatten(n), n);
+-    EXPECT_NE(expr::algorithm::flatten(n, Kind::ADD), n);
+-    EXPECT_EQ(expr::algorithm::flatten(n, Kind::MULT), n);
+-    EXPECT_NE(expr::algorithm::flatten(n, Kind::ADD, Kind::MULT), n);
++    EXPECT_NE(expr::algorithm::flatten(d_nodeManager, n), n);
++    EXPECT_NE(expr::algorithm::flatten(d_nodeManager, n, Kind::ADD), n);
++    EXPECT_EQ(expr::algorithm::flatten(d_nodeManager, n, Kind::MULT), n);
++    EXPECT_NE(expr::algorithm::flatten(d_nodeManager, n, Kind::ADD, Kind::MULT), n);
+ 
+     {
+       std::vector<TNode> children;
+@@ -123,10 +123,10 @@ TEST_F(TestNodeBlackNodeAlgorithms, flatten)
+     EXPECT_FALSE(expr::algorithm::canFlatten(n, Kind::ADD));
+     EXPECT_FALSE(expr::algorithm::canFlatten(n, Kind::MULT));
+     EXPECT_TRUE(expr::algorithm::canFlatten(n, Kind::ADD, Kind::MULT));
+-    EXPECT_EQ(expr::algorithm::flatten(n), n);
+-    EXPECT_EQ(expr::algorithm::flatten(n, Kind::ADD), n);
+-    EXPECT_EQ(expr::algorithm::flatten(n, Kind::MULT), n);
+-    EXPECT_NE(expr::algorithm::flatten(n, Kind::ADD, Kind::MULT), n);
++    EXPECT_EQ(expr::algorithm::flatten(d_nodeManager, n), n);
++    EXPECT_EQ(expr::algorithm::flatten(d_nodeManager, n, Kind::ADD), n);
++    EXPECT_EQ(expr::algorithm::flatten(d_nodeManager, n, Kind::MULT), n);
++    EXPECT_NE(expr::algorithm::flatten(d_nodeManager, n, Kind::ADD, Kind::MULT), n);
+ 
+     {
+       std::vector<TNode> children;
+-- 
+2.47.1
+

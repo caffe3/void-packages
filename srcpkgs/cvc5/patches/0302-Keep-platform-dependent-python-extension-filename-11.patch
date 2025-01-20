@@ -1,0 +1,120 @@
+From ea7a520f737813827ac10da9e108adf1df2764c1 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 14 Jan 2025 14:32:53 -0600
+Subject: [PATCH 302/312] Keep platform-dependent python extension filename
+ (#11516)
+
+By default, Python extension filenames include a platform-dependent
+suffix. To facilitate the specification of the dependencies of the
+Python extension file in CMake, this behavior was previously overwritten
+by eliminating the suffix so that the filename was the same across all
+platforms. Although CPython, the reference implementation of Python, can
+load Python extensions with the new name without any problems, I
+recently discovered that PyPy cannot do so properly. This PR reverses
+the change, retains the original name, and updates the CMake and
+Setuptools files to handle the different filenames.
+---
+ src/api/python/CMakeLists.txt | 16 +++++++++++-----
+ src/api/python/setup.py.in    | 18 ++----------------
+ 2 files changed, 13 insertions(+), 21 deletions(-)
+
+diff --git a/src/api/python/CMakeLists.txt b/src/api/python/CMakeLists.txt
+index 0e575939e..5d158199c 100644
+--- a/src/api/python/CMakeLists.txt
++++ b/src/api/python/CMakeLists.txt
+@@ -116,14 +116,20 @@ copy_file_from_src(py_plugin.h)
+ copy_file_from_src(py_plugin.cpp)
+ copy_file_from_src(pyproject.toml)
+ 
++# Get python extension filename
++execute_process(COMMAND
++  ${Python_EXECUTABLE} -c
++    "import sysconfig;\
++     print('cvc5_python_base' + sysconfig.get_config_var('EXT_SUFFIX'))"
++  OUTPUT_VARIABLE PYTHON_EXT_FILENAME
++  OUTPUT_STRIP_TRAILING_WHITESPACE)
++
+ # Set include_dirs and library_dirs variables that are used in setup.cfg.in
+ if (WIN32)
+-  set(PYTHON_EXT "pyd")
+   set(SETUP_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}/include;${CMAKE_BINARY_DIR}/include")
+   set(SETUP_LIBRARY_DIRS "${CMAKE_BINARY_DIR}/src;${CMAKE_BINARY_DIR}/src/parser")
+   set(SETUP_COMPILER "[build]\ncompiler=mingw32")
+ else()
+-  set(PYTHON_EXT "so")
+   set(SETUP_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}/include:${CMAKE_BINARY_DIR}/include")
+   set(SETUP_LIBRARY_DIRS "${CMAKE_BINARY_DIR}/src:${CMAKE_BINARY_DIR}/src/parser")
+   # On Linux and macOS, set rpath variable too
+@@ -153,20 +159,20 @@ set(PYTHON_EXT_SRC_FILES
+ 
+ if(NOT ONLY_PYTHON_EXT_SRC)
+   set(CVC5_PYTHON_BASE_LIB
+-    "${CMAKE_CURRENT_BINARY_DIR}/cvc5/cvc5_python_base.${PYTHON_EXT}")
++    "${CMAKE_CURRENT_BINARY_DIR}/cvc5/${PYTHON_EXT_FILENAME}")
+ 
+   add_custom_command(
+     OUTPUT
+       ${CVC5_PYTHON_BASE_LIB}
+     COMMAND
+       # Force a new build if any dependency has changed
+-      ${CMAKE_COMMAND} -E remove cvc5_python_base.cpp cvc5/cvc5_python_base.${PYTHON_EXT}
++      ${CMAKE_COMMAND} -E remove cvc5_python_base.cpp cvc5/${PYTHON_EXT_FILENAME}
+     COMMAND
+       "${Python_EXECUTABLE}" setup.py build_ext --inplace
+     DEPENDS
+       cvc5 cvc5parser
+       ${PYTHON_EXT_SRC_FILES}
+-    COMMENT "Generating cvc5_python_base.${PYTHON_EXT}"
++    COMMENT "Generating ${PYTHON_EXT_FILENAME}"
+   )
+ endif()
+ 
+diff --git a/src/api/python/setup.py.in b/src/api/python/setup.py.in
+index f7272f540..61069555c 100644
+--- a/src/api/python/setup.py.in
++++ b/src/api/python/setup.py.in
+@@ -20,10 +20,10 @@
+ ##
+ 
+ import os
++import sysconfig
+ from setuptools import setup
+ 
+-ext_suffix = 'pyd' if os.name == 'nt' else 'so'
+-ext_filename = 'cvc5_python_base.' + ext_suffix
++ext_filename = 'cvc5_python_base' + sysconfig.get_config_var('EXT_SUFFIX')
+ 
+ packages=['cvc5', 'cvc5.pythonic']
+ license_files=["COPYING", "licenses/*"]
+@@ -44,8 +44,6 @@ else:
+     import sys
+     import sysconfig
+     from setuptools.extension import Extension
+-
+-    from Cython.Distutils import build_ext
+     from Cython.Build import cythonize
+ 
+     if sys.platform == 'darwin':
+@@ -90,19 +88,7 @@ else:
+     ext_module = Extension(mod_name, mod_src_files, **ext_options)
+     ext_module.cython_directives = {"embedsignature": True}
+ 
+-    class ExtensionBuilder(build_ext):
+-        def get_ext_filename(self, ext_name):
+-            # Do not include the python version, the ABI tag, and
+-            # the platform name in the extension module name.
+-            # This facilitates specifying the dependencies of
+-            # the module in CMake.
+-            filename = super().get_ext_filename(ext_name)
+-            suffix = sysconfig.get_config_var('EXT_SUFFIX')
+-            ext = os.path.splitext(filename)[1]
+-            return filename.replace(suffix, "") + ext
+-
+     setup(
+-        cmdclass={'build_ext': ExtensionBuilder},
+         ext_modules=cythonize([ext_module], compiler_directives=compiler_directives),
+         packages=packages,
+         license_files=license_files
+-- 
+2.47.1
+

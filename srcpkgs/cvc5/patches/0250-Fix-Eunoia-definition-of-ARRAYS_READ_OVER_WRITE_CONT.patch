@@ -1,0 +1,92 @@
+From 746e38e19f8bff331d606231e9d494ce0a80f854 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 17 Dec 2024 14:19:02 -0600
+Subject: [PATCH 250/312] Fix Eunoia definition of
+ ARRAYS_READ_OVER_WRITE_CONTRA (#11455)
+
+Was out of sync with the internal definition.
+---
+ proofs/eo/cpc/rules/Arrays.eo                 |  2 +-
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/proofs/ios_np_sf.smt2        | 44 +++++++++++++++++++
+ 3 files changed, 46 insertions(+), 1 deletion(-)
+ create mode 100644 test/regress/cli/regress0/proofs/ios_np_sf.smt2
+
+diff --git a/proofs/eo/cpc/rules/Arrays.eo b/proofs/eo/cpc/rules/Arrays.eo
+index 59b37c9e1..0a439288d 100644
+--- a/proofs/eo/cpc/rules/Arrays.eo
++++ b/proofs/eo/cpc/rules/Arrays.eo
+@@ -21,7 +21,7 @@
+ ; conclusion: The index of the store is equal to the selected index.
+ (declare-rule arrays_read_over_write_contra ((T Type) (U Type) (i T) (j T) (e U) (a (Array T U)))
+   :premises ((not (= (select (store a i e) j) (select a j))))
+-  :conclusion (= i j)
++  :conclusion (= j i)
+ )
+ 
+ ; rule: arrays_read_over_write_1
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 6878c4af3..5ccfe96ef 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1333,6 +1333,7 @@ set(regress_0_tests
+   regress0/proofs/fixed-point-rew.smt2
+   regress0/proofs/fixed-point-rew-conc.smt2
+   regress0/proofs/indexof-eval-rw_155.smt2
++  regress0/proofs/ios_np_sf.smt2
+   regress0/proofs/issue277-circuit-propagator.smt2
+   regress0/proofs/issue10278-pf-clone.smt2
+   regress0/proofs/issue8983-trust-subs.smt2
+diff --git a/test/regress/cli/regress0/proofs/ios_np_sf.smt2 b/test/regress/cli/regress0/proofs/ios_np_sf.smt2
+new file mode 100644
+index 000000000..faa61e48f
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/ios_np_sf.smt2
+@@ -0,0 +1,44 @@
++; EXPECT: unsat
++(set-info :smt-lib-version 2.6)
++(set-logic QF_ALIA)
++(set-info :status unsat)
++(declare-fun earray_12 () (Array Int Int))
++(declare-fun earray_14 () (Array Int Int))
++(declare-fun earray_16 () (Array Int Int))
++(declare-fun earray_3 () (Array Int Int))
++(declare-fun earray_6 () (Array Int Int))
++(declare-fun earray_9 () (Array Int Int))
++(declare-fun elem_0 () Int)
++(declare-fun elem_1 () Int)
++(declare-fun elem_10 () Int)
++(declare-fun elem_11 () Int)
++(declare-fun elem_13 () Int)
++(declare-fun elem_15 () Int)
++(declare-fun elem_2 () Int)
++(declare-fun elem_4 () Int)
++(declare-fun elem_5 () Int)
++(declare-fun elem_7 () Int)
++(declare-fun elem_8 () Int)
++(declare-fun a () (Array Int Int))
++(declare-fun i () Int)
++(assert (= earray_12 (store a elem_4 elem_11)))
++(assert (= earray_14 (store earray_12 elem_0 elem_13)))
++(assert (= earray_16 (store earray_14 i elem_15)))
++(assert (= earray_3 (store a elem_0 elem_2)))
++(assert (= earray_6 (store earray_3 elem_4 elem_5)))
++(assert (= earray_9 (store earray_6 elem_7 elem_8)))
++(assert (= elem_0 (+ i 1)))
++(assert (= elem_1 (select a i)))
++(assert (= elem_10 (select a elem_7)))
++(assert (= elem_11 (- elem_10 1)))
++(assert (= elem_13 (- elem_11 1)))
++(assert (= elem_15 (- elem_13 1)))
++(assert (= elem_2 (+ elem_1 1)))
++(assert (= elem_4 (+ elem_0 1)))
++(assert (= elem_5 (+ elem_2 1)))
++(assert (= elem_7 (+ elem_4 1)))
++(assert (= elem_8 (+ elem_5 1)))
++(assert (= earray_9 earray_16))
++(assert (not (= elem_8 elem_10)))
++(check-sat)
++(exit)
+-- 
+2.47.1
+

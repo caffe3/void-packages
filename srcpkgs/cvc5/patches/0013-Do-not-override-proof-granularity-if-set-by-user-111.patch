@@ -1,0 +1,31 @@
+From 3f3c9de9d21790a7cd7509e310d88c0f03817d8e Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 12 Aug 2024 08:48:34 -0500
+Subject: [PATCH 013/312] Do not override proof granularity if set by user
+ (#11144)
+
+This essentially prevented the user from choosing a lower granularity
+than theory rewrite.
+---
+ src/smt/set_defaults.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index 497d46eca..22bb1e00f 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -175,8 +175,9 @@ void SetDefaults::setDefaultsPre(Options& opts)
+     SET_AND_NOTIFY(smt, proofMode, options::ProofMode::FULL, "enabling proofs");
+     // Default granularity is theory rewrite if we are intentionally using
+     // proofs, otherwise it is MACRO (e.g. if produce unsat cores is true)
+-    if (opts.proof.proofGranularityMode
+-        < options::ProofGranularityMode::THEORY_REWRITE)
++    if (!opts.proof.proofGranularityModeWasSetByUser
++        && opts.proof.proofGranularityMode
++               < options::ProofGranularityMode::THEORY_REWRITE)
+     {
+       SET_AND_NOTIFY(proof,
+                      proofGranularityMode,
+-- 
+2.47.1
+

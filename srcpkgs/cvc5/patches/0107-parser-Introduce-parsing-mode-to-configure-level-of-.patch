@@ -1,0 +1,325 @@
+From ecd9558fd566f384d812c67cfc95406aa1094522 Mon Sep 17 00:00:00 2001
+From: Aina Niemetz <aina.niemetz@gmail.com>
+Date: Fri, 4 Oct 2024 06:46:28 -0700
+Subject: [PATCH 107/312] parser: Introduce parsing mode to configure level of
+ strictness. (#11261)
+
+This introduces option `--parsing-mode` to allow configuration of both
+more strict but also more lenient parsing than default. Previous option
+`--strict-parsing` is now configured to be an alias (via an options
+handler) for `--parsing-mode=strict`.
+
+Further, we now allow to parse symbols that start with `.` or `@`, which
+we use for internally freshly introduced symbols, in lenient parsing
+mode.
+---
+ src/options/options_handler.cpp               | 13 ++++++++
+ src/options/options_handler.h                 |  3 ++
+ src/options/parser_options.toml               | 21 +++++++++++-
+ src/parser/parser.cpp                         | 13 ++++++--
+ src/parser/parser_state.cpp                   |  4 +--
+ src/parser/parser_state.h                     | 33 +++++++++++++------
+ src/parser/smt2/smt2_parser.cpp               |  6 ++--
+ src/parser/smt2/smt2_parser.h                 |  2 +-
+ src/parser/smt2/smt2_state.cpp                |  4 +--
+ src/parser/smt2/smt2_state.h                  |  5 +--
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/parser/lenient-numeral.smt2  |  9 +++++
+ 12 files changed, 91 insertions(+), 23 deletions(-)
+ create mode 100644 test/regress/cli/regress0/parser/lenient-numeral.smt2
+
+diff --git a/src/options/options_handler.cpp b/src/options/options_handler.cpp
+index e22fb78a9..d53f4ffad 100644
+--- a/src/options/options_handler.cpp
++++ b/src/options/options_handler.cpp
+@@ -36,6 +36,7 @@
+ #include "options/language.h"
+ #include "options/main_options.h"
+ #include "options/option_exception.h"
++#include "options/parser_options.h"
+ #include "options/smt_options.h"
+ #include "options/theory_options.h"
+ #include "util/didyoumean.h"
+@@ -400,5 +401,17 @@ void OptionsHandler::showTraceTags(const std::string& flag, bool value)
+   printTags(Configuration::getTraceTags());
+ }
+ 
++void OptionsHandler::strictParsing(const std::string& flag, bool value)
++{
++  if (value)
++  {
++    d_options->write_parser().parsingMode = options::ParsingMode::STRICT;
++  }
++  else if (d_options->parser.parsingMode == options::ParsingMode::STRICT)
++  {
++    d_options->write_parser().parsingMode = options::ParsingMode::DEFAULT;
++  }
++}
++
+ }  // namespace options
+ }  // namespace cvc5::internal
+diff --git a/src/options/options_handler.h b/src/options/options_handler.h
+index a182b8bd0..e0ffad1bf 100644
+--- a/src/options/options_handler.h
++++ b/src/options/options_handler.h
+@@ -111,6 +111,9 @@ class OptionsHandler
+   /** Show all trace tags and exit */
+   void showTraceTags(const std::string& flag, bool value);
+ 
++  /***************************** parser options *******************************/
++  void strictParsing(const std::string& flag, bool value);
++
+  private:
+   /** Pointer to the containing Options object.*/
+   Options* d_options;
+diff --git a/src/options/parser_options.toml b/src/options/parser_options.toml
+index 6d7020426..efba5d29d 100644
+--- a/src/options/parser_options.toml
++++ b/src/options/parser_options.toml
+@@ -7,7 +7,26 @@ name   = "Parser"
+   long       = "strict-parsing"
+   type       = "bool"
+   default    = "false"
+-  help       = "be less tolerant of non-conforming inputs"
++  predicates = ["strictParsing"]
++  help       = "be less tolerant of non-conforming inputs, this is an alias for --parsing-mode=strict"
++
++[[option]]
++  name       = "parsingMode"
++  category   = "expert"
++  long       = "parsing-mode=MODE"
++  type       = "ParsingMode"
++  default    = "DEFAULT"
++  help       = "choose parsing mode, see --parsing-mode=help"
++  help_mode  = "Parsing modes."
++[[option.mode.DEFAULT]]
++  name = "default"
++  help = "Be reasonably tolerant of non-conforming inputs."
++[[option.mode.STRICT]]
++  name = "strict"
++  help = "Be less tolerant of non-conforming inputs."
++[[option.mode.LENIENT]]
++  name = "lenient"
++  help = "Be more tolerant of non-conforming inputs."
+ 
+ [[option]]
+   name       = "semanticChecks"
+diff --git a/src/parser/parser.cpp b/src/parser/parser.cpp
+index 04f75f430..ada5d419a 100644
+--- a/src/parser/parser.cpp
++++ b/src/parser/parser.cpp
+@@ -126,8 +126,17 @@ std::unique_ptr<Parser> Parser::mkParser(modes::InputLanguage lang,
+       || lang == modes::InputLanguage::SYGUS_2_1)
+   {
+     bool isSygus = (lang == modes::InputLanguage::SYGUS_2_1);
+-    bool strictMode = solver->getOptionInfo("strict-parsing").boolValue();
+-    parser.reset(new Smt2Parser(solver, sm, strictMode, isSygus));
++    ParsingMode parsingMode = ParsingMode::DEFAULT;
++    std::string mode = solver->getOption("parsing-mode");
++    if (mode == "strict")
++    {
++      parsingMode = ParsingMode::STRICT;
++    }
++    else if (mode == "lenient")
++    {
++      parsingMode = ParsingMode::LENIENT;
++    }
++    parser.reset(new Smt2Parser(solver, sm, parsingMode, isSygus));
+   }
+   else
+   {
+diff --git a/src/parser/parser_state.cpp b/src/parser/parser_state.cpp
+index 02cb0520c..c20c1aa59 100644
+--- a/src/parser/parser_state.cpp
++++ b/src/parser/parser_state.cpp
+@@ -37,14 +37,14 @@ namespace parser {
+ ParserState::ParserState(ParserStateCallback* psc,
+                          Solver* solver,
+                          SymManager* sm,
+-                         bool strictMode)
++                         ParsingMode parsingMode)
+     : d_solver(solver),
+       d_tm(d_solver->getTermManager()),
+       d_psc(psc),
+       d_symman(sm),
+       d_symtab(sm->getSymbolTable()),
+       d_checksEnabled(true),
+-      d_strictMode(strictMode),
++      d_parsingMode(parsingMode),
+       d_parseOnly(d_solver->getOptionInfo("parse-only").boolValue())
+ {
+ }
+diff --git a/src/parser/parser_state.h b/src/parser/parser_state.h
+index 2686b26b8..008824f5f 100644
+--- a/src/parser/parser_state.h
++++ b/src/parser/parser_state.h
+@@ -36,6 +36,17 @@ namespace parser {
+ 
+ class Command;
+ 
++/**
++ * The parsing mode, defines how strict we are on accepting non-conforming
++ * inputs.
++ */
++enum class ParsingMode
++{
++  DEFAULT,  // reasonably strict
++  STRICT,   // more strict
++  LENIENT,  // less strict
++};
++
+ /**
+  * Callback from the parser state to the parser, for command preemption
+  * and error handling.
+@@ -67,16 +78,16 @@ class CVC5_EXPORT ParserState
+    * @attention The parser takes "ownership" of the given
+    * input and will delete it on destruction.
+    *
+-   * @param psc The callback for implementing parser-specific methods
+-   * @param solver solver API object
+-   * @param symm reference to the symbol manager
+-   * @param input the parser input
+-   * @param strictMode whether to incorporate strict(er) compliance checks
++   * @param psc The callback for implementing parser-specific methods.
++   * @param solver The solver API object.
++   * @param symm The symbol manager.
++   * @param input The parser input.
++   * @param parsingMode The parsing mode.
+    */
+   ParserState(ParserStateCallback* psc,
+               Solver* solver,
+               SymManager* sm,
+-              bool strictMode = false);
++              ParsingMode parsingMode = ParsingMode::DEFAULT);
+ 
+   virtual ~ParserState();
+ 
+@@ -91,13 +102,15 @@ class CVC5_EXPORT ParserState
+   void disableChecks() { d_checksEnabled = false; }
+ 
+   /** Enable strict parsing, according to the language standards. */
+-  void enableStrictMode() { d_strictMode = true; }
++  void enableStrictMode() { d_parsingMode = ParsingMode::STRICT; }
+ 
+   /** Disable strict parsing. Allows certain syntactic infelicities to
+       pass without comment. */
+-  void disableStrictMode() { d_strictMode = false; }
++  void disableStrictMode() { d_parsingMode = ParsingMode::DEFAULT; }
++
++  bool strictModeEnabled() { return d_parsingMode == ParsingMode::STRICT; }
+ 
+-  bool strictModeEnabled() { return d_strictMode; }
++  bool lenientModeEnabled() { return d_parsingMode == ParsingMode::LENIENT; }
+ 
+   const std::string& getForcedLogic() const;
+   bool logicIsForced() const;
+@@ -577,7 +590,7 @@ class CVC5_EXPORT ParserState
+   bool d_checksEnabled;
+ 
+   /** Are we parsing in strict mode? */
+-  bool d_strictMode;
++  ParsingMode d_parsingMode;
+ 
+   /** Are we in parse-only mode? */
+   bool d_parseOnly;
+diff --git a/src/parser/smt2/smt2_parser.cpp b/src/parser/smt2/smt2_parser.cpp
+index d574a1aaa..65525f949 100644
+--- a/src/parser/smt2/smt2_parser.cpp
++++ b/src/parser/smt2/smt2_parser.cpp
+@@ -23,11 +23,11 @@ namespace parser {
+ 
+ Smt2Parser::Smt2Parser(Solver* solver,
+                        SymManager* sm,
+-                       bool isStrict,
++                       ParsingMode parsingMode,
+                        bool isSygus)
+     : Parser(solver, sm),
+-      d_slex(isStrict, isSygus),
+-      d_state(this, solver, sm, isStrict, isSygus),
++      d_slex(parsingMode == ParsingMode::STRICT, isSygus),
++      d_state(this, solver, sm, parsingMode, isSygus),
+       d_termParser(d_slex, d_state),
+       d_cmdParser(d_slex, d_state, d_termParser)
+ {
+diff --git a/src/parser/smt2/smt2_parser.h b/src/parser/smt2/smt2_parser.h
+index 7ca0b785e..57a81b06a 100644
+--- a/src/parser/smt2/smt2_parser.h
++++ b/src/parser/smt2/smt2_parser.h
+@@ -39,7 +39,7 @@ class Smt2Parser : public Parser
+  public:
+   Smt2Parser(Solver* solver,
+              SymManager* sm,
+-             bool isStrict = false,
++             ParsingMode parsingMode = ParsingMode::DEFAULT,
+              bool isSygus = false);
+   virtual ~Smt2Parser() {}
+   /** Set the logic */
+diff --git a/src/parser/smt2/smt2_state.cpp b/src/parser/smt2/smt2_state.cpp
+index abf0f5063..857f936ca 100644
+--- a/src/parser/smt2/smt2_state.cpp
++++ b/src/parser/smt2/smt2_state.cpp
+@@ -27,9 +27,9 @@ namespace parser {
+ Smt2State::Smt2State(ParserStateCallback* psc,
+                      Solver* solver,
+                      SymManager* sm,
+-                     bool strictMode,
++                     ParsingMode parsingMode,
+                      bool isSygus)
+-    : ParserState(psc, solver, sm, strictMode),
++    : ParserState(psc, solver, sm, parsingMode),
+       d_isSygus(isSygus),
+       d_logicSet(false),
+       d_seenSetLogic(false)
+diff --git a/src/parser/smt2/smt2_state.h b/src/parser/smt2/smt2_state.h
+index 44f1aece4..ccfc55459 100644
+--- a/src/parser/smt2/smt2_state.h
++++ b/src/parser/smt2/smt2_state.h
+@@ -43,7 +43,7 @@ class Smt2State : public ParserState
+   Smt2State(ParserStateCallback* psc,
+             Solver* solver,
+             SymManager* sm,
+-            bool strictMode = false,
++            ParsingMode parsingMode = ParsingMode::DEFAULT,
+             bool isSygus = false);
+ 
+   ~Smt2State();
+@@ -280,7 +280,8 @@ class Smt2State : public ParserState
+ 
+   void checkUserSymbol(const std::string& name)
+   {
+-    if (name.length() > 0 && (name[0] == '.' || name[0] == '@'))
++    if (!lenientModeEnabled() && name.length() > 0
++        && (name[0] == '.' || name[0] == '@'))
+     {
+       std::stringstream ss;
+       ss << "cannot declare or define symbol `" << name
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 868aceb31..60a3c1657 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1213,6 +1213,7 @@ set(regress_0_tests
+   regress0/parser/shadow_fun_symbol_nirat.smt2
+   regress0/parser/stdout-diag.smt2
+   regress0/parser/strict-numeral.smt2
++  regress0/parser/lenient-numeral.smt2
+   regress0/parser/strings20.smt2
+   regress0/parser/strings25.smt2
+   regress0/parser/to_fp.smt2
+diff --git a/test/regress/cli/regress0/parser/lenient-numeral.smt2 b/test/regress/cli/regress0/parser/lenient-numeral.smt2
+new file mode 100644
+index 000000000..c7358595a
+--- /dev/null
++++ b/test/regress/cli/regress0/parser/lenient-numeral.smt2
+@@ -0,0 +1,9 @@
++; COMMAND-LINE: --parsing-mode=lenient
++; EXPECT: unsat
++(set-logic QF_LIRA)
++(declare-fun @x () Int)
++(declare-fun .y () Int)
++(assert (= @x 3))
++(assert (= @x -2))
++(assert (distinct @x .y))
++(check-sat)
+-- 
+2.47.1
+

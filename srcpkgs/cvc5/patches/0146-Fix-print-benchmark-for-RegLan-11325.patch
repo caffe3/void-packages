@@ -1,0 +1,33 @@
+From e2fe129478fa7442aaba7debd5f4135dba7cc6f1 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 1 Nov 2024 08:22:36 -0500
+Subject: [PATCH 146/312] Fix print benchmark for RegLan (#11325)
+
+Fixes https://github.com/cvc5/cvc5/issues/11324.
+
+The issue was we were skipping all non-first class types, when we should
+have just skipped datatype-specific types.
+---
+ src/smt/print_benchmark.cpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/smt/print_benchmark.cpp b/src/smt/print_benchmark.cpp
+index 2b45de895..abb6c25bc 100644
+--- a/src/smt/print_benchmark.cpp
++++ b/src/smt/print_benchmark.cpp
+@@ -250,8 +250,10 @@ void PrintBenchmark::printDeclaredFuns(std::ostream& out,
+   for (const Node& f : funs)
+   {
+     Assert(f.isVar());
+-    // do not print selectors, constructors
+-    if (!f.getType().isFirstClass())
++    // do not print selectors, constructors, testers, updaters
++    TypeNode ft = f.getType();
++    if (ft.isDatatypeSelector() || ft.isDatatypeConstructor()
++        || ft.isDatatypeTester() || ft.isDatatypeUpdater())
+     {
+       continue;
+     }
+-- 
+2.47.1
+

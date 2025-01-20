@@ -1,0 +1,260 @@
+From 9fe9a9c14936176785e2264e30a3320a83d65bd8 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 29 Oct 2024 10:49:06 -0500
+Subject: [PATCH 143/312] Add more string rewrites in RARE (#11309)
+
+Focusing on lesser used operators, towards filling remaining theory
+rewrite holes in regressions.
+---
+ include/cvc5/cvc5_proof_rule.h    | 20 +++++++++++++++
+ proofs/eo/cpc/rules/Rewrites.eo   | 42 +++++++++++++++++++++++++++++++
+ proofs/eo/cpc/theories/Strings.eo |  2 ++
+ src/rewriter/node.py              |  2 +-
+ src/theory/strings/rewrites       | 40 +++++++++++++++++++++++++++++
+ 5 files changed, 105 insertions(+), 1 deletion(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 94019e136..19176f835 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -3410,10 +3410,14 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(STR_AT_ELIM),
+   /** Auto-generated from RARE rule str-replace-self */
+   EVALUE(STR_REPLACE_SELF),
++  /** Auto-generated from RARE rule str-replace-prefix */
++  EVALUE(STR_REPLACE_PREFIX),
+   /** Auto-generated from RARE rule str-replace-no-contains */
+   EVALUE(STR_REPLACE_NO_CONTAINS),
+   /** Auto-generated from RARE rule str-replace-empty */
+   EVALUE(STR_REPLACE_EMPTY),
++  /** Auto-generated from RARE rule str-replace-all-no-contains */
++  EVALUE(STR_REPLACE_ALL_NO_CONTAINS),
+   /** Auto-generated from RARE rule str-len-concat-rec */
+   EVALUE(STR_LEN_CONCAT_REC),
+   /** Auto-generated from RARE rule str-indexof-self */
+@@ -3428,6 +3432,18 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(STR_TO_LOWER_UPPER),
+   /** Auto-generated from RARE rule str-to-upper-lower */
+   EVALUE(STR_TO_UPPER_LOWER),
++  /** Auto-generated from RARE rule str-to-lower-from-int */
++  EVALUE(STR_TO_LOWER_FROM_INT),
++  /** Auto-generated from RARE rule str-to-upper-from-int */
++  EVALUE(STR_TO_UPPER_FROM_INT),
++  /** Auto-generated from RARE rule str-leq-empty */
++  EVALUE(STR_LEQ_EMPTY),
++  /** Auto-generated from RARE rule str-leq-empty-eq */
++  EVALUE(STR_LEQ_EMPTY_EQ),
++  /** Auto-generated from RARE rule str-leq-concat */
++  EVALUE(STR_LEQ_CONCAT),
++  /** Auto-generated from RARE rule str-lt-elim */
++  EVALUE(STR_LT_ELIM),
+   /** Auto-generated from RARE rule re-all-elim */
+   EVALUE(RE_ALL_ELIM),
+   /** Auto-generated from RARE rule re-opt-elim */
+@@ -3460,6 +3476,8 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(RE_INTER_FLATTEN),
+   /** Auto-generated from RARE rule re-inter-dup */
+   EVALUE(RE_INTER_DUP),
++  /** Auto-generated from RARE rule re-star-none */
++  EVALUE(RE_STAR_NONE),
+   /** Auto-generated from RARE rule re-loop-neg */
+   EVALUE(RE_LOOP_NEG),
+   /** Auto-generated from RARE rule re-inter-cstring */
+@@ -3472,6 +3490,8 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(STR_SUBSTR_LEN_INCLUDE_PRE),
+   /** Auto-generated from RARE rule str-substr-len-skip */
+   EVALUE(STR_SUBSTR_LEN_SKIP),
++  /** Auto-generated from RARE rule seq-rev-rev */
++  EVALUE(SEQ_REV_REV),
+   /** Auto-generated from RARE rule seq-rev-concat */
+   EVALUE(SEQ_REV_CONCAT),
+   /** Auto-generated from RARE rule seq-len-unit */
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index 91d92f8c6..a4d66418a 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -1428,6 +1428,10 @@
+   :args (t1 s1)
+   :conclusion (= (seq.replace t1 t1 s1) s1)
+ )
++(declare-rule str-replace-prefix ((@T0 Type) (@T1 Type) (@T2 Type) (t1 (Seq @T0)) (r1 (Seq @T1) :list) (s1 (Seq @T2)))
++  :args (t1 r1 s1)
++  :conclusion (= (seq.replace ($singleton_elim (seq.++ t1 r1)) t1 s1) ($singleton_elim (seq.++ s1 r1)))
++)
+ (declare-rule str-replace-no-contains ((@T0 Type) (@T1 Type) (@T2 Type) (t1 (Seq @T0)) (s1 (Seq @T1)) (r1 (Seq @T2)))
+   :premises ((= (seq.contains t1 s1) false))
+   :args (t1 s1 r1)
+@@ -1437,6 +1441,11 @@
+   :args (t1 s1)
+   :conclusion (= (seq.replace t1 "" s1) (seq.++ s1 t1))
+ )
++(declare-rule str-replace-all-no-contains ((@T0 Type) (@T1 Type) (@T2 Type) (t1 (Seq @T0)) (s1 (Seq @T1)) (r1 (Seq @T2)))
++  :premises ((= (seq.contains t1 s1) false))
++  :args (t1 s1 r1)
++  :conclusion (= (seq.replace_all t1 s1 r1) t1)
++)
+ (declare-rule str-len-concat-rec ((@T0 Type) (@T1 Type) (@T2 Type) (s1 (Seq @T0)) (s2 (Seq @T1)) (s3 (Seq @T2) :list))
+   :args (s1 s2 s3)
+   :conclusion (= (seq.len (seq.++ s1 s2 s3)) (+ (seq.len s1) (seq.len ($singleton_elim (seq.++ s2 s3)))))
+@@ -1466,6 +1475,31 @@
+   :args (s1)
+   :conclusion (= (str.to_upper (str.to_lower s1)) (str.to_upper s1))
+ )
++(declare-rule str-to-lower-from-int ((n1 Int))
++  :args (n1)
++  :conclusion (= (str.to_lower (str.from_int n1)) (str.from_int n1))
++)
++(declare-rule str-to-upper-from-int ((n1 Int))
++  :args (n1)
++  :conclusion (= (str.to_upper (str.from_int n1)) (str.from_int n1))
++)
++(declare-rule str-leq-empty ((s1 String))
++  :args (s1)
++  :conclusion (= (str.<= "" s1) true)
++)
++(declare-rule str-leq-empty-eq ((s1 String))
++  :args (s1)
++  :conclusion (= (str.<= s1 "") (= s1 ""))
++)
++(declare-rule str-leq-concat ((s1 String :list) (t1 String) (s2 String) (t2 String :list) (s3 String :list))
++  :premises ((= (str.len t1) (str.len s2)) (= (str.<= t1 s2) false))
++  :args (s1 t1 s2 t2 s3)
++  :conclusion (= (str.<= ($singleton_elim (str.++ s1 t1 t2)) ($singleton_elim (str.++ s1 s2 s3))) false)
++)
++(declare-rule str-lt-elim ((s1 String) (t1 String))
++  :args (s1 t1)
++  :conclusion (= (str.< s1 t1) (and (not (= s1 t1)) (str.<= s1 t1)))
++)
+ (declare-rule re-all-elim ()
+   :args ()
+   :conclusion (= re.all (re.* re.allchar))
+@@ -1530,6 +1564,10 @@
+   :args (xs1 b1 ys1 zs1)
+   :conclusion (= (re.inter xs1 b1 ys1 b1 zs1) ($singleton_elim (re.inter xs1 b1 ys1 zs1)))
+ )
++(declare-rule re-star-none ()
++  :args ()
++  :conclusion (= (re.* re.none) (str.to_re ""))
++)
+ (declare-rule re-loop-neg ((n1 Int) (m1 Int) (r1 RegLan))
+   :premises ((= (> n1 m1) true))
+   :args (n1 m1 r1)
+@@ -1560,6 +1598,10 @@
+   :args (s1 s2 s3 n1 m1)
+   :conclusion (= (seq.extract (seq.++ s1 s2 s3) n1 m1) (seq.extract ($singleton_elim (seq.++ s2 s3)) (- n1 (seq.len s1)) m1))
+ )
++(declare-rule seq-rev-rev ((@T0 Type) (x1 (Seq @T0)))
++  :args (x1)
++  :conclusion (= (seq.rev (seq.rev x1)) x1)
++)
+ (declare-rule seq-rev-concat ((@T0 Type) (@T1 Type) (@T2 Type) (x1 (Seq @T0)) (y1 (Seq @T1) :list) (z1 (Seq @T2)))
+   :args (x1 y1 z1)
+   :conclusion (= (seq.rev (seq.++ x1 y1 z1)) (seq.++ (seq.rev z1) (seq.rev ($singleton_elim (seq.++ x1 y1)))))
+diff --git a/proofs/eo/cpc/theories/Strings.eo b/proofs/eo/cpc/theories/Strings.eo
+index 3cb12a508..3bab5b900 100644
+--- a/proofs/eo/cpc/theories/Strings.eo
++++ b/proofs/eo/cpc/theories/Strings.eo
+@@ -148,6 +148,8 @@
+ ; disclaimer: This function is not in SMT-LIB.
+ (define seq.replace () str.replace)
+ ; disclaimer: This function is not in SMT-LIB.
++(define seq.replace_all () str.replace_all)
++; disclaimer: This function is not in SMT-LIB.
+ (define seq.indexof () str.indexof)
+ ; disclaimer: This function is not in SMT-LIB.
+ (define seq.prefixof () str.prefixof)
+diff --git a/src/rewriter/node.py b/src/rewriter/node.py
+index 6ecaf4291..fc6e461f8 100644
+--- a/src/rewriter/node.py
++++ b/src/rewriter/node.py
+@@ -170,7 +170,7 @@ class Op(Enum):
+     STRING_AT = ('str.at', 'STRING_CHARAT')
+     STRING_CONTAINS = ('str.contains', 'STRING_CONTAINS')
+     STRING_LT = ('str.<', 'STRING_LT')
+-    STRING_LEQ = ('str.<=', 'STRING.LEQ')
++    STRING_LEQ = ('str.<=', 'STRING_LEQ')
+     STRING_INDEXOF = ('str.indexof', 'STRING_INDEXOF')
+     STRING_INDEXOF_RE = ('str.indexof_re', 'STRING_INDEXOF_RE')
+     STRING_REPLACE = ('str.replace', 'STRING_REPLACE')
+diff --git a/src/theory/strings/rewrites b/src/theory/strings/rewrites
+index 94ede9b85..18af74828 100644
+--- a/src/theory/strings/rewrites
++++ b/src/theory/strings/rewrites
+@@ -219,6 +219,10 @@
+   (str.replace t t s)
+   s)
+ 
++(define-rule str-replace-prefix ((t ?Seq) (r ?Seq :list) (s ?Seq))
++  (str.replace (str.++ t r) t s)
++  (str.++ s r))
++
+ (define-cond-rule str-replace-no-contains ((t ?Seq) (s ?Seq) (r ?Seq)) 
+   (not (str.contains t s))
+   (str.replace t s r)
+@@ -228,6 +232,11 @@
+   (str.replace t "" s)
+   (str.++ s t))
+ 
++(define-cond-rule str-replace-all-no-contains ((t ?Seq) (s ?Seq) (r ?Seq))
++  (not (str.contains t s))
++  (str.replace_all t s r)
++  t)
++
+ (define-rule* str-len-concat-rec ((s1 ?Seq) (s2 ?Seq) (s3 ?Seq :list))
+   (str.len (str.++ s1 s2 s3))
+   (str.len (str.++ s2 s3))
+@@ -260,6 +269,31 @@
+   (str.to_upper (str.to_lower s))
+   (str.to_upper s))
+ 
++(define-rule str-to-lower-from-int ((n Int))
++  (str.to_lower (str.from_int n))
++  (str.from_int n))
++
++(define-rule str-to-upper-from-int ((n Int))
++  (str.to_upper (str.from_int n))
++  (str.from_int n))
++
++(define-rule str-leq-empty ((s String))
++  (str.<= "" s)
++  true)
++
++(define-rule str-leq-empty-eq ((s String))
++  (str.<= s "")
++  (= s ""))
++
++(define-cond-rule str-leq-concat ((s String :list) (t1 String) (s1 String) (t2 String :list) (s2 String :list))
++  (and (= (str.len t1) (str.len s1)) (= (str.<= t1 s1) false))
++  (str.<= (str.++ s t1 t2) (str.++ s s1 s2))
++  false)
++
++(define-rule str-lt-elim ((s String) (t String))
++  (str.< s t)
++  (and (not (= s t)) (str.<= s t)))
++
+ ; =============== Regular expression rules
+ 
+ (define-rule re-all-elim () re.all (re.* re.allchar))
+@@ -290,6 +324,8 @@
+ (define-rule* re-inter-flatten ((xs RegLan :list) (b RegLan) (ys RegLan :list) (zs RegLan :list)) (re.inter xs (re.inter b ys) zs) (re.inter xs b ys zs))
+ (define-rule* re-inter-dup ((xs RegLan :list) (b RegLan) (ys RegLan :list) (zs RegLan :list)) (re.inter xs b ys b zs) (re.inter xs b ys zs))
+ 
++(define-rule re-star-none () (re.* re.none) (str.to_re ""))
++
+ (define-cond-rule re-loop-neg ((n Int) (m Int) (r RegLan))
+   (> n m)
+   (re.loop n m r)
+@@ -323,6 +359,10 @@
+   (str.substr (str.++ s2 s3) (- n (str.len s1)) m)
+ )
+ 
++(define-rule seq-rev-rev ((x ?Seq))
++  (str.rev (str.rev x))
++  x)
++
+ (define-rule* seq-rev-concat ((x ?Seq) (y ?Seq :list) (z ?Seq))
+   (str.rev (str.++ x y z))
+   (str.rev (str.++ x y))
+-- 
+2.47.1
+

@@ -1,0 +1,198 @@
+From 56f423056798c17bc2c24792abb99a6d4ae2e77b Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 22 Nov 2024 16:23:13 -0600
+Subject: [PATCH 197/312] Add more cases of STRING_REDUCE in Eunoia (#11360)
+
+Also does minor refactoring of the code to improve the reductions,
+namely, ensuring that terms are already closer to a rewritten form,
+which makes proofs smaller.
+---
+ proofs/eo/cpc/programs/Strings.eo             | 68 +++++++++++++++++--
+ src/proof/alf/alf_printer.cpp                 | 15 +++-
+ .../strings/theory_strings_preprocess.cpp     | 30 ++++----
+ 3 files changed, 96 insertions(+), 17 deletions(-)
+
+diff --git a/proofs/eo/cpc/programs/Strings.eo b/proofs/eo/cpc/programs/Strings.eo
+index a18da46de..4fb696849 100644
+--- a/proofs/eo/cpc/programs/Strings.eo
++++ b/proofs/eo/cpc/programs/Strings.eo
+@@ -422,15 +422,75 @@
+ ; return: the reduction predicate for term t of sort s.
+ ; note: >
+ ;   The operators listed in comments are missing from the signature currently.
+-(program $str_reduction_pred ((U Type) (x (Seq U)) (y (Seq U)) (n Int) (m Int))
+-  ((Seq U)) Bool
++(program $str_reduction_pred ((T Type) (U Type) (x (Seq U)) (y (Seq U)) (z (Seq U)) (n Int) (m Int) (s String))
++  (T) Bool
+   (
+     (($str_reduction_pred (str.substr x n m)) ($str_reduction_substr x n m))
+     (($str_reduction_pred (str.indexof x y n)) ($str_reduction_indexof x y n))
++    (($str_reduction_pred (str.replace x y z)) 
++        (eo::define ((k (@purify (str.replace x y z))))
++        (ite (= y ($mk_emptystr (eo::typeof y)))
++          (= k (str.++ z x))
++          (ite (str.contains x y)
++            (eo::define ((k1 (@purify ($str_first_ctn_pre x y))))
++            (eo::define ((k2 (@purify ($str_first_ctn_post x y))))
++            (and
++              (= x (str.++ k1 y k2))
++              (= k (str.++ k1 z k2))
++              (not (str.contains (str.++ k1 (str.substr y 0 (- (str.len y) 1))) y)))))
++            (= k x)))))
++    (($str_reduction_pred (str.from_int n))
++        (eo::define ((k (@purify (str.from_int n))))
++        (eo::define ((R (@strings_itos_result n)))
++        (ite (>= n 0)
++          (and (>= (str.len k) 1)
++               (= n (R (str.len k)))
++               (= 0 (R 0))
++               (forall ((@var.str_index Int))
++                  (eo::define ((cd (- (str.to_code (str.substr k @var.str_index 1)) 48)))
++                  (eo::define ((ux1 (R (+ @var.str_index 1))))
++                  (or
++                    (not (>= @var.str_index 0))
++                    (not (< @var.str_index (str.len k)))
++                    (and
++                      (= ux1 (+ cd (* 10 (R @var.str_index))))
++                      (and (>= cd (ite (and (= @var.str_index 0) (> (str.len k) 1)) 1 0))
++                           (< cd 10))
++                      (>= n ux1)))))))
++          (= k "")))))
++    (($str_reduction_pred (str.to_int s))
++        (eo::define ((k (@purify (str.to_int s))))
++        (eo::define ((xlen (str.len s)))
++        (eo::define ((R (@strings_stoi_result s)))
++        (eo::define ((ndi (@strings_stoi_non_digit s)))
++        (ite (< k 0)
++          (eo::define ((ndc (- (str.to_code (str.substr s ndi 1)) 48)))
++          (and (= k -1) 
++               (or (= s "") (and (>= ndi 0) (< ndi xlen) (or (< ndc 0) (>= ndc 10))))))
++          (and (= k (R xlen))
++               (= 0 (R 0))
++               (> (str.len s) 0)
++               (forall ((@var.str_index Int))
++                  (eo::define ((cd (- (str.to_code (str.substr s @var.str_index 1)) 48)))
++                  (eo::define ((ux1 (R (+ @var.str_index 1))))
++                  (or
++                    (not (>= @var.str_index 0))
++                    (not (< @var.str_index (str.len s)))
++                    (and
++                      (= ux1 (+ cd (* 10 (R @var.str_index))))
++                      (and (>= cd 0) (< cd 10))
++                      (>= k ux1)))))))))))))
++    (($str_reduction_pred (seq.nth x n))
++        (eo::define ((k (@purify (seq.nth x n))))
++        (eo::define ((k1 (@purify ($str_prefix x n))))
++        (eo::define ((k2 (@purify ($str_suffix_rem x (+ n 1)))))
++          (=> (and (>= n 0) (> (str.len x) n))
++              (and (= x (str.++ k1 (seq.unit k) k2))
++                   (= (str.len k1) n)
++                   (= (str.len k2) (- (str.len x) (+ n 1)))))))))
++
+     ; str.update
+-    ; str.from_int
+     ; str.to_int
+-    ; seq.nth
+     ; str.replaceall
+     ; str.replace_re
+     ; str.replace_re_all
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index d251f5690..4e33c9d5a 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -216,7 +216,20 @@ bool AlfPrinter::isHandled(const Options& opts, const ProofNode* pfn)
+       // depends on the operator
+       Assert(!pargs.empty());
+       Kind k = pargs[0].getKind();
+-      return k == Kind::STRING_SUBSTR || k == Kind::STRING_INDEXOF;
++      switch (k)
++      {
++        case Kind::STRING_SUBSTR:
++        case Kind::STRING_INDEXOF:
++        case Kind::STRING_REPLACE:
++        case Kind::STRING_STOI:
++        case Kind::STRING_ITOS:
++        case Kind::SEQ_NTH:
++          return true;
++        default:
++          break;
++      }
++      Trace("alf-printer-debug") << "Cannot STRING_REDUCTION " << k << std::endl;
++      return false;
+     }
+     break;
+     case ProofRule::STRING_EAGER_REDUCTION:
+diff --git a/src/theory/strings/theory_strings_preprocess.cpp b/src/theory/strings/theory_strings_preprocess.cpp
+index 51558ffad..8a7ebb912 100644
+--- a/src/theory/strings/theory_strings_preprocess.cpp
++++ b/src/theory/strings/theory_strings_preprocess.cpp
+@@ -376,12 +376,12 @@ Node StringsPreprocess::reduce(Node t,
+     Node x = SkolemCache::mkIndexVar(nm, t);
+     Node xPlusOne = nm->mkNode(Kind::ADD, x, one);
+     Node xbv = nm->mkNode(Kind::BOUND_VAR_LIST, x);
+-    Node g = nm->mkNode(Kind::AND,
+-                        nm->mkNode(Kind::GEQ, x, zero),
+-                        nm->mkNode(Kind::LT, x, leni));
++    Node g1 = nm->mkNode(Kind::GEQ, x, zero);
++    Node g2 = nm->mkNode(Kind::LT, x, leni);
+     Node ux = nm->mkNode(Kind::APPLY_UF, u, x);
+     Node ux1 = nm->mkNode(Kind::APPLY_UF, u, xPlusOne);
+-    Node c0 = nm->mkNode(Kind::STRING_TO_CODE, nm->mkConst(String("0")));
++    // the code point of "0", "1" ... is 48, 49 ....
++    Node c0 = nm->mkConstInt(Rational(48));
+     Node c = nm->mkNode(Kind::SUB, mkCodePointAtIndex(itost, x), c0);
+ 
+     Node ten = nm->mkConstInt(Rational(10));
+@@ -397,8 +397,11 @@ Node StringsPreprocess::reduce(Node t,
+ 
+     Node ux1lem = nm->mkNode(Kind::GEQ, n, ux1);
+ 
+-    lem =
+-        nm->mkNode(Kind::OR, g.negate(), nm->mkNode(Kind::AND, eq, cb, ux1lem));
++    std::vector<Node> disj;
++    disj.push_back(g1.notNode());
++    disj.push_back(g2.notNode());
++    disj.push_back(nm->mkNode(Kind::AND, eq, cb, ux1lem));
++    lem = nm->mkNode(Kind::OR, disj);
+     lem = utils::mkForallInternal(nm, xbv, lem);
+     conc.push_back(lem);
+ 
+@@ -451,7 +454,8 @@ Node StringsPreprocess::reduce(Node t,
+     Node k = sc->mkSkolemFun(nm, SkolemId::STRINGS_STOI_NON_DIGIT, t[0]);
+     Node kc1 = nm->mkNode(Kind::GEQ, k, zero);
+     Node kc2 = nm->mkNode(Kind::LT, k, lens);
+-    Node c0 = nm->mkNode(Kind::STRING_TO_CODE, nm->mkConst(String("0")));
++    // the code point of "0", "1" ... is 48, 49 ....
++    Node c0 = nm->mkConstInt(Rational(48));
+     Node codeSk = nm->mkNode(Kind::SUB, mkCodePointAtIndex(s, k), c0);
+     Node ten = nm->mkConstInt(Rational(10));
+     Node kc3 = nm->mkNode(Kind::OR,
+@@ -476,9 +480,8 @@ Node StringsPreprocess::reduce(Node t,
+ 
+     Node x = SkolemCache::mkIndexVar(nm, t);
+     Node xbv = nm->mkNode(Kind::BOUND_VAR_LIST, x);
+-    Node g = nm->mkNode(Kind::AND,
+-                        nm->mkNode(Kind::GEQ, x, zero),
+-                        nm->mkNode(Kind::LT, x, lens));
++    Node g1 = nm->mkNode(Kind::GEQ, x, zero);
++    Node g2 = nm->mkNode(Kind::LT, x, lens);
+     Node ux = nm->mkNode(Kind::APPLY_UF, u, x);
+     Node ux1 = nm->mkNode(Kind::APPLY_UF, u, nm->mkNode(Kind::ADD, x, one));
+     Node c = nm->mkNode(Kind::SUB, mkCodePointAtIndex(s, x), c0);
+@@ -491,8 +494,11 @@ Node StringsPreprocess::reduce(Node t,
+ 
+     Node ux1lem = nm->mkNode(Kind::GEQ, stoit, ux1);
+ 
+-    lem =
+-        nm->mkNode(Kind::OR, g.negate(), nm->mkNode(Kind::AND, eq, cb, ux1lem));
++    std::vector<Node> disj;
++    disj.push_back(g1.notNode());
++    disj.push_back(g2.notNode());
++    disj.push_back(nm->mkNode(Kind::AND, eq, cb, ux1lem));
++    lem = nm->mkNode(Kind::OR, disj);
+     lem = utils::mkForallInternal(nm, xbv, lem);
+     conc2.push_back(lem);
+ 
+-- 
+2.47.1
+

@@ -1,0 +1,218 @@
+From c4d8bced105bd8a6e3f4c11edd8e78c9e65c74c7 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 16 Oct 2024 10:09:58 -0500
+Subject: [PATCH 126/312] Make BvEagerAtom pass proof producing (#11279)
+
+There is already a rule that justifies this pass easily.
+
+Also makes it so that the BV proof checker is indendent of solver, as
+the BV_EAGER_ATOM rule is used even when not internal bitblasting now.
+---
+ src/preprocessing/passes/bv_eager_atoms.cpp   | 40 ++++++++++++++++++-
+ src/preprocessing/passes/bv_eager_atoms.h     |  4 ++
+ src/theory/bv/bv_solver_bitblast_internal.cpp |  6 ---
+ src/theory/bv/bv_solver_bitblast_internal.h   |  6 ---
+ src/theory/bv/theory_bv.cpp                   | 13 ++----
+ src/theory/bv/theory_bv.h                     |  3 ++
+ 6 files changed, 48 insertions(+), 24 deletions(-)
+
+diff --git a/src/preprocessing/passes/bv_eager_atoms.cpp b/src/preprocessing/passes/bv_eager_atoms.cpp
+index 4fd1fba44..3d813b6af 100644
+--- a/src/preprocessing/passes/bv_eager_atoms.cpp
++++ b/src/preprocessing/passes/bv_eager_atoms.cpp
+@@ -18,8 +18,10 @@
+ 
+ #include "preprocessing/passes/bv_eager_atoms.h"
+ 
++#include "options/smt_options.h"
+ #include "preprocessing/assertion_pipeline.h"
+ #include "preprocessing/preprocessing_pass_context.h"
++#include "proof/proof.h"
+ #include "theory/theory_engine.h"
+ #include "theory/theory_model.h"
+ 
+@@ -27,8 +29,42 @@ namespace cvc5::internal {
+ namespace preprocessing {
+ namespace passes {
+ 
++/**
++ * A proof generator for turning formulas F into (BITVECTOR_EAGER_ATOM F).
++ */
++class BVEagerAtomProofGenerator : protected EnvObj, public ProofGenerator
++{
++ public:
++  BVEagerAtomProofGenerator(Env& env) : EnvObj(env) {}
++  virtual ~BVEagerAtomProofGenerator() {}
++  /**
++   * Proves (BITVECTOR_EAGER_ATOM F) from F via:
++   *
++   *     ---------------------------- BV_EAGER_ATOM
++   *     (BITVECTOR_EAGER_ATOM F) = F
++   *     ---------------------------- SYMM
++   *     F = (BITVECTOR_EAGER_ATOM F)
++   */
++  std::shared_ptr<ProofNode> getProofFor(Node fact) override
++  {
++    Assert(fact.getKind() == Kind::EQUAL
++           && fact[1].getKind() == Kind::BITVECTOR_EAGER_ATOM
++           && fact[1][0] == fact[0]);
++    CDProof cdp(d_env);
++    Node eq = fact[1].eqNode(fact[0]);
++    cdp.addStep(eq, ProofRule::BV_EAGER_ATOM, {}, {fact[1]});
++    return cdp.getProofFor(fact);
++  }
++  /** identify */
++  std::string identify() const override { return "BVEagerAtomProofGenerator"; }
++};
++
+ BvEagerAtoms::BvEagerAtoms(PreprocessingPassContext* preprocContext)
+-    : PreprocessingPass(preprocContext, "bv-eager-atoms"){};
++    : PreprocessingPass(preprocContext, "bv-eager-atoms"),
++      d_proof(options().smt.produceProofs ? new BVEagerAtomProofGenerator(d_env)
++                                          : nullptr)
++{
++}
+ 
+ PreprocessingPassResult BvEagerAtoms::applyInternal(
+     AssertionPipeline* assertionsToPreprocess)
+@@ -43,7 +79,7 @@ PreprocessingPassResult BvEagerAtoms::applyInternal(
+       continue;
+     }
+     Node eager_atom = nm->mkNode(Kind::BITVECTOR_EAGER_ATOM, atom);
+-    assertionsToPreprocess->replace(i, eager_atom);
++    assertionsToPreprocess->replace(i, eager_atom, d_proof.get());
+   }
+   return PreprocessingPassResult::NO_CONFLICT;
+ }
+diff --git a/src/preprocessing/passes/bv_eager_atoms.h b/src/preprocessing/passes/bv_eager_atoms.h
+index a829fd95e..d2543ddd3 100644
+--- a/src/preprocessing/passes/bv_eager_atoms.h
++++ b/src/preprocessing/passes/bv_eager_atoms.h
+@@ -27,6 +27,8 @@ namespace cvc5::internal {
+ namespace preprocessing {
+ namespace passes {
+ 
++class BVEagerAtomProofGenerator;
++
+ class BvEagerAtoms : public PreprocessingPass
+ {
+  public:
+@@ -35,6 +37,8 @@ class BvEagerAtoms : public PreprocessingPass
+  protected:
+   PreprocessingPassResult applyInternal(
+       AssertionPipeline* assertionsToPreprocess) override;
++  /** A proof generator */
++  std::shared_ptr<BVEagerAtomProofGenerator> d_proof;
+ };
+ 
+ }  // namespace passes
+diff --git a/src/theory/bv/bv_solver_bitblast_internal.cpp b/src/theory/bv/bv_solver_bitblast_internal.cpp
+index 952920172..bb869b307 100644
+--- a/src/theory/bv/bv_solver_bitblast_internal.cpp
++++ b/src/theory/bv/bv_solver_bitblast_internal.cpp
+@@ -73,7 +73,6 @@ BVSolverBitblastInternal::BVSolverBitblastInternal(
+     Env& env, TheoryState* s, TheoryInferenceManager& inferMgr)
+     : BVSolver(env, *s, inferMgr),
+       d_bitblaster(new BBProof(env, s, false)),
+-      d_checker(nodeManager()),
+       d_epg(new EagerProofGenerator(d_env))
+ {
+ }
+@@ -196,11 +195,6 @@ Node BVSolverBitblastInternal::getValue(TNode node, bool initialize)
+   return utils::mkConst(bits.size(), value);
+ }
+ 
+-BVProofRuleChecker* BVSolverBitblastInternal::getProofChecker()
+-{
+-  return &d_checker;
+-}
+-
+ }  // namespace bv
+ }  // namespace theory
+ }  // namespace cvc5::internal
+diff --git a/src/theory/bv/bv_solver_bitblast_internal.h b/src/theory/bv/bv_solver_bitblast_internal.h
+index f490f807e..dbb6d9022 100644
+--- a/src/theory/bv/bv_solver_bitblast_internal.h
++++ b/src/theory/bv/bv_solver_bitblast_internal.h
+@@ -23,7 +23,6 @@
+ #include "smt/env_obj.h"
+ #include "theory/bv/bitblast/proof_bitblaster.h"
+ #include "theory/bv/bv_solver.h"
+-#include "theory/bv/proof_checker.h"
+ 
+ namespace cvc5::internal {
+ namespace theory {
+@@ -63,9 +62,6 @@ class BVSolverBitblastInternal : public BVSolver
+ 
+   Node getValue(TNode node, bool initialize) override;
+ 
+-  /** get the proof checker of this theory */
+-  BVProofRuleChecker* getProofChecker();
+-
+  private:
+   /**
+    * Sends a bit-blasting lemma fact <=> d_bitblaster.bbAtom(fact) to the
+@@ -75,8 +71,6 @@ class BVSolverBitblastInternal : public BVSolver
+ 
+   /** Bit-blaster used to bit-blast atoms/terms. */
+   std::unique_ptr<BBProof> d_bitblaster;
+-  /** Proof rule checker */
+-  BVProofRuleChecker d_checker;
+   /** Proof generator for unpacking BITVECTOR_EAGER_ATOM. */
+   std::unique_ptr<EagerProofGenerator> d_epg;
+ };
+diff --git a/src/theory/bv/theory_bv.cpp b/src/theory/bv/theory_bv.cpp
+index cd1d66e01..0cf08e6b0 100644
+--- a/src/theory/bv/theory_bv.cpp
++++ b/src/theory/bv/theory_bv.cpp
+@@ -43,7 +43,8 @@ TheoryBV::TheoryBV(Env& env,
+       d_im(env, *this, d_state, "theory::bv::"),
+       d_notify(d_im),
+       d_invalidateModelCache(context(), true),
+-      d_stats(statisticsRegistry(), "theory::bv::")
++      d_stats(statisticsRegistry(), "theory::bv::"),
++      d_checker(nodeManager())
+ {
+   switch (options().bv.bvSolver)
+   {
+@@ -63,15 +64,7 @@ TheoryBV::~TheoryBV() {}
+ 
+ TheoryRewriter* TheoryBV::getTheoryRewriter() { return &d_rewriter; }
+ 
+-ProofRuleChecker* TheoryBV::getProofChecker()
+-{
+-  if (options().bv.bvSolver == options::BVSolver::BITBLAST_INTERNAL)
+-  {
+-    return static_cast<BVSolverBitblastInternal*>(d_internal.get())
+-        ->getProofChecker();
+-  }
+-  return nullptr;
+-}
++ProofRuleChecker* TheoryBV::getProofChecker() { return &d_checker; }
+ 
+ bool TheoryBV::needsEqualityEngine(EeSetupInfo& esi)
+ {
+diff --git a/src/theory/bv/theory_bv.h b/src/theory/bv/theory_bv.h
+index 835ad0b8a..3cc7beac5 100644
+--- a/src/theory/bv/theory_bv.h
++++ b/src/theory/bv/theory_bv.h
+@@ -18,6 +18,7 @@
+ #ifndef CVC5__THEORY__BV__THEORY_BV_H
+ #define CVC5__THEORY__BV__THEORY_BV_H
+ 
++#include "theory/bv/proof_checker.h"
+ #include "theory/bv/theory_bv_rewriter.h"
+ #include "theory/theory.h"
+ #include "theory/theory_eq_notify.h"
+@@ -135,6 +136,8 @@ class TheoryBV : public Theory
+     IntStat d_solveSubstitutions;
+   } d_stats;
+ 
++  /** Proof rule checker */
++  BVProofRuleChecker d_checker;
+ }; /* class TheoryBV */
+ 
+ }  // namespace bv
+-- 
+2.47.1
+

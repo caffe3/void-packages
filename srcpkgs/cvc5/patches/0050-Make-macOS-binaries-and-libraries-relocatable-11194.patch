@@ -1,0 +1,200 @@
+From 8b0a6283a374109a9c73c63699f1cc519b36dcc5 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 10 Sep 2024 11:29:31 -0500
+Subject: [PATCH 050/312] Make macOS binaries and libraries relocatable
+ (#11194)
+
+Fixes #10681
+---
+ .github/actions/add-package/action.yml | 17 --------
+ cmake/FindCLN.cmake                    |  7 ++++
+ cmake/FindGMP.cmake                    | 13 ++++++
+ cmake/FindPoly.cmake                   |  7 ++++
+ cmake/Helpers.cmake                    |  9 ++++
+ cmake/update_rpath_macos.cmake         | 57 ++++++++++++++++++++++++++
+ src/CMakeLists.txt                     |  5 +++
+ 7 files changed, 98 insertions(+), 17 deletions(-)
+ create mode 100644 cmake/update_rpath_macos.cmake
+
+diff --git a/.github/actions/add-package/action.yml b/.github/actions/add-package/action.yml
+index 359af0008..7796ef1f6 100644
+--- a/.github/actions/add-package/action.yml
++++ b/.github/actions/add-package/action.yml
+@@ -45,23 +45,6 @@ runs:
+ 
+         # Create ZIP file
+         pushd ${{ inputs.build-dir }}
+-        if [[ "$RUNNER_OS" == "macOS" ]]; then
+-          # Temporary workaround to make the cvc5 library included in release relocatable (see issue #10681)
+-          if [ -f ./install/lib/libcvc5.dylib ]; then
+-            install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libpoly.0.dylib" @rpath/libpoly.0.dylib ./install/lib/libcvc5.dylib
+-            install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libpoly.0.dylib" @rpath/libpoly.0.dylib ./install/lib/libcvc5.1.dylib
+-            install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libpolyxx.0.dylib" @rpath/libpolyxx.0.dylib ./install/lib/libcvc5.dylib
+-            install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libpolyxx.0.dylib" @rpath/libpolyxx.0.dylib ./install/lib/libcvc5.1.dylib
+-            install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libgmp.10.dylib" @rpath/libgmp.10.dylib ./install/lib/libcvc5.dylib
+-            install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libgmp.10.dylib" @rpath/libgmp.10.dylib ./install/lib/libcvc5.1.dylib
+-            if [ -f ./install/lib/libcln.dylib ]; then
+-              install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libcln.6.dylib" @rpath/libcln.6.dylib ./install/lib/libcvc5.dylib
+-              install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libcln.6.dylib" @rpath/libcln.6.dylib ./install/lib/libcvc5.1.dylib
+-              install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libgmp.10.dylib" @rpath/libgmp.10.dylib ./install/lib/libcln.dylib
+-              install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libgmp.10.dylib" @rpath/libgmp.10.dylib ./install/lib/libcln.6.dylib
+-            fi
+-          fi
+-        fi
+         mv install ${{ inputs.package-name }}
+         zip -r ${{ inputs.package-name }} ${{ inputs.package-name }}
+         popd
+diff --git a/cmake/FindCLN.cmake b/cmake/FindCLN.cmake
+index 640707a1f..d67ae5df1 100644
+--- a/cmake/FindCLN.cmake
++++ b/cmake/FindCLN.cmake
+@@ -168,4 +168,11 @@ else()
+   # These libraries are required to compile a program that
+   # uses the cvc5 static library.
+   install(FILES ${BUILD_BYPRODUCTS} TYPE ${LIB_BUILD_TYPE})
++
++  if(NOT SKIP_SET_RPATH AND BUILD_SHARED_LIBS AND APPLE)
++    foreach(CLN_DYLIB ${BUILD_BYPRODUCTS})
++      get_filename_component(CLN_DYLIB_NAME ${CLN_DYLIB} NAME)
++      update_rpath_macos(${CLN_DYLIB_NAME})
++    endforeach()
++  endif()
+ endif()
+diff --git a/cmake/FindGMP.cmake b/cmake/FindGMP.cmake
+index b084440ad..c62e1eaa8 100644
+--- a/cmake/FindGMP.cmake
++++ b/cmake/FindGMP.cmake
+@@ -181,4 +181,17 @@ else()
+       FILES_MATCHING PATTERN libgmp*
+     )
+   endif()
++  if(NOT SKIP_SET_RPATH AND BUILD_SHARED_LIBS AND APPLE)
++    install(CODE "
++      file(GLOB GMP_DYLIBS \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libgmp*.dylib\")
++      foreach(GMP_DYLIB \${GMP_DYLIBS})
++        execute_process(COMMAND \${CMAKE_COMMAND}
++          -DRPATH=@loader_path
++          -DINSTALL_NAME_TOOL=${CMAKE_INSTALL_NAME_TOOL}
++          -DDYLIB_PATH=\${GMP_DYLIB}
++          -DDEPS_BASE=${DEPS_BASE}
++          -P ${CMAKE_SOURCE_DIR}/cmake/update_rpath_macos.cmake)
++      endforeach()
++    ")
++  endif()
+ endif()
+diff --git a/cmake/FindPoly.cmake b/cmake/FindPoly.cmake
+index 428e67a36..01f3b5603 100644
+--- a/cmake/FindPoly.cmake
++++ b/cmake/FindPoly.cmake
+@@ -242,4 +242,11 @@ else()
+   # These libraries are required to compile a program that
+   # uses the cvc5 static library.
+   install(FILES ${BUILD_BYPRODUCTS} TYPE ${LIB_BUILD_TYPE})
++
++  if(NOT SKIP_SET_RPATH AND BUILD_SHARED_LIBS AND APPLE)
++    foreach(POLY_DYLIB ${BUILD_BYPRODUCTS})
++      get_filename_component(POLY_DYLIB_NAME ${POLY_DYLIB} NAME)
++      update_rpath_macos(${POLY_DYLIB_NAME})
++    endforeach()
++  endif()
+ endif()
+diff --git a/cmake/Helpers.cmake b/cmake/Helpers.cmake
+index 4fe219411..da9bde388 100644
+--- a/cmake/Helpers.cmake
++++ b/cmake/Helpers.cmake
+@@ -278,3 +278,12 @@ macro(copy_file_from_src filename)
+     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${filename}
+   )
+ endmacro()
++
++macro(update_rpath_macos dylibname)
++  install(CODE "execute_process(COMMAND \${CMAKE_COMMAND}
++    -DRPATH=@loader_path
++    -DINSTALL_NAME_TOOL=${CMAKE_INSTALL_NAME_TOOL}
++    -DDYLIB_PATH=\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/${dylibname}
++    -DDEPS_BASE=${DEPS_BASE}
++    -P ${CMAKE_SOURCE_DIR}/cmake/update_rpath_macos.cmake)")
++endmacro()
+diff --git a/cmake/update_rpath_macos.cmake b/cmake/update_rpath_macos.cmake
+new file mode 100644
+index 000000000..7274018bd
+--- /dev/null
++++ b/cmake/update_rpath_macos.cmake
+@@ -0,0 +1,57 @@
++# If RPATH is provided, add it unless it already exists
++if(RPATH)
++   # otool -l output is in the format:
++   #      cmd LC_RPATH
++   # cmdsize XX
++   #      path <path> (offset YY)
++  execute_process(
++    COMMAND otool -l "${DYLIB_PATH}"
++    COMMAND grep LC_RPATH -A2
++    OUTPUT_VARIABLE RPATH_OUTPUT
++  )
++  if(NOT "${RPATH_OUTPUT}" MATCHES "${RPATH}")
++    execute_process(
++      COMMAND ${INSTALL_NAME_TOOL} -add_rpath ${RPATH} ${DYLIB_PATH}
++    )
++  endif()
++endif()
++
++# Get install name
++execute_process(
++  COMMAND otool -D "${DYLIB_PATH}"
++  OUTPUT_VARIABLE INSTALL_NAME_OUTPUT
++  OUTPUT_STRIP_TRAILING_WHITESPACE
++)
++# otool -D output is in the format:
++# libname.dylib:
++#   /full/path/to/libname.n.dylib
++# Extract the second line which contains the actual install name
++string(REPLACE "\n" ";" INSTALL_NAME_LIST "${INSTALL_NAME_OUTPUT}")
++list(GET INSTALL_NAME_LIST 1 INSTALL_NAME)
++
++if("${INSTALL_NAME}" MATCHES "${DEPS_BASE}/lib")
++  # Replace ${DEPS_BASE}/lib with @rpath
++  string(REPLACE "${DEPS_BASE}/lib" "@rpath" NEW_INSTALL_NAME "${INSTALL_NAME}")
++  execute_process(
++    COMMAND ${INSTALL_NAME_TOOL} -id ${NEW_INSTALL_NAME} ${DYLIB_PATH}
++  )
++endif()
++
++# Get all dependencies and replace ${DEPS_BASE}/lib with @rpath
++execute_process(
++  COMMAND otool -L ${DYLIB_PATH}
++  OUTPUT_VARIABLE OTOOL_OUTPUT
++  OUTPUT_STRIP_TRAILING_WHITESPACE
++)
++string(REPLACE "\n" ";" OTOOL_LINES "${OTOOL_OUTPUT}")
++# Discard the first line which is the path to ${DYLIB_PATH}
++list(REMOVE_AT OTOOL_LINES 0)
++foreach(LINE ${OTOOL_LINES})
++  if(LINE MATCHES "${DEPS_BASE}/lib/")
++    string(REGEX REPLACE "^[ \t]*([^ \t]+).*" "\\1" LIB_PATH "${LINE}")
++    string(REPLACE "${DEPS_BASE}/lib" "@rpath" LIB_RPATH "${LIB_PATH}")
++    execute_process(
++      COMMAND ${INSTALL_NAME_TOOL} -change ${LIB_PATH} ${LIB_RPATH} ${DYLIB_PATH}
++    )
++  endif()
++endforeach()
+\ No newline at end of file
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index c35dcd5c7..48ab352da 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -1470,6 +1470,11 @@ target_include_directories(cvc5
+ # DLLs into the runtime path (by default "bin")
+ install(TARGETS cvc5 EXPORT cvc5-targets)
+ 
++if(NOT SKIP_SET_RPATH AND BUILD_SHARED_LIBS AND APPLE)
++  update_rpath_macos(libcvc5.dylib)
++  update_rpath_macos(libcvc5.${CVC5_SOVERSION}.dylib)
++endif()
++
+ if(BUILD_SHARED_LIBS)
+   set_target_properties(cvc5 PROPERTIES SOVERSION ${CVC5_SOVERSION})
+ endif()
+-- 
+2.47.1
+

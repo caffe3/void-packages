@@ -1,0 +1,404 @@
+From 6e53ea7f3b30c52036b0d2a0197f6ec497b4d472 Mon Sep 17 00:00:00 2001
+From: Aina Niemetz <aina.niemetz@gmail.com>
+Date: Thu, 5 Dec 2024 13:29:06 -0800
+Subject: [PATCH 222/312] Use Minisat for configurations that are not supported
+ with CaDiCaL. (#11410)
+
+---
+ src/smt/set_defaults.cpp                      | 51 ++++++++++++++++---
+ .../cores/issue8705-bool-ppassert.smt2        | 33 ++++++------
+ .../datatypes/proj-issue578-clash-pf.smt2     |  1 -
+ .../cli/regress0/parser/print-success.smt2    |  4 +-
+ .../proj-issue305-circuit-prop-ite-a.smt2     |  2 +-
+ .../proj-issue305-circuit-prop-ite-b.smt2     |  2 +-
+ .../proj-issue305-circuit-prop-ite-c.smt2     |  2 +-
+ .../proj-issue305-circuit-prop-ite-d.smt2     |  2 +-
+ .../proofs/issue277-circuit-propagator.smt2   |  2 +-
+ .../proofs/issue9156-doublePropProof.smt2     |  2 +-
+ .../proofs/issue9172-doublePropProof.smt2     |  2 +-
+ ...ssue9669-clause-level-opt-incremental.smt2 |  4 +-
+ .../cli/regress0/proofs/lfsc-test-1.smt2      |  2 +-
+ .../proofs/proj-issue468-mkScope.smt2         |  2 +-
+ .../proofs/proj-issue492-skolem-lemma-pf.smt2 |  1 -
+ .../proofs/project-issue330-eqproof.smt2      |  2 +-
+ test/regress/cli/regress0/proofs/scope.smt2   |  2 +-
+ ...sat-assumption-incremental-bookeeping.smt2 |  2 +-
+ .../regress1/proofs/unsat-cores-proofs.smt2   |  2 +-
+ .../cli/regress1/quantifiers/recfact.cvc.smt2 |  5 +-
+ .../cli/regress1/sets/issue10941-open-pf.smt2 |  2 +-
+ .../strings/issue6184-unsat-core.smt2         |  7 +--
+ 22 files changed, 81 insertions(+), 53 deletions(-)
+
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index dd2c860cf..7441fd8e0 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -184,13 +184,22 @@ void SetDefaults::setDefaultsPre(Options& opts)
+     SET_AND_NOTIFY(
+         smt, produceUnsatCores, true, "option requiring unsat cores");
+   }
+-  if (opts.smt.produceUnsatCores
+-      && opts.smt.unsatCoresMode == options::UnsatCoresMode::OFF)
++  if (opts.smt.produceUnsatCores)
+   {
+-    SET_AND_NOTIFY(smt,
+-                   unsatCoresMode,
+-                   options::UnsatCoresMode::ASSUMPTIONS,
+-                   "enabling unsat cores");
++    if (opts.prop.satSolver == options::SatSolverMode::CADICAL)
++    {
++      SET_AND_NOTIFY(prop,
++                     satSolver,
++                     options::SatSolverMode::MINISAT,
++                     "proofs and unsat cores not supported with CaDiCaL");
++    }
++    if (opts.smt.unsatCoresMode == options::UnsatCoresMode::OFF)
++    {
++      SET_AND_NOTIFY(smt,
++                     unsatCoresMode,
++                     options::UnsatCoresMode::ASSUMPTIONS,
++                     "enabling unsat cores");
++    }
+   }
+   if (opts.proof.checkProofSteps)
+   {
+@@ -209,12 +218,26 @@ void SetDefaults::setDefaultsPre(Options& opts)
+       || opts.smt.proofMode == options::ProofMode::FULL
+       || opts.smt.proofMode == options::ProofMode::FULL_STRICT)
+   {
++    std::stringstream reasonNoProofs;
++    if (incompatibleWithProofs(opts, reasonNoProofs))
++    {
++      std::stringstream ss;
++      ss << reasonNoProofs.str() << " not supported with proofs or unsat cores";
++      throw OptionException(ss.str());
++    }
+     SET_AND_NOTIFY(smt, produceProofs, true, "option requiring proofs");
+   }
+ 
+   // this check assumes the user has requested *full* proofs
+   if (opts.smt.produceProofs)
+   {
++    if (opts.prop.satSolver == options::SatSolverMode::CADICAL)
++    {
++      SET_AND_NOTIFY(prop,
++                     satSolver,
++                     options::SatSolverMode::MINISAT,
++                     "proofs and unsat cores not supported with CaDiCaL");
++    }
+     // if the user requested proofs, proof mode is (at least) full
+     if (opts.smt.proofMode < options::ProofMode::FULL)
+     {
+@@ -1034,6 +1057,13 @@ bool SetDefaults::usesInputConversion(const Options& opts,
+ bool SetDefaults::incompatibleWithProofs(Options& opts,
+                                          std::ostream& reason) const
+ {
++  if (opts.prop.satSolver == options::SatSolverMode::CADICAL)
++  {
++    SET_AND_NOTIFY(prop,
++                   satSolver,
++                   options::SatSolverMode::MINISAT,
++                   "proofs and unsat cores not supported with CaDiCaL");
++  }
+   if (opts.parser.freshBinders)
+   {
+     // When fresh-binders is true, we do not support proof output.
+@@ -1088,7 +1118,7 @@ bool SetDefaults::incompatibleWithProofs(Options& opts,
+       reason << "(resolution) proofs in CaDiCaL";
+       return true;
+     }
+-    if (opts.smt.proofMode!=options::ProofMode::PP_ONLY)
++    if (opts.smt.proofMode != options::ProofMode::PP_ONLY)
+     {
+       reason << "CaDiCaL";
+       return true;
+@@ -1230,6 +1260,13 @@ bool SetDefaults::incompatibleWithIncremental(const LogicInfo& logic,
+ bool SetDefaults::incompatibleWithUnsatCores(Options& opts,
+                                              std::ostream& reason) const
+ {
++  if (opts.prop.satSolver == options::SatSolverMode::CADICAL)
++  {
++    SET_AND_NOTIFY(prop,
++                   satSolver,
++                   options::SatSolverMode::MINISAT,
++                   "proofs and unsat cores not supported with CaDiCaL");
++  }
+   // All techniques that are incompatible with unsat cores are listed here.
+   // A preprocessing pass is incompatible with unsat cores if
+   // (A) its reasoning is not local, i.e. it may replace an assertion A by A'
+diff --git a/test/regress/cli/regress0/cores/issue8705-bool-ppassert.smt2 b/test/regress/cli/regress0/cores/issue8705-bool-ppassert.smt2
+index 70593a89e..2f89e5d65 100644
+--- a/test/regress/cli/regress0/cores/issue8705-bool-ppassert.smt2
++++ b/test/regress/cli/regress0/cores/issue8705-bool-ppassert.smt2
+@@ -1,20 +1,19 @@
+-; COMMAND-LINE: --produce-proofs
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+-(declare-fun a () String)  
+-(declare-fun b () String) 
+-(declare-fun c () Bool) 
+-(declare-fun d () Bool) 
+-(declare-fun g () Bool) 
+-(declare-fun e () Bool) 
+-(declare-fun f () String)       
+-(assert (= b  f)) 
+-(assert (= c (= "" b))) 
+-(assert (= d (not c))) 
+-(assert d)  
+-(assert (= a f))   
+-(assert (= g (not (= e (not (= "" a)))))) 
+-(assert g)     
+-(assert e) 
+-(check-sat)  
++(declare-fun a () String)
++(declare-fun b () String)
++(declare-fun c () Bool)
++(declare-fun d () Bool)
++(declare-fun g () Bool)
++(declare-fun e () Bool)
++(declare-fun f () String)
++(assert (= b  f))
++(assert (= c (= "" b)))
++(assert (= d (not c)))
++(assert d)
++(assert (= a f))
++(assert (= g (not (= e (not (= "" a))))))
++(assert g)
++(assert e)
++(check-sat)
+diff --git a/test/regress/cli/regress0/datatypes/proj-issue578-clash-pf.smt2 b/test/regress/cli/regress0/datatypes/proj-issue578-clash-pf.smt2
+index db0c389d5..f4a31b28e 100644
+--- a/test/regress/cli/regress0/datatypes/proj-issue578-clash-pf.smt2
++++ b/test/regress/cli/regress0/datatypes/proj-issue578-clash-pf.smt2
+@@ -1,6 +1,5 @@
+ ; EXPECT: unsat
+ (set-logic ALL)
+-(set-option :check-proofs true)
+ (declare-datatypes ((d 0)) (((c (s Bool)) (_c (_s Bool)))))
+ (declare-const x d)
+ (assert (= ((_ is _c) x) ((_ is c) ((_ update _s) x true))))
+diff --git a/test/regress/cli/regress0/parser/print-success.smt2 b/test/regress/cli/regress0/parser/print-success.smt2
+index 213fc0479..6ed8fac0b 100644
+--- a/test/regress/cli/regress0/parser/print-success.smt2
++++ b/test/regress/cli/regress0/parser/print-success.smt2
+@@ -6,7 +6,7 @@
+ ; EXPECT: "done"
+ ; DISABLE-TESTER: dump
+ (set-logic ALL)
+-(set-option :produce-proofs true)
+-(get-option :produce-proofs)
++(set-option :produce-models true)
++(get-option :produce-models)
+ (assert false)
+ (echo "done")
+diff --git a/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-a.smt2 b/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-a.smt2
+index 926411f61..ecdc74c8b 100644
+--- a/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-a.smt2
++++ b/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-a.smt2
+@@ -7,4 +7,4 @@
+ (assert y)
+ (assert (not z))
+ (assert (ite x y z))
+-(check-sat)
+\ No newline at end of file
++(check-sat)
+diff --git a/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-b.smt2 b/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-b.smt2
+index 1cb707bff..bd61e2861 100644
+--- a/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-b.smt2
++++ b/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-b.smt2
+@@ -7,4 +7,4 @@
+ (assert c)
+ (assert (not b))
+ (assert (ite a b c))
+-(check-sat)
+\ No newline at end of file
++(check-sat)
+diff --git a/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-c.smt2 b/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-c.smt2
+index 20dbf3c2a..d2350800f 100644
+--- a/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-c.smt2
++++ b/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-c.smt2
+@@ -7,4 +7,4 @@
+ (assert (not (ite a b c)))
+ (assert b)
+ (assert (not c))
+-(check-sat)
+\ No newline at end of file
++(check-sat)
+diff --git a/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-d.smt2 b/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-d.smt2
+index 6ed928bd7..f65d14034 100644
+--- a/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-d.smt2
++++ b/test/regress/cli/regress0/preprocess/proj-issue305-circuit-prop-ite-d.smt2
+@@ -7,4 +7,4 @@
+ (assert (not (ite a b c)))
+ (assert c)
+ (assert (not b))
+-(check-sat)
+\ No newline at end of file
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/issue277-circuit-propagator.smt2 b/test/regress/cli/regress0/proofs/issue277-circuit-propagator.smt2
+index f0815e8f2..5017d4895 100644
+--- a/test/regress/cli/regress0/proofs/issue277-circuit-propagator.smt2
++++ b/test/regress/cli/regress0/proofs/issue277-circuit-propagator.smt2
+@@ -44,4 +44,4 @@
+ (assert (not (= (not (not (not q))) (not (not p)))))
+ (assert p)
+ (check-sat)
+-(pop)
+\ No newline at end of file
++(pop)
+diff --git a/test/regress/cli/regress0/proofs/issue9156-doublePropProof.smt2 b/test/regress/cli/regress0/proofs/issue9156-doublePropProof.smt2
+index b378b2ace..6c1870c26 100644
+--- a/test/regress/cli/regress0/proofs/issue9156-doublePropProof.smt2
++++ b/test/regress/cli/regress0/proofs/issue9156-doublePropProof.smt2
+@@ -4,4 +4,4 @@
+ (declare-fun a () String)
+ (assert (= (str.len a) 0))
+ (assert (str.contains (str.substr a 0 (- 1 0)) "G"))
+-(check-sat)
+\ No newline at end of file
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/issue9172-doublePropProof.smt2 b/test/regress/cli/regress0/proofs/issue9172-doublePropProof.smt2
+index de7bfec81..db1aaba4f 100644
+--- a/test/regress/cli/regress0/proofs/issue9172-doublePropProof.smt2
++++ b/test/regress/cli/regress0/proofs/issue9172-doublePropProof.smt2
+@@ -6,4 +6,4 @@
+ (assert (ite (str.prefixof "-" b) false (ite (= 0 (str.to_int (str.at b
+             (+ (str.len b) (- 1))))) false true)))
+ (assert (= (str.len b) 1))
+-(check-sat)
+\ No newline at end of file
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/issue9669-clause-level-opt-incremental.smt2 b/test/regress/cli/regress0/proofs/issue9669-clause-level-opt-incremental.smt2
+index ffd6d3d43..e9b516771 100644
+--- a/test/regress/cli/regress0/proofs/issue9669-clause-level-opt-incremental.smt2
++++ b/test/regress/cli/regress0/proofs/issue9669-clause-level-opt-incremental.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: -i --check-proofs
++; COMMAND-LINE: -i --produce-proofs
+ ; EXPECT: sat
+ ; EXPECT: sat
+ ; EXPECT: sat
+@@ -18,4 +18,4 @@
+ (push)
+ (check-sat)
+ (check-sat)
+-(pop)
+\ No newline at end of file
++(pop)
+diff --git a/test/regress/cli/regress0/proofs/lfsc-test-1.smt2 b/test/regress/cli/regress0/proofs/lfsc-test-1.smt2
+index d82ff30fd..a3f0b0cdf 100644
+--- a/test/regress/cli/regress0/proofs/lfsc-test-1.smt2
++++ b/test/regress/cli/regress0/proofs/lfsc-test-1.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs --proof-format-mode=lfsc 
++; COMMAND-LINE: --dump-proofs --proof-format-mode=lfsc
+ ; EXIT: 0
+ ; SCRUBBER: grep -v -E '.*' 
+ (set-logic QF_UF)
+diff --git a/test/regress/cli/regress0/proofs/proj-issue468-mkScope.smt2 b/test/regress/cli/regress0/proofs/proj-issue468-mkScope.smt2
+index acd4aad85..6e683a614 100644
+--- a/test/regress/cli/regress0/proofs/proj-issue468-mkScope.smt2
++++ b/test/regress/cli/regress0/proofs/proj-issue468-mkScope.smt2
+@@ -7,4 +7,4 @@
+ (set-option :unsat-cores-mode sat-proof)
+ (assert (! (bvsgt __ __) :named a0))
+ (check-sat)
+-(get-unsat-core)
+\ No newline at end of file
++(get-unsat-core)
+diff --git a/test/regress/cli/regress0/proofs/proj-issue492-skolem-lemma-pf.smt2 b/test/regress/cli/regress0/proofs/proj-issue492-skolem-lemma-pf.smt2
+index b21a447c7..31011410a 100644
+--- a/test/regress/cli/regress0/proofs/proj-issue492-skolem-lemma-pf.smt2
++++ b/test/regress/cli/regress0/proofs/proj-issue492-skolem-lemma-pf.smt2
+@@ -1,5 +1,4 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :produce-proofs true)
+ (assert (exists ((x (Set (_ BitVec 16)))) (set.member (set.choose (set.inter x x)) (set.inter x x))))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/proofs/project-issue330-eqproof.smt2 b/test/regress/cli/regress0/proofs/project-issue330-eqproof.smt2
+index 1696f104b..354d271c6 100644
+--- a/test/regress/cli/regress0/proofs/project-issue330-eqproof.smt2
++++ b/test/regress/cli/regress0/proofs/project-issue330-eqproof.smt2
+@@ -4,4 +4,4 @@
+ (declare-const x1 Int)
+ (set-option :produce-proofs true)
+ (declare-const _x String)
+-(check-sat-assuming ((>= 0 (ite (= x (str.++ (str.from_code 0) (str.replace_all x (str.from_code 0) (str.++ (str.from_code 0) (str.from_code 0))) _x) (ite false x (str.++ _x _x _x)) x) x1 0))))
+\ No newline at end of file
++(check-sat-assuming ((>= 0 (ite (= x (str.++ (str.from_code 0) (str.replace_all x (str.from_code 0) (str.++ (str.from_code 0) (str.from_code 0))) _x) (ite false x (str.++ _x _x _x)) x) x1 0))))
+diff --git a/test/regress/cli/regress0/proofs/scope.smt2 b/test/regress/cli/regress0/proofs/scope.smt2
+index 7a324952e..133dd0c34 100644
+--- a/test/regress/cli/regress0/proofs/scope.smt2
++++ b/test/regress/cli/regress0/proofs/scope.smt2
+@@ -51,4 +51,4 @@
+ (assert (! (= (f2$ x2$ x4$) (f2$ (f5a$ x9$ x10$) x3$)) :named a7))
+ (assert (! (not false) :named a8))
+ (check-sat)
+-(get-proof)
+\ No newline at end of file
++(get-proof)
+diff --git a/test/regress/cli/regress0/proofs/tricky-sat-assumption-incremental-bookeeping.smt2 b/test/regress/cli/regress0/proofs/tricky-sat-assumption-incremental-bookeeping.smt2
+index 288488792..679deb3db 100644
+--- a/test/regress/cli/regress0/proofs/tricky-sat-assumption-incremental-bookeeping.smt2
++++ b/test/regress/cli/regress0/proofs/tricky-sat-assumption-incremental-bookeeping.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: -i --produce-proofs --proof-check=eager
++; COMMAND-LINE: -i --proof-check=eager
+ ; EXPECT: sat
+ ; EXPECT: unsat
+ (set-logic QF_UFLIA)
+diff --git a/test/regress/cli/regress1/proofs/unsat-cores-proofs.smt2 b/test/regress/cli/regress1/proofs/unsat-cores-proofs.smt2
+index 847cd598e..1fe29c262 100644
+--- a/test/regress/cli/regress1/proofs/unsat-cores-proofs.smt2
++++ b/test/regress/cli/regress1/proofs/unsat-cores-proofs.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --produce-proofs -i
++; COMMAND-LINE: -i
+ ; EXPECT: unsat
+ ; EXPECT: unsat
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress1/quantifiers/recfact.cvc.smt2 b/test/regress/cli/regress1/quantifiers/recfact.cvc.smt2
+index e36707360..aa2888706 100644
+--- a/test/regress/cli/regress1/quantifiers/recfact.cvc.smt2
++++ b/test/regress/cli/regress1/quantifiers/recfact.cvc.smt2
+@@ -1,8 +1,5 @@
+ ; EXPECT: unsat
+-; COMMAND-LINE:
+-; COMMAND-LINE: --produce-proofs
+-;; The second command line option, other than the default, is to test
+-;; unsat core checking with proofs, which at one point had issues for
++;; Unsat core checking with proofs at one point had issues for
+ ;; this benchmark due to cycle detection in LazyCDProofChain
+ (set-logic ALL)
+ (set-option :incremental false)
+diff --git a/test/regress/cli/regress1/sets/issue10941-open-pf.smt2 b/test/regress/cli/regress1/sets/issue10941-open-pf.smt2
+index 280ce26df..0f2859672 100644
+--- a/test/regress/cli/regress1/sets/issue10941-open-pf.smt2
++++ b/test/regress/cli/regress1/sets/issue10941-open-pf.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --produce-proofs -q
++; COMMAND-LINE: -q --produce-proofs
+ ; EXPECT: sat
+ (set-logic ALL)
+ (assert (= 1.0 (* 1.0 (set.choose (set.insert (arcsin 0.0) (set.singleton 1.0))))))
+diff --git a/test/regress/cli/regress1/strings/issue6184-unsat-core.smt2 b/test/regress/cli/regress1/strings/issue6184-unsat-core.smt2
+index 92c13c8dd..579c252c3 100644
+--- a/test/regress/cli/regress1/strings/issue6184-unsat-core.smt2
++++ b/test/regress/cli/regress1/strings/issue6184-unsat-core.smt2
+@@ -1,9 +1,6 @@
+ ; EXPECT: unsat
+-; COMMAND-LINE:
+-; COMMAND-LINE: --produce-proofs
+-;; The second command line option is to test unsat core checking with
+-;; proofs, which at one point had issues for this benchmark due to
+-;; cycle detection in LazyCDProofChain
++;; Unsat core checking with proofs, which at one point had issues for this
++;; benchmark due to cycle detection in LazyCDProofChain
+ (set-logic ALL)
+ (set-info :status unsat)
+ (set-option :check-unsat-cores true)
+-- 
+2.47.1
+

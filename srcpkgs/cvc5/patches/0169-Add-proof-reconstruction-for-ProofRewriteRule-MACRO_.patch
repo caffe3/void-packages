@@ -1,0 +1,507 @@
+From a7021cd93ae78969f3e151f982b2ae1ef1d3cce4 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Sat, 9 Nov 2024 09:14:22 -0600
+Subject: [PATCH 169/312] Add proof reconstruction for
+ ProofRewriteRule::MACRO_QUANT_VAR_ELIM_EQ (#11323)
+
+Handles nearly all cases of this rule, although 4/126 are instances of a
+more complex rewrite ("datatype tester expansion") which need separate
+treatment.
+
+---------
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ include/cvc5/cvc5_proof_rule.h                |  15 ++
+ proofs/eo/cpc/rules/Quantifiers.eo            |  41 +++++
+ src/api/cpp/cvc5_proof_rule_template.cpp      |   1 +
+ src/proof/alf/alf_printer.cpp                 |   1 +
+ src/rewriter/basic_rewrite_rcons.cpp          | 152 ++++++++++++++++++
+ src/rewriter/basic_rewrite_rcons.h            |  10 ++
+ .../quantifiers/quantifiers_rewriter.cpp      |  63 ++++++--
+ src/theory/quantifiers/quantifiers_rewriter.h |  12 +-
+ .../sygus/ce_guided_single_inv.cpp            |   3 +-
+ 9 files changed, 285 insertions(+), 13 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index aa5e5f988..fe549c149 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2571,6 +2571,21 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(MACRO_QUANT_VAR_ELIM_EQ),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Quantifiers -- Macro variable elimination equality**
++   *
++   * .. math::
++   *  (\forall x.\> x \neq t \vee F) = F \{ x \mapsto t \}
++   *
++   * or alternatively
++   *
++   * .. math::
++   *  (\forall x.\> x \neq t) = \bot
++   *
++   * \endverbatim
++   */
++  EVALUE(QUANT_VAR_ELIM_EQ),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Quantifiers -- Macro variable elimination inequality**
+diff --git a/proofs/eo/cpc/rules/Quantifiers.eo b/proofs/eo/cpc/rules/Quantifiers.eo
+index 04701fd96..02de2f86b 100644
+--- a/proofs/eo/cpc/rules/Quantifiers.eo
++++ b/proofs/eo/cpc/rules/Quantifiers.eo
+@@ -209,3 +209,44 @@
+   :requires ((($is_quant_miniscope_fv x F G) true))
+   :conclusion (= (forall x F) G)
+ )
++
++;;;;; ProofRewriteRule::QUANT_VAR_ELIM_EQ
++
++; define: $mk_quant_var_elim_eq_subs
++; - x T: The variable we are eliminating
++; - t T: The term x was equated to
++; - F Bool: The (remaining) body of the quantified formula from which we are eliminating x.
++; return: >
++;    The result of eliminating x from F. This method does not evaluate if t contains x.
++(define $mk_quant_var_elim_eq_subs ((T Type :implicit) (x T) (t T) (F Bool))
++  (eo::requires ($contains_subterm t x) false ($substitute x t F)))
++
++; program: $mk_quant_var_elim_eq
++; args:
++; - x T: The variable we are eliminating
++; - F Bool: The body of the quantified formula in question.
++; return: >
++;    The result of eliminating x from F. This method does not evaluate if this
++;    is not a variable elimination, i.e. if F does not begin with a disequality
++;    between x and a term not containing x.
++(program $mk_quant_var_elim_eq ((T Type) (x T) (t Type) (F Bool :list))
++  (T Bool) Bool
++  (
++  (($mk_quant_var_elim_eq x (not (= x t)))        ($mk_quant_var_elim_eq_subs x t false))
++  (($mk_quant_var_elim_eq x (or (not (= x t)) F)) ($mk_quant_var_elim_eq_subs x t ($singleton_elim F)))
++  )
++)
++
++; rule: quant-var-elim-eq
++; implements: QUANT_VAR_ELIM_EQ
++; args:
++; - eq Bool: The equality whose left hand side is a quantified formula.
++; requires: >
++;   The right hand side of the equality is the result of a legal variable
++;   elimination.
++; conclusion: The given equality.
++(declare-rule quant-var-elim-eq ((T Type) (x T) (F Bool) (G Bool))
++  :args ((= (forall (@list x) F) G))
++  :requires ((($mk_quant_var_elim_eq x F) G))
++  :conclusion (= (forall (@list x) F) G)
++)
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index 6890bf90e..a0d06eb33 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -250,6 +250,7 @@ const char* toString(cvc5::ProofRewriteRule rule)
+       return "macro-quant-var-elim-eq";
+     case ProofRewriteRule::MACRO_QUANT_VAR_ELIM_INEQ:
+       return "macro-quant-var-elim-ineq";
++    case ProofRewriteRule::QUANT_VAR_ELIM_EQ: return "quant-var-elim-eq";
+     case ProofRewriteRule::DT_INST: return "dt-inst";
+     case ProofRewriteRule::DT_COLLAPSE_SELECTOR: return "dt-collapse-selector";
+     case ProofRewriteRule::DT_COLLAPSE_TESTER: return "dt-collapse-tester";
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 529cac08c..400cb2823 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -260,6 +260,7 @@ bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id, const Node& n)
+     case ProofRewriteRule::QUANT_UNUSED_VARS:
+     case ProofRewriteRule::ARRAYS_SELECT_CONST:
+     case ProofRewriteRule::QUANT_MINISCOPE_FV:
++    case ProofRewriteRule::QUANT_VAR_ELIM_EQ:
+     case ProofRewriteRule::RE_LOOP_ELIM:
+     case ProofRewriteRule::SETS_IS_EMPTY_EVAL:
+     case ProofRewriteRule::STR_IN_RE_CONCAT_STAR_CHAR:
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index a9118d351..2a75a53d1 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -28,6 +28,7 @@
+ #include "theory/arith/arith_proof_utilities.h"
+ #include "theory/booleans/theory_bool_rewriter.h"
+ #include "theory/bv/theory_bv_rewrite_rules.h"
++#include "theory/quantifiers/quantifiers_rewriter.h"
+ #include "theory/rewriter.h"
+ #include "theory/strings/arith_entail.h"
+ #include "theory/strings/strings_entail.h"
+@@ -199,6 +200,12 @@ void BasicRewriteRCons::ensureProofForTheoryRewrite(
+         handledMacro = true;
+       }
+       break;
++    case ProofRewriteRule::MACRO_QUANT_VAR_ELIM_EQ:
++      if (ensureProofMacroQuantVarElimEq(cdp, eq))
++      {
++        handledMacro = true;
++      }
++      break;
+     default: break;
+   }
+   if (handledMacro)
+@@ -626,6 +633,151 @@ bool BasicRewriteRCons::ensureProofMacroQuantPartitionConnectedFv(
+   return true;
+ }
+ 
++bool BasicRewriteRCons::ensureProofMacroQuantVarElimEq(CDProof* cdp,
++                                                       const Node& eq)
++{
++  Node q = eq[0];
++  Assert(q.getKind() == Kind::FORALL);
++  std::vector<Node> args(q[0].begin(), q[0].end());
++  std::vector<Node> vars;
++  std::vector<Node> subs;
++  std::vector<Node> lits;
++  theory::quantifiers::QuantifiersRewriter qrew(
++      nodeManager(), d_env.getRewriter(), options());
++  if (!qrew.getVarElim(q[1], args, vars, subs, lits))
++  {
++    return false;
++  }
++  if (args.size() != q[0].getNumChildren() - 1)
++  {
++    // a rare case of MACRO_QUANT_VAR_ELIM_EQ does "datatype tester expansion"
++    // e.g. forall x. is-cons(x) => P(x) ----> forall yz. P(cons(y,z))
++    // This is not handled currently.
++    return false;
++  }
++  Assert(vars.size() == 1);
++  Trace("brc-macro") << "Ensure quant var elim eq: " << eq << std::endl;
++  Trace("brc-macro") << "Eliminate " << vars << " -> " << subs << " from "
++                     << lits << std::endl;
++  // merge prenex in reverse to handle the other irrelevant variables first
++  NodeManager* nm = nodeManager();
++  Node body1;
++  Node body2;
++  if (eq[1].getKind() == Kind::FORALL)
++  {
++    body1 = nm->mkNode(
++        Kind::FORALL, nm->mkNode(Kind::BOUND_VAR_LIST, vars[0]), q[1]);
++    std::vector<Node> transEq;
++    Node unmergeQ = nm->mkNode(Kind::FORALL, eq[1][0], body1);
++    Node mergeQ;
++    Node q0v = q[0];
++    if (vars[0] != q0v[q0v.getNumChildren() - 1])
++    {
++      // use reordering if the eliminated variable is not the last one
++      std::vector<Node> mvars(eq[1][0].begin(), eq[1][0].end());
++      mvars.push_back(vars[0]);
++      mergeQ = nm->mkNode(
++          Kind::FORALL, nm->mkNode(Kind::BOUND_VAR_LIST, mvars), q[1]);
++      Node eqq = q.eqNode(mergeQ);
++      cdp->addStep(eqq, ProofRule::QUANT_VAR_REORDERING, {}, {eqq});
++      transEq.push_back(eqq);
++    }
++    else
++    {
++      mergeQ = q;
++    }
++    Node eqq2s = unmergeQ.eqNode(mergeQ);
++    cdp->addTheoryRewriteStep(eqq2s, ProofRewriteRule::QUANT_MERGE_PRENEX);
++    Node eqq2 = mergeQ.eqNode(unmergeQ);
++    cdp->addStep(eqq2, ProofRule::SYMM, {eqq2s}, {});
++    transEq.push_back(eqq2);
++    body2 = eq[1][1];
++    std::vector<Node> cargs;
++    ProofRule cr = expr::getCongRule(unmergeQ, cargs);
++    Node beq = body1.eqNode(body2);
++    Node eqq3 = unmergeQ.eqNode(eq[1]);
++    cdp->addStep(eqq3, cr, {beq}, cargs);
++    transEq.push_back(eqq3);
++    cdp->addStep(eq, ProofRule::TRANS, transEq, {});
++  }
++  else
++  {
++    body1 = eq[0];
++    body2 = eq[1];
++  }
++  // we now have proven forall Y1 x Y2. F = forall Y1 Y2. F *sigma is a
++  // consequence of forall x. F = F * sigma, now prove the latter equality.
++  Trace("brc-macro") << "Remains to prove: " << body1 << " == " << body2
++                     << std::endl;
++  Assert(body1.getKind() == Kind::FORALL);
++  Node eqLit = vars[0].eqNode(subs[0]).notNode();
++  Node lit = lits[0].negate();
++  // add a copy of the equality literal and prove it is redundant with ACI_NORM
++  std::vector<Node> disj;
++  disj.push_back(lit);
++  if (body1[1].getKind() == Kind::OR)
++  {
++    disj.insert(disj.end(), body1[1].begin(), body1[1].end());
++  }
++  else
++  {
++    disj.push_back(body1[1]);
++  }
++  Node body1r = nm->mkOr(disj);
++  disj[0] = eqLit;
++  Node body1re = nm->mkOr(disj);
++  std::vector<Node> transEqBody;
++  Node eqBody = body1[1].eqNode(body1r);
++  cdp->addStep(eqBody, ProofRule::ACI_NORM, {}, {eqBody});
++  transEqBody.push_back(eqBody);
++  if (eqLit != lit)
++  {
++    std::vector<Node> cprems;
++    for (size_t i = 0, nchild = body1r.getNumChildren(); i < nchild; i++)
++    {
++      Node eql = body1r[i].eqNode(body1re[i]);
++      if (body1r[i] == body1re[i])
++      {
++        cdp->addStep(eql, ProofRule::REFL, {}, {eql[0]});
++      }
++      else
++      {
++        cdp->addTrustedStep(
++            eql, TrustId::MACRO_THEORY_REWRITE_RCONS_SIMPLE, {}, {});
++      }
++      cprems.emplace_back(eql);
++    }
++    std::vector<Node> cargs;
++    ProofRule cr = expr::getCongRule(body1r, cargs);
++    Node eqbr = body1r.eqNode(body1re);
++    cdp->addStep(eqbr, cr, cprems, cargs);
++    transEqBody.emplace_back(eqbr);
++    eqBody = body1[1].eqNode(body1re);
++  }
++  if (transEqBody.size() > 1)
++  {
++    cdp->addStep(eqBody, ProofRule::TRANS, transEqBody, {});
++  }
++  // We've now proven that (or (not (= x t)) F) is equivalent to F, we can
++  // forall x. F =
++  // forall x. (or (not (= x t)) F) =
++  // F * { x -> t }
++  // where the latter equality is proven by QUANT_VAR_ELIM_EQ.
++  std::vector<Node> finalTransEq;
++  std::vector<Node> cargs;
++  ProofRule cr = expr::getCongRule(body1, cargs);
++  Node body1p = nm->mkNode(Kind::FORALL, body1[0], body1re);
++  Node eqq = body1.eqNode(body1p);
++  cdp->addStep(eqq, cr, {eqBody}, cargs);
++  finalTransEq.push_back(eqq);
++  eqq = body1p.eqNode(body2);
++  cdp->addTheoryRewriteStep(eqq, ProofRewriteRule::QUANT_VAR_ELIM_EQ);
++  finalTransEq.push_back(eqq);
++  Node beq = body1.eqNode(body2);
++  cdp->addStep(beq, ProofRule::TRANS, finalTransEq, {});
++  return true;
++}
++
+ bool BasicRewriteRCons::ensureProofArithPolyNormRel(CDProof* cdp,
+                                                     const Node& eq)
+ {
+diff --git a/src/rewriter/basic_rewrite_rcons.h b/src/rewriter/basic_rewrite_rcons.h
+index 8316422a3..d7a80f7b0 100644
+--- a/src/rewriter/basic_rewrite_rcons.h
++++ b/src/rewriter/basic_rewrite_rcons.h
+@@ -180,6 +180,16 @@ class BasicRewriteRCons : protected EnvObj
+    * @return true if added a closed proof of eq to cdp.
+    */
+   bool ensureProofMacroQuantPartitionConnectedFv(CDProof* cdp, const Node& eq);
++  /**
++   * Elaborate a rewrite eq that was proven by
++   * ProofRewriteRule::MACRO_QUANT_VAR_ELIM_EQ.
++   *
++   * @param cdp The proof to add to.
++   * @param eq The rewrite proven by
++   * ProofRewriteRule::MACRO_QUANT_VAR_ELIM_EQ.
++   * @return true if added a closed proof of eq to cdp.
++   */
++  bool ensureProofMacroQuantVarElimEq(CDProof* cdp, const Node& eq);
+   /**
+    * @param cdp The proof to add to.
+    * @param eq The rewrite that can be proven by ProofRule::ARITH_POLY_NORM_REL.
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index 9bf117a78..377511735 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -261,18 +261,52 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+     }
+     break;
+     case ProofRewriteRule::MACRO_QUANT_VAR_ELIM_EQ:
++    case ProofRewriteRule::QUANT_VAR_ELIM_EQ:
+     case ProofRewriteRule::MACRO_QUANT_VAR_ELIM_INEQ:
+     {
+-      if (n.getKind() != Kind::FORALL)
++      if (n.getKind() != Kind::FORALL || n.getNumChildren() != 2)
+       {
+         return Node::null();
+       }
+       std::vector<Node> args(n[0].begin(), n[0].end());
+       std::vector<Node> vars;
+       std::vector<Node> subs;
++      Node body = n[1];
+       if (id == ProofRewriteRule::MACRO_QUANT_VAR_ELIM_EQ)
+       {
+-        getVarElim(n[1], args, vars, subs);
++        std::vector<Node> lits;
++        getVarElim(body, args, vars, subs, lits);
++      }
++      else if (id == ProofRewriteRule::QUANT_VAR_ELIM_EQ)
++      {
++        if (args.size() != 1)
++        {
++          return Node::null();
++        }
++        std::vector<Node> lits;
++        if (body.getKind() == Kind::OR)
++        {
++          lits.insert(lits.end(), body.begin(), body.end());
++        }
++        else
++        {
++          lits.push_back(body);
++        }
++        if (lits[0].getKind() != Kind::NOT
++            || lits[0][0].getKind() != Kind::EQUAL)
++        {
++          return Node::null();
++        }
++        Node eq = lits[0][0];
++        if (eq[0] != args[0] || expr::hasSubterm(eq[1], eq[0]))
++        {
++          return Node::null();
++        }
++        vars.push_back(eq[0]);
++        subs.push_back(eq[1]);
++        args.clear();
++        std::vector<Node> remLits(lits.begin() + 1, lits.end());
++        body = d_nm->mkOr(remLits);
+       }
+       else
+       {
+@@ -286,7 +320,7 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+         Assert(vars.size() == subs.size());
+         std::vector<Node> qc(n.begin(), n.end());
+         qc[1] =
+-            n[1].substitute(vars.begin(), vars.end(), subs.begin(), subs.end());
++            body.substitute(vars.begin(), vars.end(), subs.begin(), subs.end());
+         if (args.empty())
+         {
+           return qc[1];
+@@ -1264,9 +1298,10 @@ bool QuantifiersRewriter::getVarElimLit(Node body,
+ bool QuantifiersRewriter::getVarElim(Node body,
+                                      std::vector<Node>& args,
+                                      std::vector<Node>& vars,
+-                                     std::vector<Node>& subs) const
++                                     std::vector<Node>& subs,
++                                     std::vector<Node>& lits) const
+ {
+-  return getVarElimInternal(body, body, false, args, vars, subs);
++  return getVarElimInternal(body, body, false, args, vars, subs, lits);
+ }
+ 
+ bool QuantifiersRewriter::getVarElimInternal(Node body,
+@@ -1274,7 +1309,8 @@ bool QuantifiersRewriter::getVarElimInternal(Node body,
+                                              bool pol,
+                                              std::vector<Node>& args,
+                                              std::vector<Node>& vars,
+-                                             std::vector<Node>& subs) const
++                                             std::vector<Node>& subs,
++                                             std::vector<Node>& lits) const
+ {
+   Kind nk = n.getKind();
+   while (nk == Kind::NOT)
+@@ -1287,14 +1323,19 @@ bool QuantifiersRewriter::getVarElimInternal(Node body,
+   {
+     for (const Node& cn : n)
+     {
+-      if (getVarElimInternal(body, cn, pol, args, vars, subs))
++      if (getVarElimInternal(body, cn, pol, args, vars, subs, lits))
+       {
+         return true;
+       }
+     }
+     return false;
+   }
+-  return getVarElimLit(body, n, pol, args, vars, subs);
++  if (getVarElimLit(body, n, pol, args, vars, subs))
++  {
++    lits.emplace_back(pol ? n : n.notNode());
++    return true;
++  }
++  return false;
+ }
+ 
+ bool QuantifiersRewriter::hasVarElim(Node n,
+@@ -1303,7 +1344,8 @@ bool QuantifiersRewriter::hasVarElim(Node n,
+ {
+   std::vector< Node > vars;
+   std::vector< Node > subs;
+-  return getVarElimInternal(n, n, pol, args, vars, subs);
++  std::vector<Node> lits;
++  return getVarElimInternal(n, n, pol, args, vars, subs, lits);
+ }
+ 
+ bool QuantifiersRewriter::getVarElimIneq(Node body,
+@@ -1553,7 +1595,8 @@ Node QuantifiersRewriter::computeVarElimination(Node body,
+   // standard variable elimination
+   if (d_opts.quantifiers.varElimQuant)
+   {
+-    getVarElim(body, args, vars, subs);
++    std::vector<Node> lits;
++    getVarElim(body, args, vars, subs, lits);
+   }
+   // variable elimination based on one-direction inequalities
+   if (vars.empty() && d_opts.quantifiers.varIneqElimQuant)
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.h b/src/theory/quantifiers/quantifiers_rewriter.h
+index f11b74488..01e3ca16e 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.h
++++ b/src/theory/quantifiers/quantifiers_rewriter.h
+@@ -139,11 +139,18 @@ class QuantifiersRewriter : public TheoryRewriter
+    * corresponds to a variable elimination for some v via the above method
+    * getVarElimLit, we return true. In this case, we update args/vars/subs
+    * based on eliminating v.
++   *
++   * The vector lits is populated with the literals that are equivalent to
++   * each vars[i]==subs[i].
++   *
++   * For simplicity, this method will only add a single element to
++   * vars/subs/lits.
+    */
+   bool getVarElim(Node body,
+                   std::vector<Node>& args,
+                   std::vector<Node>& vars,
+-                  std::vector<Node>& subs) const;
++                  std::vector<Node>& subs,
++                  std::vector<Node>& lits) const;
+   /** has variable elimination
+    *
+    * Returns true if n asserted with polarity pol entails a literal for
+@@ -241,7 +248,8 @@ class QuantifiersRewriter : public TheoryRewriter
+                           bool pol,
+                           std::vector<Node>& args,
+                           std::vector<Node>& vars,
+-                          std::vector<Node>& subs) const;
++                          std::vector<Node>& subs,
++                          std::vector<Node>& lits) const;
+   static void computeArgs(const std::vector<Node>& args,
+                           std::map<Node, bool>& activeMap,
+                           Node n,
+diff --git a/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp b/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp
+index 658d9b4b0..eca3a5def 100644
+--- a/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp
++++ b/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp
+@@ -520,8 +520,9 @@ bool CegSingleInv::solveTrivial(Node q)
+ 
+     std::vector<Node> varsTmp;
+     std::vector<Node> subsTmp;
++    std::vector<Node> litTmp;
+     QuantifiersRewriter qrew(nodeManager(), d_env.getRewriter(), options());
+-    qrew.getVarElim(body, args, varsTmp, subsTmp);
++    qrew.getVarElim(body, args, varsTmp, subsTmp, litTmp);
+     // if we eliminated a variable, update body and reprocess
+     if (!varsTmp.empty())
+     {
+-- 
+2.47.1
+

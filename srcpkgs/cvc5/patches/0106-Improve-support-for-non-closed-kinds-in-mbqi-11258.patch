@@ -1,0 +1,74 @@
+From d3ea6704b6538d11292d1e5b44fa79f453f914ca Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 4 Oct 2024 08:46:02 -0500
+Subject: [PATCH 106/312] Improve support for non-closed kinds in mbqi (#11258)
+
+This limitation would cause MBQI to be highly incomplete on any
+quantified array logics since array values would not be handled in
+subsolver queries.
+
+The workaround is to treat array constants in the same way we treat
+uninterpreted constants.
+
+This change leads to MBQI being very effective on certain SMT-LIB logics
+e.g. ABV, results to come.
+---
+ src/theory/quantifiers/inst_strategy_mbqi.cpp | 24 ++++++++++---------
+ 1 file changed, 13 insertions(+), 11 deletions(-)
+
+diff --git a/src/theory/quantifiers/inst_strategy_mbqi.cpp b/src/theory/quantifiers/inst_strategy_mbqi.cpp
+index a938b332d..e32dfadc2 100644
+--- a/src/theory/quantifiers/inst_strategy_mbqi.cpp
++++ b/src/theory/quantifiers/inst_strategy_mbqi.cpp
+@@ -180,13 +180,13 @@ void InstStrategyMbqi::process(Node q)
+   for (const Node& k : skolems.d_subs)
+   {
+     TypeNode tn = k.getType();
+-    itk = freshVarType.find(tn);
+-    if (itk == freshVarType.end())
++    if (!tn.isUninterpretedSort())
+     {
+       // not an uninterpreted sort, continue
+       continue;
+     }
+-    if (itk->second.empty())
++    itk = freshVarType.find(tn);
++    if (itk == freshVarType.end() || itk->second.empty())
+     {
+       Trace("mbqi") << "warning: failed to get vars for type " << tn
+                     << std::endl;
+@@ -350,14 +350,6 @@ Node InstStrategyMbqi::convertToQuery(
+       {
+         cmap[cur] = cur;
+       }
+-      else if (ck == Kind::UNINTERPRETED_SORT_VALUE)
+-      {
+-        // return the fresh variable for this term
+-        Node k = sm->mkPurifySkolem(cur);
+-        freshVarType[cur.getType()].insert(k);
+-        cmap[cur] = k;
+-        continue;
+-      }
+       else if (ck == Kind::CONST_SEQUENCE || ck == Kind::FUNCTION_ARRAY_CONST
+                || cur.isVar())
+       {
+@@ -408,6 +400,16 @@ Node InstStrategyMbqi::convertToQuery(
+       }
+       else if (d_nonClosedKinds.find(ck) != d_nonClosedKinds.end())
+       {
++        // if its a constant, we can continue, we will assume it is distinct
++        // from all others of its type
++        if (cur.isConst())
++        {
++          // return the fresh variable for this term
++          Node k = sm->mkPurifySkolem(cur);
++          freshVarType[cur.getType()].insert(k);
++          cmap[cur] = k;
++          continue;
++        }
+         // if this is a bad kind, fail immediately
+         return Node::null();
+       }
+-- 
+2.47.1
+

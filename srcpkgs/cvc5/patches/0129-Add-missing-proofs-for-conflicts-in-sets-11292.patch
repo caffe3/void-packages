@@ -1,0 +1,31 @@
+From 69e0d081c7bb65043a0a4e9f8b4983f8b498f518 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 17 Oct 2024 13:24:29 -0500
+Subject: [PATCH 129/312] Add missing proofs for conflicts in sets (#11292)
+
+Fills in missing proofs for 27 lemmas in our regressions.
+---
+ src/theory/sets/inference_manager.cpp | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/theory/sets/inference_manager.cpp b/src/theory/sets/inference_manager.cpp
+index 514fe9422..cbdbae136 100644
+--- a/src/theory/sets/inference_manager.cpp
++++ b/src/theory/sets/inference_manager.cpp
+@@ -111,7 +111,12 @@ bool InferenceManager::assertFactRec(Node fact, InferenceId id, Node exp, int in
+ 
+ void InferenceManager::assertSetsConflict(const Node& conf, InferenceId id)
+ {
+-  conflict(conf, id);
++  if (d_ipc)
++  {
++    d_ipc->notifyConflict(conf, id);
++  }
++  TrustNode trn = TrustNode::mkTrustConflict(conf, d_ipc.get());
++  trustedConflict(trn, id);
+ }
+ 
+ bool InferenceManager::assertSetsFact(Node atom,
+-- 
+2.47.1
+

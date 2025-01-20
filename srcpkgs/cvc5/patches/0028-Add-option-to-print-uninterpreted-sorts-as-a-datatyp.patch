@@ -1,0 +1,95 @@
+From 4dadd4ce848917a297fb0de2f8a46b1d0faa64d5 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Sat, 17 Aug 2024 16:02:02 -0500
+Subject: [PATCH 028/312] Add option to print uninterpreted sorts as a datatype
+ in models (#11161)
+
+---
+ src/options/printer_options.toml              |  3 +++
+ src/printer/smt2/smt2_printer.cpp             | 19 +++++++++++++++++++
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/printer/model-u-print.smt2   | 16 ++++++++++++++++
+ 4 files changed, 39 insertions(+)
+ create mode 100644 test/regress/cli/regress0/printer/model-u-print.smt2
+
+diff --git a/src/options/printer_options.toml b/src/options/printer_options.toml
+index 4a20170e2..51451dbcb 100644
+--- a/src/options/printer_options.toml
++++ b/src/options/printer_options.toml
+@@ -52,6 +52,9 @@ name   = "Printing"
+ [[option.mode.DeclFun]]
+   name = "decl-fun"
+   help = "print uninterpreted elements declare-fun, but don't include a declare-sort for the sort"
++[[option.mode.Datatype]]
++  name = "dt"
++  help = "print uninterpreted elements as a declare-datatype"
+ [[option.mode.None]]
+   name = "none"
+   help = "(default) do not print declarations of uninterpreted elements in models."
+diff --git a/src/printer/smt2/smt2_printer.cpp b/src/printer/smt2/smt2_printer.cpp
+index 92b6d2fb7..3cd07ff71 100644
+--- a/src/printer/smt2/smt2_printer.cpp
++++ b/src/printer/smt2/smt2_printer.cpp
+@@ -1549,6 +1549,25 @@ void Smt2Printer::toStreamModelSort(std::ostream& out,
+     return;
+   }
+   auto modelUninterpPrint = options::ioutils::getModelUninterpPrint(out);
++  if (modelUninterpPrint == options::ModelUninterpPrintMode::Datatype)
++  {
++    out << "(declare-datatype " << tn << " (";
++    for (size_t i=0, nelements=elements.size(); i<nelements; i++)
++    {
++      Node trn = elements[i];
++      if (i>0)
++      {
++        out << " ";
++      }
++      Assert (trn.getKind() == Kind::UNINTERPRETED_SORT_VALUE);
++      // prints as raw symbol
++      const UninterpretedSortValue& av =
++          trn.getConst<UninterpretedSortValue>();
++      out << "(" << av << ")";
++    }
++    out << "))" << std::endl;
++    return;
++  }
+   // print the cardinality
+   out << "; cardinality of " << tn << " is " << elements.size() << endl;
+   if (modelUninterpPrint == options::ModelUninterpPrintMode::DeclSortAndFun)
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 003056f0d..e6a3b98e4 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1279,6 +1279,7 @@ set(regress_0_tests
+   regress0/printer/issue9938-2.smt2
+   regress0/printer/learned-lit-output.smt2
+   regress0/printer/let_shadowing.smt2
++  regress0/printer/model-u-print.smt2
+   regress0/printer/portfolio-out.smt2
+   regress0/printer/portfolio-out-err.smt2
+   regress0/printer/post-asserts-output.smt2
+diff --git a/test/regress/cli/regress0/printer/model-u-print.smt2 b/test/regress/cli/regress0/printer/model-u-print.smt2
+new file mode 100644
+index 000000000..ae37c9c98
+--- /dev/null
++++ b/test/regress/cli/regress0/printer/model-u-print.smt2
+@@ -0,0 +1,16 @@
++; COMMAND-LINE: --produce-models --model-u-print=dt
++; EXPECT: sat
++; EXPECT: (
++; EXPECT: (declare-datatype U ((@U_0) (@U_1) (@U_2)))
++; EXPECT: (define-fun a () U (as @U_0 U))
++; EXPECT: (define-fun b () U (as @U_1 U))
++; EXPECT: (define-fun c () U (as @U_2 U))
++; EXPECT: )
++(set-logic QF_UF)
++(declare-sort U 0)
++(declare-const a U)
++(declare-const b U)
++(declare-const c U)
++(assert (distinct a b c))
++(check-sat)
++(get-model)
+-- 
+2.47.1
+

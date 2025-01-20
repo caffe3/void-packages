@@ -1,0 +1,215 @@
+From d00941602263ad53feb35d4c6353dfc890fb6b00 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 10 Sep 2024 08:26:00 -0500
+Subject: [PATCH 049/312] Optimizations for checking whether a term is legal
+ for E-matching (#11200)
+
+This method has been found to take ~10% in some extreme cases.
+
+The main optimization is not to compute the original form of a term.
+Also we reorder some operations and reduce a few lookups.
+
+More optimization will likely follow.
+---
+ .../ematching/candidate_generator.cpp         | 21 +++++++++-------
+ .../ematching/candidate_generator.h           |  6 ++---
+ src/theory/quantifiers/term_database.cpp      | 13 ++++------
+ src/theory/quantifiers/term_database.h        |  2 +-
+ src/theory/quantifiers/term_util.cpp          | 24 +++++++++++++++----
+ src/theory/quantifiers/term_util.h            |  9 +++++++
+ 6 files changed, 49 insertions(+), 26 deletions(-)
+
+diff --git a/src/theory/quantifiers/ematching/candidate_generator.cpp b/src/theory/quantifiers/ematching/candidate_generator.cpp
+index 83500ad8c..1d33b5c95 100644
+--- a/src/theory/quantifiers/ematching/candidate_generator.cpp
++++ b/src/theory/quantifiers/ematching/candidate_generator.cpp
+@@ -41,9 +41,11 @@ CandidateGenerator::CandidateGenerator(Env& env,
+ {
+ }
+ 
+-bool CandidateGenerator::isLegalCandidate( Node n ){
+-  return d_treg.getTermDatabase()->isTermActive(n)
+-         && !quantifiers::TermUtil::hasInstConstAttr(n);
++bool CandidateGenerator::isLegalCandidate(const Node& n)
++{
++  // Note that all terms with instantiation constants should be marked inactive,
++  // so we do only a single check here.
++  return d_treg.getTermDatabase()->isTermActive(n);
+ }
+ 
+ CandidateGeneratorQE::CandidateGeneratorQE(Env& env,
+@@ -92,11 +94,12 @@ void CandidateGeneratorQE::resetForOperator(Node eqc, Node op)
+     }
+   }
+ }
+-bool CandidateGeneratorQE::isLegalOpCandidate( Node n ) {
+-  if( n.hasOperator() ){
+-    if( isLegalCandidate( n ) ){
+-      return d_treg.getTermDatabase()->getMatchOperator(n) == d_op;
+-    }
++bool CandidateGeneratorQE::isLegalOpCandidate(const Node& n)
++{
++  const Node opm = d_treg.getTermDatabase()->getMatchOperator(n);
++  if (opm == d_op)
++  {
++    return isLegalCandidate(n);
+   }
+   return false;
+ }
+@@ -296,7 +299,7 @@ Node CandidateGeneratorConsExpand::getNextCandidate()
+       curr, dt, 0, options().datatypes.dtSharedSelectors);
+ }
+ 
+-bool CandidateGeneratorConsExpand::isLegalOpCandidate(Node n)
++bool CandidateGeneratorConsExpand::isLegalOpCandidate(const Node& n)
+ {
+   return isLegalCandidate(n);
+ }
+diff --git a/src/theory/quantifiers/ematching/candidate_generator.h b/src/theory/quantifiers/ematching/candidate_generator.h
+index 6edf1f944..9e4b9fd77 100644
+--- a/src/theory/quantifiers/ematching/candidate_generator.h
++++ b/src/theory/quantifiers/ematching/candidate_generator.h
+@@ -75,7 +75,7 @@ class CandidateGenerator : protected EnvObj
+   /** get the next candidate */
+   virtual Node getNextCandidate() = 0;
+   /** is n a legal candidate? */
+-  bool isLegalCandidate(Node n);
++  bool isLegalCandidate(const Node& n);
+   /** Identify this generator (for debugging, etc..) */
+   virtual std::string identify() const = 0;
+ 
+@@ -142,7 +142,7 @@ class CandidateGeneratorQE : public CandidateGenerator
+   /** the current mode of this candidate generator */
+   short d_mode;
+   /** is n a legal candidate of the required operator? */
+-  virtual bool isLegalOpCandidate(Node n);
++  virtual bool isLegalOpCandidate(const Node& n);
+   /** the equivalence classes that we have excluded from candidate generation */
+   std::map< Node, bool > d_exclude_eqc;
+ 
+@@ -241,7 +241,7 @@ class CandidateGeneratorConsExpand : public CandidateGeneratorQE
+   /** the (datatype) type of the input match pattern */
+   TypeNode d_mpat_type;
+   /** we don't care about the operator of n */
+-  bool isLegalOpCandidate(Node n) override;
++  bool isLegalOpCandidate(const Node& n) override;
+ };
+ 
+ /**
+diff --git a/src/theory/quantifiers/term_database.cpp b/src/theory/quantifiers/term_database.cpp
+index 5d8c03b80..cc67cf1ac 100644
+--- a/src/theory/quantifiers/term_database.cpp
++++ b/src/theory/quantifiers/term_database.cpp
+@@ -464,19 +464,16 @@ bool TermDb::inRelevantDomain(TNode f, size_t i, TNode r)
+   return false;
+ }
+ 
+-bool TermDb::isTermActive( Node n ) {
++bool TermDb::isTermActive(Node n)
++{
+   return d_inactive_map.find( n )==d_inactive_map.end(); 
+   //return !n.getAttribute(NoMatchAttribute());
+ }
+ 
+-void TermDb::setTermInactive( Node n ) {
+-  d_inactive_map[n] = true;
+-  //Trace("term-db-debug2") << "set no match attribute" << std::endl;
+-  //NoMatchAttribute nma;
+-  //n.setAttribute(nma,true);
+-}
++void TermDb::setTermInactive(Node n) { d_inactive_map[n] = true; }
+ 
+-bool TermDb::hasTermCurrent( Node n, bool useMode ) {
++bool TermDb::hasTermCurrent(const Node& n, bool useMode) const
++{
+   if( !useMode ){
+     return d_has_map.find( n )!=d_has_map.end();
+   }
+diff --git a/src/theory/quantifiers/term_database.h b/src/theory/quantifiers/term_database.h
+index 82ccd2e58..baa52fa20 100644
+--- a/src/theory/quantifiers/term_database.h
++++ b/src/theory/quantifiers/term_database.h
+@@ -206,7 +206,7 @@ class TermDb : public QuantifiersUtil {
+    * the option termDbMode.
+    * Otherwise, it returns the lookup in the map d_has_map.
+    */
+-  bool hasTermCurrent(Node n, bool useMode = true);
++  bool hasTermCurrent(const Node& n, bool useMode = true) const;
+   /** is term eligble for instantiation? */
+   bool isTermEligibleForInstantiation(TNode n, TNode f);
+   /** get eligible term in equivalence class of r */
+diff --git a/src/theory/quantifiers/term_util.cpp b/src/theory/quantifiers/term_util.cpp
+index e73ff5baf..cb0132783 100644
+--- a/src/theory/quantifiers/term_util.cpp
++++ b/src/theory/quantifiers/term_util.cpp
+@@ -74,13 +74,21 @@ Node TermUtil::getRemoveQuantifiers2( Node n, std::map< Node, Node >& visited )
+ }
+ 
+ Node TermUtil::getInstConstAttr( Node n ) {
+-  if (!n.hasAttribute(InstConstantAttribute()) ){
++  if (!n.hasAttribute(InstConstantAttribute()))
++  {
+     Node q;
+-    if (n.hasOperator())
++    if (n.isVar())
+     {
+-      q = getInstConstAttr(n.getOperator());
++      // If it is a purification variable, it may correspond to a term
++      // with instantiation constants in it. We get the unpurified form here
++      // to handle this case.
++      Node un = SkolemManager::getUnpurifiedForm(n);
++      if (!un.isNull() && un != n)
++      {
++        q = getInstConstAttr(un);
++      }
+     }
+-    if (q.isNull())
++    else
+     {
+       for (const Node& nc : n)
+       {
+@@ -90,6 +98,13 @@ Node TermUtil::getInstConstAttr( Node n ) {
+           break;
+         }
+       }
++      if (q.isNull())
++      {
++        if (n.hasOperator())
++        {
++          q = getInstConstAttr(n.getOperator());
++        }
++      }
+     }
+     InstConstantAttribute ica;
+     n.setAttribute(ica, q);
+@@ -99,7 +114,6 @@ Node TermUtil::getInstConstAttr( Node n ) {
+ 
+ bool TermUtil::hasInstConstAttr(Node n)
+ {
+-  n = SkolemManager::getOriginalForm(n);
+   return !getInstConstAttr(n).isNull();
+ }
+ 
+diff --git a/src/theory/quantifiers/term_util.h b/src/theory/quantifiers/term_util.h
+index 44c64f766..abd916f2e 100644
+--- a/src/theory/quantifiers/term_util.h
++++ b/src/theory/quantifiers/term_util.h
+@@ -67,6 +67,15 @@ class TermUtil
+   /** Get the index of BOUND_VARIABLE v in quantifier q */
+   static size_t getVariableNum(Node q, Node v);
+ 
++  /**
++   * Get a quantified formula, if possible, for which n (or its original form)
++   * contains instantiation constants from. This method is used for determining
++   * when a term is ineligible for instantiation.
++   *
++   * @param n the node to check.
++   * @return (one of) the quantified formulas for which n contains instantiation
++   * constants from, or the null node otherwise.
++   */
+   static Node getInstConstAttr( Node n );
+   /**
+    * Does n (or its original form) contain instantiation constants? This method
+-- 
+2.47.1
+

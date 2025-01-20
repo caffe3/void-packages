@@ -1,0 +1,1261 @@
+From 1b8dd45c3a473ba12efcdfc51f14f3471fc313f1 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 12 Dec 2024 18:59:32 -0600
+Subject: [PATCH 243/312] Support empty set and sequence in RARE (#11348)
+
+This PR will avoid having to introduce numerous ad-hoc rewrites for
+sequences and sets.
+
+Adds 3 new internal-only kinds for this purpose:
+- Kind::TYPE_OF which represents the type of its argument
+- Kind::SET_EMPTY_OF_TYPE, which is the empty set for the type
+represented by its argument,
+- Kind::SEQ_EMPTY_OF_TYPE, which is the empty sequence (or string) for
+the type represented by its argument.
+
+Each of these kinds are supported in the RARE parser. They are treated
+as macros by RARE, that is, when RARE rules are instantiated, they are
+immediately evaluated, so that e.g. `(@seq.empty_of_type (@type_of a)) =
+(as set.empty (Set Int))` if `a` is a constant of type `(Set Int)`.
+
+These operators are not exported to Eunoia. Instead, the list node
+converter (which prints RARE rules) is updated to eliminate these
+symbols during printing.
+
+Note that we require passing types explicitly as arguments wherever
+`Kind::TYPE_OF` is used. Furthermore we require changing the definition
+of `seq.empty` to account for strings in RARE rules. This introduces an
+internal `@seq.empty` symbol to denote empty sequence and changes
+`seq.empty` to be a program to construct the empty string or sequence.
+This means the RARE rules in Eunoia can use the `seq.empty` syntax in
+the expected way.
+
+This PR then further generalizes the remaining string rules to
+sequences, simplifies RARE sets rules, and adds 2 missing rules from
+sets.
+
+---------
+
+Co-authored-by: Lachnitt <lachnitt@stanford.edu>
+---
+ include/cvc5/cvc5_proof_rule.h                |   8 +-
+ proofs/eo/cpc/programs/Strings.eo             |   2 +-
+ proofs/eo/cpc/rules/Rewrites.eo               | 113 ++++++++++--------
+ proofs/eo/cpc/theories/Strings.eo             |  33 +++--
+ src/expr/nary_term_util.cpp                   |  37 +++++-
+ src/printer/smt2/smt2_printer.cpp             |   4 +
+ src/proof/alf/alf_list_node_converter.cpp     |  43 ++++++-
+ src/proof/alf/alf_list_node_converter.h       |  34 +++++-
+ src/proof/alf/alf_printer.cpp                 |  63 ++++++++--
+ src/proof/alf/alf_printer.h                   |   6 +-
+ src/rewriter/node.py                          |   4 +
+ src/rewriter/rewrite_proof_rule.cpp           |  23 +++-
+ src/rewriter/rewrite_proof_rule.h             |   9 +-
+ src/theory/builtin/kinds                      |   6 +-
+ .../builtin/theory_builtin_type_rules.cpp     |  13 ++
+ .../builtin/theory_builtin_type_rules.h       |  14 +++
+ src/theory/sets/kinds                         |   5 +
+ src/theory/sets/rewrites                      |  26 ++--
+ src/theory/sets/theory_sets_type_rules.cpp    |  13 ++
+ src/theory/sets/theory_sets_type_rules.h      |  13 ++
+ src/theory/strings/kinds                      |   5 +
+ src/theory/strings/rewrites                   |  59 +++++----
+ .../strings/theory_strings_type_rules.cpp     |  13 ++
+ .../strings/theory_strings_type_rules.h       |  13 ++
+ 24 files changed, 439 insertions(+), 120 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 9abf6b11b..b4affb0b9 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -3633,6 +3633,10 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(SETS_CARD_MINUS),
+   /** Auto-generated from RARE rule sets-card-emp */
+   EVALUE(SETS_CARD_EMP),
++  /** Auto-generated from RARE rule sets-minus-self */
++  EVALUE(SETS_MINUS_SELF),
++  /** Auto-generated from RARE rule sets-is-empty-elim */
++  EVALUE(SETS_IS_EMPTY_ELIM),
+   /** Auto-generated from RARE rule str-eq-ctn-false */
+   EVALUE(STR_EQ_CTN_FALSE),
+   /** Auto-generated from RARE rule str-eq-ctn-full-false1 */
+@@ -3723,8 +3727,6 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(STR_CONTAINS_EMP),
+   /** Auto-generated from RARE rule str-contains-is-emp */
+   EVALUE(STR_CONTAINS_IS_EMP),
+-  /** Auto-generated from RARE rule str-concat-emp */
+-  EVALUE(STR_CONCAT_EMP),
+   /** Auto-generated from RARE rule str-at-elim */
+   EVALUE(STR_AT_ELIM),
+   /** Auto-generated from RARE rule str-replace-self */
+@@ -3841,6 +3843,8 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(SEQ_NTH_UNIT),
+   /** Auto-generated from RARE rule seq-rev-unit */
+   EVALUE(SEQ_REV_UNIT),
++  /** Auto-generated from RARE rule seq-len-empty */
++  EVALUE(SEQ_LEN_EMPTY),
+   /** Auto-generated from RARE rule re-in-empty */
+   EVALUE(RE_IN_EMPTY),
+   /** Auto-generated from RARE rule re-in-sigma */
+diff --git a/proofs/eo/cpc/programs/Strings.eo b/proofs/eo/cpc/programs/Strings.eo
+index 4fb696849..a9143e6aa 100644
+--- a/proofs/eo/cpc/programs/Strings.eo
++++ b/proofs/eo/cpc/programs/Strings.eo
+@@ -16,7 +16,7 @@
+ (program $str_is_empty ((U Type) (x U))
+   (U) Bool
+   (
+-    (($str_is_empty (seq.empty U)) true)
++    (($str_is_empty (@seq.empty U)) true)
+     (($str_is_empty "") true)
+     (($str_is_empty x) false)
+   )
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index 83179849e..4c4c93f29 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -1161,8 +1161,8 @@
+   :conclusion (= (bvult (@bv c1 nm1) (sign_extend m1 x1)) (= (extract nm2 nm2 x1) (@bv 1 1)))
+ )
+ (declare-rule sets-eq-singleton-emp ((@T0 Type) (@T1 Type) (x1 (Set @T0)) (y1 @T1))
+-  :premises ((= (set.is_empty x1) true))
+-  :args (x1 y1)
++  :premises ((= x1 (set.empty (Set @T0))))
++  :args (x1 y1 (Set @T0))
+   :conclusion (= (= x1 (set.singleton y1)) false)
+ )
+ (declare-rule sets-member-singleton ((@T0 Type) (@T1 Type) (x1 @T0) (y1 @T1))
+@@ -1170,8 +1170,8 @@
+   :conclusion (= (set.member x1 (set.singleton y1)) (= x1 y1))
+ )
+ (declare-rule sets-member-emp ((@T0 Type) (@T1 Type) (x1 @T0) (y1 (Set @T1)))
+-  :premises ((= (set.is_empty y1) true))
+-  :args (x1 y1)
++  :premises ((= y1 (set.empty (Set @T1))))
++  :args (x1 y1 (Set @T1))
+   :conclusion (= (set.member x1 y1) false)
+ )
+ (declare-rule sets-subset-elim ((@T0 Type) (@T1 Type) (x1 (Set @T0)) (y1 (Set @T1)))
+@@ -1187,33 +1187,33 @@
+   :conclusion (= (set.inter x1 y1) (set.inter y1 x1))
+ )
+ (declare-rule sets-inter-emp1 ((@T0 Type) (@T1 Type) (x1 (Set @T0)) (y1 (Set @T1)))
+-  :premises ((= (set.is_empty x1) true))
+-  :args (x1 y1)
++  :premises ((= x1 (set.empty (Set @T0))))
++  :args (x1 y1 (Set @T0))
+   :conclusion (= (set.inter x1 y1) x1)
+ )
+ (declare-rule sets-inter-emp2 ((@T0 Type) (@T1 Type) (x1 (Set @T0)) (y1 (Set @T1)))
+-  :premises ((= (set.is_empty y1) true))
+-  :args (x1 y1)
++  :premises ((= y1 (set.empty (Set @T1))))
++  :args (x1 y1 (Set @T1))
+   :conclusion (= (set.inter x1 y1) y1)
+ )
+ (declare-rule sets-minus-emp1 ((@T0 Type) (@T1 Type) (x1 (Set @T0)) (y1 (Set @T1)))
+-  :premises ((= (set.is_empty x1) true))
+-  :args (x1 y1)
++  :premises ((= x1 (set.empty (Set @T0))))
++  :args (x1 y1 (Set @T0))
+   :conclusion (= (set.minus x1 y1) x1)
+ )
+ (declare-rule sets-minus-emp2 ((@T0 Type) (@T1 Type) (x1 (Set @T0)) (y1 (Set @T1)))
+-  :premises ((= (set.is_empty y1) true))
+-  :args (x1 y1)
++  :premises ((= y1 (set.empty (Set @T1))))
++  :args (x1 y1 (Set @T1))
+   :conclusion (= (set.minus x1 y1) x1)
+ )
+ (declare-rule sets-union-emp1 ((@T0 Type) (@T1 Type) (x1 (Set @T0)) (y1 (Set @T1)))
+-  :premises ((= (set.is_empty x1) true))
+-  :args (x1 y1)
++  :premises ((= x1 (set.empty (Set @T0))))
++  :args (x1 y1 (Set @T0))
+   :conclusion (= (set.union x1 y1) y1)
+ )
+ (declare-rule sets-union-emp2 ((@T0 Type) (@T1 Type) (x1 (Set @T0)) (y1 (Set @T1)))
+-  :premises ((= (set.is_empty y1) true))
+-  :args (x1 y1)
++  :premises ((= y1 (set.empty (Set @T1))))
++  :args (x1 y1 (Set @T1))
+   :conclusion (= (set.union x1 y1) x1)
+ )
+ (declare-rule sets-inter-member ((@T0 Type) (@T1 Type) (@T2 Type) (x1 @T0) (y1 (Set @T1)) (z1 (Set @T2)))
+@@ -1245,10 +1245,18 @@
+   :conclusion (= (set.card (set.minus s1 t1)) (- (set.card s1) (set.card (set.inter s1 t1))))
+ )
+ (declare-rule sets-card-emp ((@T0 Type) (x1 (Set @T0)))
+-  :premises ((= (set.is_empty x1) true))
+-  :args (x1)
++  :premises ((= x1 (set.empty (Set @T0))))
++  :args (x1 (Set @T0))
+   :conclusion (= (set.card x1) 0)
+ )
++(declare-rule sets-minus-self ((@T0 Type) (x1 (Set @T0)))
++  :args (x1 (Set @T0))
++  :conclusion (= (set.minus x1 x1) (set.empty (Set @T0)))
++)
++(declare-rule sets-is-empty-elim ((@T0 Type) (x1 (Set @T0)))
++  :args (x1 (Set @T0))
++  :conclusion (= (set.is_empty x1) (= x1 (set.empty (Set @T0))))
++)
+ (declare-rule str-eq-ctn-false ((@T0 Type) (@T1 Type) (@T2 Type) (@T3 Type) (x1 (Seq @T0) :list) (x2 (Seq @T1)) (x3 (Seq @T2) :list) (y1 (Seq @T3)))
+   :premises ((= (seq.contains y1 x2) false))
+   :args (x1 x2 x3 y1)
+@@ -1276,29 +1284,30 @@
+   :args (x1 x2 x3 y1)
+   :conclusion (= (= ($singleton_elim (seq.++ x3 ($singleton_elim (seq.++ x2 x1)))) y1) (= y1 ($singleton_elim (seq.++ x3 x2 x1))))
+ )
+-(declare-rule str-substr-empty-str ((n1 Int) (m1 Int))
+-  :args (n1 m1)
+-  :conclusion (= (str.substr "" n1 m1) "")
++(declare-rule str-substr-empty-str ((@T0 Type) (x1 (Seq @T0)) (n1 Int) (m1 Int))
++  :premises ((= x1 (seq.empty (Seq @T0))))
++  :args (x1 n1 m1 (Seq @T0))
++  :conclusion (= (seq.extract x1 n1 m1) x1)
+ )
+-(declare-rule str-substr-empty-range ((x1 String) (n1 Int) (m1 Int))
++(declare-rule str-substr-empty-range ((@T0 Type) (x1 (Seq @T0)) (n1 Int) (m1 Int))
+   :premises ((= (>= 0 m1) true))
+-  :args (x1 n1 m1)
+-  :conclusion (= (str.substr x1 n1 m1) "")
++  :args (x1 n1 m1 (Seq @T0))
++  :conclusion (= (seq.extract x1 n1 m1) (seq.empty (Seq @T0)))
+ )
+-(declare-rule str-substr-empty-start ((x1 String) (n1 Int) (m1 Int))
+-  :premises ((= (>= n1 (str.len x1)) true))
+-  :args (x1 n1 m1)
+-  :conclusion (= (str.substr x1 n1 m1) "")
++(declare-rule str-substr-empty-start ((@T0 Type) (x1 (Seq @T0)) (n1 Int) (m1 Int))
++  :premises ((= (>= n1 (seq.len x1)) true))
++  :args (x1 n1 m1 (Seq @T0))
++  :conclusion (= (seq.extract x1 n1 m1) (seq.empty (Seq @T0)))
+ )
+-(declare-rule str-substr-empty-start-neg ((x1 String) (n1 Int) (m1 Int))
++(declare-rule str-substr-empty-start-neg ((@T0 Type) (x1 (Seq @T0)) (n1 Int) (m1 Int))
+   :premises ((= (< n1 0) true))
+-  :args (x1 n1 m1)
+-  :conclusion (= (str.substr x1 n1 m1) "")
++  :args (x1 n1 m1 (Seq @T0))
++  :conclusion (= (seq.extract x1 n1 m1) (seq.empty (Seq @T0)))
+ )
+-(declare-rule str-substr-eq-empty ((s1 String) (n1 Int) (m1 Int))
+-  :premises ((= n1 0) (= (> m1 n1) true))
+-  :args (s1 n1 m1)
+-  :conclusion (= (= (str.substr s1 n1 m1) "") (= s1 ""))
++(declare-rule str-substr-eq-empty ((@T0 Type) (@T1 Type) (s1 (Seq @T0)) (r1 (Seq @T1)) (n1 Int) (m1 Int))
++  :premises ((= n1 0) (= (> m1 n1) true) (= r1 (seq.empty (Seq @T1))))
++  :args (s1 r1 n1 m1 (Seq @T1))
++  :conclusion (= (= (seq.extract s1 n1 m1) r1) (= s1 r1))
+ )
+ (declare-rule str-len-replace-inv ((@T0 Type) (@T1 Type) (@T2 Type) (t1 (Seq @T0)) (s1 (Seq @T1)) (r1 (Seq @T2)))
+   :premises ((= (seq.len s1) (seq.len r1)))
+@@ -1352,13 +1361,13 @@
+   :args (s1 s2 s3 t1 t2)
+   :conclusion (= (= (seq.++ s2 s3 s1) (seq.++ t1 t2 s1)) (= ($singleton_elim (seq.++ s2 s3)) ($singleton_elim (seq.++ t1 t2))))
+ )
+-(declare-rule str-concat-unify-base ((s1 String) (t1 String) (t2 String :list))
+-  :args (s1 t1 t2)
+-  :conclusion (= (= s1 (str.++ s1 t1 t2)) (= "" ($singleton_elim (str.++ t1 t2))))
++(declare-rule str-concat-unify-base ((@T0 Type) (@T1 Type) (@T2 Type) (s1 (Seq @T0)) (t1 (Seq @T1)) (t2 (Seq @T2) :list))
++  :args (s1 t1 t2 (Seq @T0))
++  :conclusion (= (= s1 (seq.++ s1 t1 t2)) (= (seq.empty (Seq @T0)) ($singleton_elim (seq.++ t1 t2))))
+ )
+-(declare-rule str-concat-unify-base-rev ((s1 String) (t1 String) (t2 String :list))
+-  :args (s1 t1 t2)
+-  :conclusion (= (= s1 (str.++ t1 t2 s1)) (= "" ($singleton_elim (str.++ t1 t2))))
++(declare-rule str-concat-unify-base-rev ((@T0 Type) (@T1 Type) (@T2 Type) (s1 (Seq @T0)) (t1 (Seq @T1)) (t2 (Seq @T2) :list))
++  :args (s1 t1 t2 (Seq @T0))
++  :conclusion (= (= s1 (seq.++ t1 t2 s1)) (= (seq.empty (Seq @T0)) ($singleton_elim (seq.++ t1 t2))))
+ )
+ (declare-rule str-concat-clash-char ((@T0 Type) (@T1 Type) (@T2 Type) (@T3 Type) (@T4 Type) (@T5 Type) (s1 (Seq @T0)) (s2 (Seq @T1) :list) (s3 (Seq @T2) :list) (t1 (Seq @T3)) (t2 (Seq @T4) :list) (t3 (Seq @T5) :list))
+   :premises ((= (= s1 t1) false) (= (seq.len s1) (seq.len t1)))
+@@ -1462,10 +1471,6 @@
+   :args (x1 y1)
+   :conclusion (= (seq.contains x1 y1) (= x1 y1))
+ )
+-(declare-rule str-concat-emp ((xs1 String :list) (ys1 String :list))
+-  :args (xs1 ys1)
+-  :conclusion (= ($singleton_elim (str.++ xs1 "" ys1)) ($singleton_elim (str.++ xs1 ys1)))
+-)
+ (declare-rule str-at-elim ((@T0 Type) (x1 (Seq @T0)) (n1 Int))
+   :args (x1 n1)
+   :conclusion (= (seq.at x1 n1) (seq.extract x1 n1 1))
+@@ -1483,9 +1488,10 @@
+   :args (t1 s1 r1)
+   :conclusion (= (seq.replace t1 s1 r1) t1)
+ )
+-(declare-rule str-replace-empty ((@T0 Type) (@T1 Type) (t1 (Seq @T0)) (s1 (Seq @T1)))
+-  :args (t1 s1)
+-  :conclusion (= (seq.replace t1 "" s1) (seq.++ s1 t1))
++(declare-rule str-replace-empty ((@T0 Type) (@T1 Type) (@T2 Type) (t1 (Seq @T0)) (s1 (Seq @T1)) (r1 (Seq @T2)))
++  :premises ((= r1 (seq.empty (Seq @T2))))
++  :args (t1 s1 r1 (Seq @T2))
++  :conclusion (= (seq.replace t1 r1 s1) (seq.++ s1 t1))
+ )
+ (declare-rule str-replace-contains-pre ((@T0 Type) (@T1 Type) (@T2 Type) (@T3 Type) (t1 (Seq @T0)) (t2 (Seq @T1) :list) (s1 (Seq @T2)) (r1 (Seq @T3)))
+   :premises ((= (seq.contains t1 s1) true))
+@@ -1509,9 +1515,9 @@
+   :args (s1 s2 s3)
+   :conclusion (= (seq.len (seq.++ s1 s2 s3)) (+ (seq.len s1) (seq.len ($singleton_elim (seq.++ s2 s3)))))
+ )
+-(declare-rule str-indexof-self ((t1 String) (n1 Int))
+-  :args (t1 n1)
+-  :conclusion (= (str.indexof t1 t1 n1) (str.indexof "" "" n1))
++(declare-rule str-indexof-self ((@T0 Type) (t1 (Seq @T0)) (n1 Int))
++  :args (t1 n1 (Seq @T0))
++  :conclusion (= (seq.indexof t1 t1 n1) (eo::define ((_let_1 (seq.empty (Seq @T0)))) (seq.indexof _let_1 _let_1 n1)))
+ )
+ (declare-rule str-indexof-no-contains ((@T0 Type) (@T1 Type) (t1 (Seq @T0)) (s1 (Seq @T1)) (n1 Int))
+   :premises ((= (seq.contains (seq.extract t1 n1 (seq.len t1)) s1) false))
+@@ -1712,6 +1718,11 @@
+   :args (x1)
+   :conclusion (= (seq.rev (seq.unit x1)) (seq.unit x1))
+ )
++(declare-rule seq-len-empty ((@T0 Type) (x1 (Seq @T0)))
++  :premises ((= x1 (seq.empty (Seq @T0))))
++  :args (x1 (Seq @T0))
++  :conclusion (= (seq.len x1) 0)
++)
+ (declare-rule re-in-empty ((t1 String))
+   :args (t1)
+   :conclusion (= (str.in_re t1 re.none) false)
+diff --git a/proofs/eo/cpc/theories/Strings.eo b/proofs/eo/cpc/theories/Strings.eo
+index 444e5e6bb..6a6bb8774 100644
+--- a/proofs/eo/cpc/theories/Strings.eo
++++ b/proofs/eo/cpc/theories/Strings.eo
+@@ -32,21 +32,38 @@
+ (declare-consts <string> String)
+ 
+ ; Empty sequence
+-; disclaimer: This function is not in SMT-LIB.
+-(declare-const seq.empty (-> (! Type :var T) T))
+-
+-; program: $mk_emptystr
++; note: >
++;   This symbol is used as the term denoting the empty sequence.
++;   This is not the same as seq.empty, which is defined as the
++;   (user-facing) constructor of the empty string or sequence,
++;   defined as seq.empty below. It is never used for strings.
++(declare-const @seq.empty (-> (! Type :var T) T))
++
++; program: seq.empty
+ ; args:
+ ; - T Type: The string-like type.
+ ; return: The empty string of the given string-like type T.
+-(program $mk_emptystr ((U Type))
++; note: >
++;   We define seq.empty in this way since the same symbols in our theory
++;   are used for strings and sequences, yet for the purposes of
++;   e.g. evaluation, strings require using string literals as their
++;   values. In places where seq.empty can be used for a string or
++;   sequence (e.g., RARE), we use this program to ensure this is the case.
++; disclaimer: This function is not in SMT-LIB.
++(program seq.empty ((U Type))
+   (Type) (Seq U)
+   (
+-    (($mk_emptystr String)  "")
+-    (($mk_emptystr (Seq U)) (seq.empty (Seq U)))
++    ((seq.empty String)  "")
++    ((seq.empty (Seq U)) (@seq.empty (Seq U)))
+   )
+ )
+ 
++; define: $mk_emptystr
++; note: >
++;   This is used as a macro for constructing the empty string or sequence.
++;   It is equivalent to seq.empty above.
++(define $mk_emptystr () seq.empty)
++
+ ; Core functions of strings.
+ (declare-const str.len 
+   (-> (! Type :var T :implicit)
+@@ -57,7 +74,7 @@
+ ;   declare it to be :right-assoc-nil to model cvc5's treatment of variadic
+ ;   functions.
+ (declare-parameterized-const str.++ ((T Type))
+-  (-> (Seq T) (Seq T) (Seq T)) :right-assoc-nil ($mk_emptystr (Seq T)))
++  (-> (Seq T) (Seq T) (Seq T)) :right-assoc-nil (seq.empty (Seq T)))
+ 
+ ; Extended functions for strings.
+ (declare-const str.substr (-> (! Type :var T :implicit)
+diff --git a/src/expr/nary_term_util.cpp b/src/expr/nary_term_util.cpp
+index 102adc29d..242726219 100644
+--- a/src/expr/nary_term_util.cpp
++++ b/src/expr/nary_term_util.cpp
+@@ -17,7 +17,9 @@
+ 
+ #include "expr/aci_norm.h"
+ #include "expr/attribute.h"
++#include "expr/emptyset.h"
+ #include "expr/node_algorithm.h"
++#include "expr/sort_to_term.h"
+ #include "theory/bv/theory_bv_utils.h"
+ #include "theory/strings/word.h"
+ #include "util/bitvector.h"
+@@ -221,7 +223,40 @@ Node narySubstitute(Node src,
+           {
+             children.insert(children.begin(), cur.getOperator());
+           }
+-          ret = nm->mkNode(cur.getKind(), children);
++          Kind k = cur.getKind();
++          // We treat @set.empty_of_type, @seq.empty_of_type, @type_of as
++          // macros in this method, meaning they are immediately evaluated
++          // as soon as RARE rules are instantiated.
++          switch (k)
++          {
++            case Kind::SET_EMPTY_OF_TYPE:
++            case Kind::SEQ_EMPTY_OF_TYPE:
++            {
++              if (children[0].getKind() == Kind::SORT_TO_TERM)
++              {
++                const SortToTerm& st = children[0].getConst<SortToTerm>();
++                TypeNode tn = st.getType();
++                if (k == Kind::SET_EMPTY_OF_TYPE)
++                {
++                  ret = nm->mkConst(EmptySet(tn));
++                }
++                else
++                {
++                  Assert(k == Kind::SEQ_EMPTY_OF_TYPE);
++                  ret = theory::strings::Word::mkEmptyWord(tn);
++                }
++              }
++              else
++              {
++                ret = nm->mkNode(k, children);
++              }
++            }
++            break;
++            case Kind::TYPE_OF:
++              ret = nm->mkConst(SortToTerm(children[0].getType()));
++              break;
++            default: ret = nm->mkNode(k, children); break;
++          }
+         }
+       }
+       visited[cur] = ret;
+diff --git a/src/printer/smt2/smt2_printer.cpp b/src/printer/smt2/smt2_printer.cpp
+index 141f7fb54..0bee9b74b 100644
+--- a/src/printer/smt2/smt2_printer.cpp
++++ b/src/printer/smt2/smt2_printer.cpp
+@@ -1147,6 +1147,8 @@ std::string Smt2Printer::smtKindString(Kind k)
+     case Kind::DISTINCT: return "distinct";
+     case Kind::SEXPR: break;
+ 
++    case Kind::TYPE_OF: return "@type_of";
++
+     // bool theory
+     case Kind::NOT: return "not";
+     case Kind::AND: return "and";
+@@ -1313,6 +1315,7 @@ std::string Smt2Printer::smtKindString(Kind k)
+     case Kind::RELATION_GROUP: return "rel.group";
+     case Kind::RELATION_AGGREGATE: return "rel.aggr";
+     case Kind::RELATION_PROJECT: return "rel.project";
++    case Kind::SET_EMPTY_OF_TYPE: return "@set.empty_of_type";
+ 
+     // bag theory
+     case Kind::BAG_TYPE: return "Bag";
+@@ -1436,6 +1439,7 @@ std::string Smt2Printer::smtKindString(Kind k)
+     case Kind::SEQUENCE_TYPE: return "Seq";
+     case Kind::SEQ_UNIT: return "seq.unit";
+     case Kind::SEQ_NTH: return "seq.nth";
++    case Kind::SEQ_EMPTY_OF_TYPE: return "@seq.empty_of_type";
+ 
+     // sep theory
+     case Kind::SEP_STAR: return "sep";
+diff --git a/src/proof/alf/alf_list_node_converter.cpp b/src/proof/alf/alf_list_node_converter.cpp
+index f5e33ab4b..d45e5ce27 100644
+--- a/src/proof/alf/alf_list_node_converter.cpp
++++ b/src/proof/alf/alf_list_node_converter.cpp
+@@ -15,19 +15,58 @@
+ 
+ #include "proof/alf/alf_list_node_converter.h"
+ 
++#include "expr/emptyset.h"
+ #include "expr/nary_term_util.h"
++#include "expr/sequence.h"
+ #include "printer/printer.h"
+ #include "printer/smt2/smt2_printer.h"
++#include "theory/strings/word.h"
+ 
+ namespace cvc5::internal {
+ namespace proof {
+ 
+ AlfListNodeConverter::AlfListNodeConverter(NodeManager* nm,
+-                                           BaseAlfNodeConverter& tproc)
+-    : NodeConverter(nm), d_tproc(tproc)
++                                           BaseAlfNodeConverter& tproc,
++                                           const std::map<Node, Node>& adtcMap)
++    : NodeConverter(nm), d_tproc(tproc), d_adtcMap(adtcMap)
+ {
+ }
+ 
++Node AlfListNodeConverter::preConvert(Node n)
++{
++  Kind k = n.getKind();
++  if (k == Kind::SET_EMPTY_OF_TYPE || k == Kind::SEQ_EMPTY_OF_TYPE)
++  {
++    if (n[0].getKind() == Kind::TYPE_OF)
++    {
++      Node t = n[0][0];
++      std::map<Node, Node>::const_iterator it = d_adtcMap.find(t);
++      if (it != d_adtcMap.end())
++      {
++        std::stringstream ss;
++        ss << it->second[0];
++        TypeNode tn = d_nm->mkSort(ss.str());
++        if (k == Kind::SET_EMPTY_OF_TYPE)
++        {
++          tn = d_nm->mkSetType(tn);
++          return d_tproc.convert(d_nm->mkConst(EmptySet(tn)));
++        }
++        else
++        {
++          std::vector<Node> seq;
++          return d_tproc.convert(d_nm->mkConst(Sequence(tn, seq)));
++        }
++      }
++    }
++    Assert(false) << "AlfListNodeConverter: unhandled term " << n;
++  }
++  else
++  {
++    Assert(k != Kind::TYPE_OF) << "AlfListNodeConverter: unhandled term " << n;
++  }
++  return n;
++}
++
+ Node AlfListNodeConverter::postConvert(Node n)
+ {
+   Kind k = n.getKind();
+diff --git a/src/proof/alf/alf_list_node_converter.h b/src/proof/alf/alf_list_node_converter.h
+index 1a31fd0a9..6b639186b 100644
+--- a/src/proof/alf/alf_list_node_converter.h
++++ b/src/proof/alf/alf_list_node_converter.h
+@@ -27,20 +27,20 @@ namespace proof {
+  * This node converter adds applications of "singleton elimination" to
+  * accurately reflect the difference in semantics between ALF and RARE.
+  *
+- * This is used when printing RARE rules in ALF. For example, the RARE rule:
++ * This is used when printing RARE rules in Eunoia. For example, the RARE rule:
+  *
+  * (define-rule bool-or-false ((xs Bool :list) (ys Bool :list))
+  *    (or xs false ys)
+  *    (or xs ys))
+  *
+- * becomes the ALF rule:
++ * becomes the Eunoia rule:
+  *
+  * (declare-rule bool-or-false ((xs Bool :list) (ys Bool :list))
+  *   :args (xs ys)
+  *   :conclusion (= (or xs false ys)) ($singleton_elim (or xs ys)))
+  * )
+  *
+- * Where note that $singleton_elim is defined in our ALF signature:
++ * Where note that $singleton_elim is defined in our CPC Eunoia signature:
+  *
+  * (program $singleton_elim
+  *   ((T Type) (S Type) (U Type) (f (-> T U S)) (x S) (x1 T) (x2 T :list))
+@@ -57,23 +57,47 @@ namespace proof {
+  * The reason is that (or xs ys) *may* become a singleton list when xs and ys
+  * are instantiated. Say xs -> [A] and ys -> []. In RARE, the conclusion is
+  *   (= (or A false) A)
+- * In ALF, the conclusion is:
++ * In Eunoia, the conclusion is:
+  *   (= (or A false) (or A))
+  *
+  * The above transformation takes into account the difference in semantics.
+  * More generally, we apply $singleton_elim to any subterm of the input
+  * term that has fewer than 2 children that are not marked with :list.
++ *
++ * We additionally convert terms that represent empty sets and sequences
++ * in their internal cvc5+RARE representation. In particular,
++ *   (@set.empty_of_type (@type_of x1)) becomes (set.empty T1).
++ *   (@seq.empty_of_type (@type_of x1)) becomes (seq.empty T1).
++ * where T1 is the type of x1, which was assigned by the dependent type
++ * converter (alf_dependent_type_converter.h). We take this mapping as
++ * an input to this class.
+  */
+ class AlfListNodeConverter : public NodeConverter
+ {
+  public:
+-  AlfListNodeConverter(NodeManager* nm, BaseAlfNodeConverter& tproc);
++  /**
++   * @param nm The node manager
++   * @param tproc The node converter, for converting terms to their final
++   * form to be printed
++   * @param adtcMap Mapping from variables to symbols whose names are the
++   * types of the variables assigned to them. For example, a variable of type
++   * ?Set may be mapped to `(Set T1)` where `T1` is a sort name allocated by
++   * the dependent type converter (alf_dependent_type_converter.h).
++   */
++  AlfListNodeConverter(NodeManager* nm,
++                       BaseAlfNodeConverter& tproc,
++                       const std::map<Node, Node>& adtcMap);
++  /** Convert node n based on the conversion described above. */
++  Node preConvert(Node n) override;
+   /** Convert node n based on the conversion described above. */
+   Node postConvert(Node n) override;
+ 
+  private:
+   /** The parent converter, used for getting internal symbols and utilities */
+   BaseAlfNodeConverter& d_tproc;
++  /** Mapping symbols to a node whose name is the type associated to that symbol
++   */
++  const std::map<Node, Node>& d_adtcMap;
+ };
+ 
+ }  // namespace proof
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index da27e4f7e..9c2207c1d 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -48,7 +48,6 @@ AlfPrinter::AlfPrinter(Env& env,
+       d_alreadyPrinted(&d_passumeCtx),
+       d_passumeMap(&d_passumeCtx),
+       d_termLetPrefix("@t"),
+-      d_ltproc(nodeManager(), atp),
+       d_rdb(rdb),
+       // Use a let binding if proofDagGlobal is true. We can traverse binders
+       // due to the way we print global declare-var, since terms beneath
+@@ -61,6 +60,7 @@ AlfPrinter::AlfPrinter(Env& env,
+ {
+   d_pfType = nodeManager()->mkSort("proofType");
+   d_false = nodeManager()->mkConst(false);
++  d_absType = nodeManager()->mkAbstractType(Kind::ABSTRACT_TYPE);
+ }
+ 
+ bool AlfPrinter::isHandled(const Options& opts, const ProofNode* pfn)
+@@ -530,6 +530,7 @@ void AlfPrinter::printDslRule(std::ostream& out, ProofRewriteRule r)
+   std::stringstream ssExplicit;
+   std::map<std::string, size_t> nameCount;
+   std::vector<Node> uviList;
++  std::map<Node, Node> adtcConvMap;
+   for (size_t i = 0, nvars = uvarList.size(); i < nvars; i++)
+   {
+     if (i > 0)
+@@ -558,6 +559,7 @@ void AlfPrinter::printDslRule(std::ostream& out, ProofRewriteRule r)
+     ssExplicit << "(" << sss.str() << " ";
+     TypeNode uvt = uv.getType();
+     Node uvtp = adtc.process(uvt);
++    adtcConvMap[uvi] = uvtp;
+     ssExplicit << uvtp;
+     if (expr::isListVar(uv))
+     {
+@@ -573,6 +575,9 @@ void AlfPrinter::printDslRule(std::ostream& out, ProofRewriteRule r)
+   {
+     out << "(" << p << " " << p.getType() << ") ";
+   }
++  // carry the mapping from symbols to their types, which is used when
++  // eliminating internal-only operators for representing empty set and sequence
++  AlfListNodeConverter ltproc(nodeManager(), d_tproc, adtcConvMap);
+   // now print variables of the proof rule
+   out << ssExplicit.str();
+   out << ")" << std::endl;
+@@ -592,23 +597,39 @@ void AlfPrinter::printDslRule(std::ostream& out, ProofRewriteRule r)
+       }
+       // note we apply list conversion to premises as well.
+       Node cc = d_tproc.convert(su.apply(c));
+-      cc = d_ltproc.convert(cc);
++      cc = ltproc.convert(cc);
+       out << cc;
+     }
+     out << ")" << std::endl;
+   }
+   out << "  :args (";
+-  for (size_t i = 0, nvars = uviList.size(); i < nvars; i++)
++  bool printedArg = false;
++  for (const Node& v : uviList)
+   {
+-    if (i > 0)
+-    {
+-      out << " ";
+-    }
+-    out << uviList[i];
++    out << (printedArg ? " " : "");
++    printedArg = true;
++    out << v;
++  }
++  // Special case: must print explicit types.
++  // This is to handle rules where Kind::TYPE_OF appears in the conclusion
++  // or in the premises. Since RARE rules do not take types as arguments,
++  // we must add them here. The printer for proof steps will add them in
++  // a similar manner.
++  std::vector<Node> explictTypeOf = rpr.getExplicitTypeOfList();
++  std::map<Node, Node>::iterator itet;
++  for (const Node& et : explictTypeOf)
++  {
++    out << (printedArg ? " " : "");
++    printedArg = true;
++    Assert(et.getKind() == Kind::TYPE_OF);
++    Node v = su.apply(et[0]);
++    itet = adtcConvMap.find(v);
++    Assert(itet != adtcConvMap.end());
++    out << itet->second;
+   }
+   out << ")" << std::endl;
+   Node sconc = d_tproc.convert(su.apply(conc));
+-  sconc = d_ltproc.convert(sconc);
++  sconc = ltproc.convert(sconc);
+   Assert(sconc.getKind() == Kind::EQUAL);
+   out << "  :conclusion (= " << sconc[0] << " " << sconc[1] << ")" << std::endl;
+   out << ")" << std::endl;
+@@ -908,7 +929,6 @@ void AlfPrinter::getArgsFromProofRule(const ProofNode* pn,
+       std::vector<Node> ss(pargs.begin() + 1, pargs.end());
+       std::vector<std::pair<Kind, std::vector<Node>>> witnessTerms;
+       rpr.getConclusionFor(ss, witnessTerms);
+-      TypeNode absType = nodeManager()->mkAbstractType(Kind::ABSTRACT_TYPE);
+       // the arguments are the computed witness terms
+       for (const std::pair<Kind, std::vector<Node>>& w : witnessTerms)
+       {
+@@ -927,7 +947,28 @@ void AlfPrinter::getArgsFromProofRule(const ProofNode* pn,
+           args.push_back(d_tproc.mkInternalApp(
+               printer::smt2::Smt2Printer::smtKindString(w.first),
+               wargs,
+-              absType));
++              d_absType));
++        }
++      }
++      // special case: explicit type-of terms, which require explicit type
++      // arguments
++      std::map<ProofRewriteRule, std::vector<Node>>::iterator it =
++          d_explicitTypeOf.find(dr);
++      if (it == d_explicitTypeOf.end())
++      {
++        d_explicitTypeOf[dr] = rpr.getExplicitTypeOfList();
++        it = d_explicitTypeOf.find(dr);
++      }
++      if (!it->second.empty())
++      {
++        const std::vector<Node>& fvs = rpr.getVarList();
++        AlwaysAssert(fvs.size() == ss.size());
++        for (const Node& t : it->second)
++        {
++          Assert(t.getKind() == Kind::TYPE_OF);
++          Node tts =
++              t[0].substitute(fvs.begin(), fvs.end(), ss.begin(), ss.end());
++          args.push_back(d_tproc.typeAsNode(tts.getType()));
+         }
+       }
+       return;
+diff --git a/src/proof/alf/alf_printer.h b/src/proof/alf/alf_printer.h
+index 03421d605..fce09439a 100644
+--- a/src/proof/alf/alf_printer.h
++++ b/src/proof/alf/alf_printer.h
+@@ -186,8 +186,8 @@ class AlfPrinter : protected EnvObj
+   std::string d_termLetPrefix;
+   /** The false node */
+   Node d_false;
+-  /** List node converter */
+-  AlfListNodeConverter d_ltproc;
++  /** */
++  TypeNode d_absType;
+   /** Pointer to the rewrite database */
+   rewriter::RewriteDb* d_rdb;
+   /** The empty vector */
+@@ -198,6 +198,8 @@ class AlfPrinter : protected EnvObj
+   LetBinding* d_lbindUse;
+   /** The letification channel. */
+   AlfPrintChannelPre d_aletify;
++  /** A cache for explicit type-of variables, for printing DSL_REWRITE steps */
++  std::map<ProofRewriteRule, std::vector<Node>> d_explicitTypeOf;
+ };
+ 
+ }  // namespace proof
+diff --git a/src/rewriter/node.py b/src/rewriter/node.py
+index fc6e461f8..b7c1f7d1c 100644
+--- a/src/rewriter/node.py
++++ b/src/rewriter/node.py
+@@ -156,6 +156,8 @@ class Op(Enum):
+ 
+     BV_TO_NAT = ('bv2nat', 'BITVECTOR_TO_NAT')
+     INT_TO_BV = ('int2bv', 'INT_TO_BITVECTOR')
++    
++    TYPE_OF = ('@type_of', 'TYPE_OF')
+ 
+     ###########################################################################
+     # Strings
+@@ -190,6 +192,7 @@ class Op(Enum):
+ 
+     SEQ_UNIT = ('seq.unit', 'SEQ_UNIT')
+     SEQ_NTH = ('seq.nth', 'SEQ_NTH')
++    SEQ_EMPTY_OF_TYPE = ('@seq.empty_of_type', 'SEQ_EMPTY_OF_TYPE')
+ 
+     STRING_TO_REGEXP = ('str.to_re', 'STRING_TO_REGEXP')
+     REGEXP_CONCAT = ('re.++', 'REGEXP_CONCAT')
+@@ -221,6 +224,7 @@ class Op(Enum):
+     SET_CARD = ('set.card', 'SET_CARD')
+     SET_IS_EMPTY = ('set.is_empty', 'SET_IS_EMPTY')
+     SET_IS_SINGLETON = ('set.is_singleton', 'SET_IS_SINGLETON')
++    SET_EMPTY_OF_TYPE = ('@set.empty_of_type', 'SET_EMPTY_OF_TYPE')
+ 
+ 
+ class BaseSort(Enum):
+diff --git a/src/rewriter/rewrite_proof_rule.cpp b/src/rewriter/rewrite_proof_rule.cpp
+index b06c2996c..b960e09a8 100644
+--- a/src/rewriter/rewrite_proof_rule.cpp
++++ b/src/rewriter/rewrite_proof_rule.cpp
+@@ -37,7 +37,7 @@ void RewriteProofRule::init(ProofRewriteRule id,
+                             Node context)
+ {
+   // not initialized yet
+-  Assert(d_cond.empty() && d_obGen.empty() && d_fvs.empty());
++  Assert(d_cond.empty() && d_fvs.empty());
+   d_id = id;
+   d_userFvs = userFvs;
+   std::map<Node, Node> condDef;
+@@ -49,7 +49,6 @@ void RewriteProofRule::init(ProofRewriteRule id,
+           << "Ambiguous context for list variables in condition of rule " << id;
+     }
+     d_cond.push_back(c);
+-    d_obGen.push_back(c);
+     if (c.getKind() == Kind::EQUAL && c[0].getKind() == Kind::BOUND_VARIABLE)
+     {
+       condDef[c[0]] = c[1];
+@@ -134,6 +133,24 @@ const std::vector<Node>& RewriteProofRule::getUserVarList() const
+   return d_userFvs;
+ }
+ const std::vector<Node>& RewriteProofRule::getVarList() const { return d_fvs; }
++
++std::vector<Node> RewriteProofRule::getExplicitTypeOfList() const
++{
++  std::vector<Node> ret;
++  Node conc = getConclusion(true);
++  std::unordered_set<Node> ccts;
++  expr::getKindSubterms(conc, Kind::TYPE_OF, true, ccts);
++  for (const Node& c : d_cond)
++  {
++    expr::getKindSubterms(c, Kind::TYPE_OF, true, ccts);
++  }
++  for (const Node& t : ccts)
++  {
++    ret.emplace_back(t);
++  }
++  return ret;
++}
++
+ bool RewriteProofRule::isExplicitVar(Node v) const
+ {
+   Assert(std::find(d_fvs.begin(), d_fvs.end(), v) != d_fvs.end());
+@@ -160,7 +177,7 @@ bool RewriteProofRule::getObligations(const std::vector<Node>& vs,
+                                       std::vector<Node>& vcs) const
+ {
+   // substitute into each condition
+-  for (const Node& c : d_obGen)
++  for (const Node& c : d_cond)
+   {
+     Node sc = expr::narySubstitute(c, vs, ss);
+     vcs.push_back(sc);
+diff --git a/src/rewriter/rewrite_proof_rule.h b/src/rewriter/rewrite_proof_rule.h
+index 5d06a5366..200ada4e0 100644
+--- a/src/rewriter/rewrite_proof_rule.h
++++ b/src/rewriter/rewrite_proof_rule.h
+@@ -128,7 +128,12 @@ class RewriteProofRule
+   Node getConclusionFor(
+       const std::vector<Node>& ss,
+       std::vector<std::pair<Kind, std::vector<Node>>>& witnessTerms) const;
+-
++  /**
++   * @return the list of applications of Kind::TYPE_OF that appear in the
++   * conclusion or a premise. These require special handling by the
++   * printer.
++   */
++  std::vector<Node> getExplicitTypeOfList() const;
+   /**
+    * Is variable explicit? An explicit variable is one that does not occur
+    * in a condition and thus its value must be specified in a proof
+@@ -171,8 +176,6 @@ class RewriteProofRule
+   ProofRewriteRule d_id;
+   /** The conditions of the rule */
+   std::vector<Node> d_cond;
+-  /** The obligation generator formulas of the rule */
+-  std::vector<Node> d_obGen;
+   /** The conclusion of the rule (an equality) */
+   Node d_conc;
+   /** Is the rule applied in some fixed point context? */
+diff --git a/src/theory/builtin/kinds b/src/theory/builtin/kinds
+index aef4c6b5e..d798b7537 100644
+--- a/src/theory/builtin/kinds
++++ b/src/theory/builtin/kinds
+@@ -320,6 +320,7 @@ typerule WITNESS ::cvc5::internal::theory::builtin::WitnessTypeRule
+ 
+ variable RAW_SYMBOL "a variable that is not quoted in the smt2 printer (internal only)"
+ 
++# The following operators and types are used primarily for RARE
+ 
+ constant ABSTRACT_TYPE \
+   class \
+@@ -340,8 +341,6 @@ parameterized APPLY_INDEXED_SYMBOLIC APPLY_INDEXED_SYMBOLIC_OP 1: "generic index
+ typerule APPLY_INDEXED_SYMBOLIC_OP "SimpleTypeRule<RBuiltinOperator>"
+ typerule APPLY_INDEXED_SYMBOLIC ::cvc5::internal::theory::builtin::ApplyIndexedSymbolicTypeRule
+ 
+-
+-# constants
+ constant SORT_TO_TERM \
+   class \
+   SortToTerm \
+@@ -350,4 +349,7 @@ constant SORT_TO_TERM \
+   "term representing a sort; payload is an instance of the cvc5::internal::SortToTerm class"
+ typerule SORT_TO_TERM "SimpleTypeRule<RBuiltinOperator>"
+ 
++operator TYPE_OF 1 "the type of an expression, used internally for RARE"
++typerule TYPE_OF ::cvc5::internal::theory::builtin::TypeOfTypeRule
++
+ endtheory
+diff --git a/src/theory/builtin/theory_builtin_type_rules.cpp b/src/theory/builtin/theory_builtin_type_rules.cpp
+index be8518f9e..29100f06f 100644
+--- a/src/theory/builtin/theory_builtin_type_rules.cpp
++++ b/src/theory/builtin/theory_builtin_type_rules.cpp
+@@ -185,6 +185,19 @@ TypeNode ApplyIndexedSymbolicTypeRule::computeType(NodeManager* nodeManager,
+   return cn.getType();
+ }
+ 
++TypeNode TypeOfTypeRule::preComputeType(NodeManager* nm, TNode n)
++{
++  return TypeNode::null();
++}
++
++TypeNode TypeOfTypeRule::computeType(NodeManager* nodeManager,
++                                     TNode n,
++                                     bool check,
++                                     std::ostream* errOut)
++{
++  return nodeManager->builtinOperatorType();
++}
++
+ Node SortProperties::mkGroundTerm(TypeNode type)
+ {
+   // we typically use this method for sorts, although there are other types
+diff --git a/src/theory/builtin/theory_builtin_type_rules.h b/src/theory/builtin/theory_builtin_type_rules.h
+index 63cdec37e..10d86fcbc 100644
+--- a/src/theory/builtin/theory_builtin_type_rules.h
++++ b/src/theory/builtin/theory_builtin_type_rules.h
+@@ -87,6 +87,20 @@ class ApplyIndexedSymbolicTypeRule
+                               std::ostream* errOut);
+ };
+ 
++/**
++ * Type rule for the internally used typeof operator used by RARE proof
++ * reconstruction.
++ */
++class TypeOfTypeRule
++{
++ public:
++  static TypeNode preComputeType(NodeManager* nm, TNode n);
++  static TypeNode computeType(NodeManager* nodeManager,
++                              TNode n,
++                              bool check,
++                              std::ostream* errOut);
++};
++
+ class SortProperties
+ {
+  public:
+diff --git a/src/theory/sets/kinds b/src/theory/sets/kinds
+index c63ed0b2e..961ab0e86 100644
+--- a/src/theory/sets/kinds
++++ b/src/theory/sets/kinds
+@@ -186,4 +186,9 @@ parameterized RELATION_TABLE_JOIN RELATION_TABLE_JOIN_OP 2 "relation table join"
+ typerule RELATION_TABLE_JOIN_OP        "SimpleTypeRule<RBuiltinOperator>"
+ typerule RELATION_TABLE_JOIN  ::cvc5::internal::theory::sets::RelationTableJoinTypeRule
+ 
++# for RARE
++
++operator SET_EMPTY_OF_TYPE 1  "the empty set whose argument represents its type"
++typerule SET_EMPTY_OF_TYPE ::cvc5::internal::theory::sets::SetEmptyOfTypeTypeRule
++
+ endtheory
+diff --git a/src/theory/sets/rewrites b/src/theory/sets/rewrites
+index 415db21a6..be9f3baca 100644
+--- a/src/theory/sets/rewrites
++++ b/src/theory/sets/rewrites
+@@ -1,7 +1,7 @@
+ ; Equality
+ 
+ (define-cond-rule sets-eq-singleton-emp ((x ?Set) (y ?))
+-  (set.is_empty x)
++  (= x (@set.empty_of_type (@type_of x)))
+   (= x (set.singleton y))
+   false)
+ 
+@@ -10,7 +10,7 @@
+   (= x y))
+ 
+ (define-cond-rule sets-member-emp ((x ?) (y ?Set))
+-  (set.is_empty y)
++  (= y (@set.empty_of_type (@type_of y)))
+   (set.member x y)
+   false)
+   
+@@ -26,27 +26,27 @@
+   (set.inter y x))
+ 
+ (define-cond-rule sets-inter-emp1 ((x ?Set) (y ?Set))
+-  (set.is_empty x)
++  (= x (@set.empty_of_type (@type_of x)))
+   (set.inter x y)
+   x)
+ (define-cond-rule sets-inter-emp2 ((x ?Set) (y ?Set))
+-  (set.is_empty y)
++  (= y (@set.empty_of_type (@type_of y)))
+   (set.inter x y)
+   y)
+ (define-cond-rule sets-minus-emp1 ((x ?Set) (y ?Set))
+-  (set.is_empty x)
++  (= x (@set.empty_of_type (@type_of x)))
+   (set.minus x y)
+   x)
+ (define-cond-rule sets-minus-emp2 ((x ?Set) (y ?Set))
+-  (set.is_empty y)
++  (= y (@set.empty_of_type (@type_of y)))
+   (set.minus x y)
+   x)
+ (define-cond-rule sets-union-emp1 ((x ?Set) (y ?Set))
+-  (set.is_empty x)
++  (= x (@set.empty_of_type (@type_of x)))
+   (set.union x y)
+   y)
+ (define-cond-rule sets-union-emp2 ((x ?Set) (y ?Set))
+-  (set.is_empty y)
++  (= y (@set.empty_of_type (@type_of y)))
+   (set.union x y)
+   x)
+ 
+@@ -77,8 +77,16 @@
+   (- (set.card s) (set.card (set.inter s t))))
+ 
+ (define-cond-rule sets-card-emp ((x ?Set))
+-  (set.is_empty x)
++  (= x (@set.empty_of_type (@type_of x)))
+   (set.card x)
+   0)
+ 
++(define-rule sets-minus-self ((x ?Set))
++  (set.minus x x)
++  (@set.empty_of_type (@type_of x)))
++
+ ; (set.complement S) ---> (set.minus (as set.universe (Set Int)) S)
++
++(define-rule sets-is-empty-elim ((x ?Set))
++  (set.is_empty x)
++  (= x (@set.empty_of_type (@type_of x))))
+diff --git a/src/theory/sets/theory_sets_type_rules.cpp b/src/theory/sets/theory_sets_type_rules.cpp
+index 32a0bc834..985a1f1bc 100644
+--- a/src/theory/sets/theory_sets_type_rules.cpp
++++ b/src/theory/sets/theory_sets_type_rules.cpp
+@@ -1246,6 +1246,19 @@ TypeNode RelationProjectTypeRule::computeType(NodeManager* nm,
+   return nm->mkSetType(retTupleType);
+ }
+ 
++TypeNode SetEmptyOfTypeTypeRule::preComputeType(NodeManager* nm, TNode n)
++{
++  return TypeNode::null();
++}
++
++TypeNode SetEmptyOfTypeTypeRule::computeType(NodeManager* nm,
++                                             TNode n,
++                                             bool check,
++                                             std::ostream* errOut)
++{
++  return nm->mkAbstractType(Kind::SET_TYPE);
++}
++
+ Cardinality SetsProperties::computeCardinality(TypeNode type)
+ {
+   Assert(type.getKind() == Kind::SET_TYPE);
+diff --git a/src/theory/sets/theory_sets_type_rules.h b/src/theory/sets/theory_sets_type_rules.h
+index 91b9f251a..b74b555ac 100644
+--- a/src/theory/sets/theory_sets_type_rules.h
++++ b/src/theory/sets/theory_sets_type_rules.h
+@@ -396,6 +396,19 @@ struct RelationAggregateTypeRule
+                               std::ostream* errOut);
+ }; /* struct RelationAggregateTypeRule */
+ 
++/**
++ * Type rule for set.empty_of_type
++ */
++struct SetEmptyOfTypeTypeRule
++{
++  static TypeNode preComputeType(NodeManager* nm, TNode n);
++
++  static TypeNode computeType(NodeManager* nodeManager,
++                              TNode n,
++                              bool check,
++                              std::ostream* errOut);
++};
++
+ struct SetsProperties
+ {
+   static Cardinality computeCardinality(TypeNode type);
+diff --git a/src/theory/strings/kinds b/src/theory/strings/kinds
+index dafdd351c..f5d96cddd 100644
+--- a/src/theory/strings/kinds
++++ b/src/theory/strings/kinds
+@@ -189,4 +189,9 @@ typerule CONST_SEQUENCE ::cvc5::internal::theory::strings::ConstSequenceTypeRule
+ typerule SEQ_UNIT ::cvc5::internal::theory::strings::SeqUnitTypeRule
+ typerule SEQ_NTH ::cvc5::internal::theory::strings::SeqNthTypeRule
+ 
++# for RARE
++
++operator SEQ_EMPTY_OF_TYPE 1  "the empty sequence whose argument represents its type"
++typerule SEQ_EMPTY_OF_TYPE ::cvc5::internal::theory::strings::SeqEmptyOfTypeTypeRule
++
+ endtheory
+diff --git a/src/theory/strings/rewrites b/src/theory/strings/rewrites
+index 78bfbaab5..d93449cb0 100644
+--- a/src/theory/strings/rewrites
++++ b/src/theory/strings/rewrites
+@@ -39,14 +39,30 @@
+   (= (str.++ x2 (str.++ x1 x)) y)
+   (= y (str.++ x2 x1 x)))
+ 
+-(define-rule str-substr-empty-str ((n Int) (m Int)) (str.substr "" n m) "")
+-(define-cond-rule str-substr-empty-range ((x String) (n Int) (m Int)) (>= 0 m) (str.substr x n m) "")
+-(define-cond-rule str-substr-empty-start ((x String) (n Int) (m Int)) (>= n (str.len x)) (str.substr x n m) "")
+-(define-cond-rule str-substr-empty-start-neg ((x String) (n Int) (m Int)) (< n 0) (str.substr x n m) "")
+-(define-cond-rule str-substr-eq-empty ((s String) (n Int) (m Int))
+-  (and (= n 0) (> m n))
+-  (= (str.substr s n m) "")
+-  (= s ""))
++(define-cond-rule str-substr-empty-str ((x ?Seq) (n Int) (m Int))
++  (= x (@seq.empty_of_type (@type_of x)))
++  (str.substr x n m)
++  x)
++
++(define-cond-rule str-substr-empty-range ((x ?Seq) (n Int) (m Int))
++  (>= 0 m)
++  (str.substr x n m)
++  (@seq.empty_of_type (@type_of x)))
++
++(define-cond-rule str-substr-empty-start ((x ?Seq) (n Int) (m Int))
++  (>= n (str.len x))
++  (str.substr x n m)
++  (@seq.empty_of_type (@type_of x)))
++
++(define-cond-rule str-substr-empty-start-neg ((x ?Seq) (n Int) (m Int)) 
++  (< n 0)
++  (str.substr x n m)
++  (@seq.empty_of_type (@type_of x)))
++
++(define-cond-rule str-substr-eq-empty ((s ?Seq) (r ?Seq) (n Int) (m Int))
++  (and (= n 0) (> m n) (= r (@seq.empty_of_type (@type_of r))))
++  (= (str.substr s n m) r)
++  (= s r))
+ 
+ (define-cond-rule str-len-replace-inv ((t ?Seq) (s ?Seq) (r ?Seq)) 
+   (= (str.len s) (str.len r))
+@@ -98,12 +114,12 @@
+   (= (str.++ s2 s3) (str.++ t2 t3))
+   _)
+ 
+-(define-rule str-concat-unify-base ((s String) (t1 String) (t2 String :list))
++(define-rule str-concat-unify-base ((s ?Seq) (t1 ?Seq) (t2 ?Seq :list))
+   (= s (str.++ s t1 t2))
+-  (= "" (str.++ t1 t2)))
+-(define-rule str-concat-unify-base-rev ((s String) (t1 String) (t2 String :list))
++  (= (@seq.empty_of_type (@type_of s)) (str.++ t1 t2)))
++(define-rule str-concat-unify-base-rev ((s ?Seq) (t1 ?Seq) (t2 ?Seq :list))
+   (= s (str.++ t1 t2 s))
+-  (= "" (str.++ t1 t2)))
++  (= (@seq.empty_of_type (@type_of s)) (str.++ t1 t2)))
+ 
+ (define-cond-rule str-concat-clash-char ((s1 ?Seq) (s2 ?Seq :list) (s3 ?Seq :list) (t1 ?Seq) (t2 ?Seq :list) (t3 ?Seq :list))
+   (and (not (= s1 t1)) (= (str.len s1) (str.len t1)))
+@@ -203,10 +219,6 @@
+   (str.contains x y)
+   (= x y))
+ 
+-(define-rule str-concat-emp ((xs String :list) (ys String :list)) 
+-  (str.++ xs "" ys) 
+-  (str.++ xs ys))
+-
+ (define-rule str-at-elim ((x ?Seq) (n Int)) (str.at x n) (str.substr x n 1))
+ 
+ ; not effective since due to not proving inequalities on length
+@@ -228,8 +240,9 @@
+   (str.replace t s r)
+   t)
+ 
+-(define-rule str-replace-empty ((t ?Seq) (s ?Seq))
+-  (str.replace t "" s)
++(define-cond-rule str-replace-empty ((t ?Seq) (s ?Seq) (r ?Seq))
++  (= r (@seq.empty_of_type (@type_of r)))
++  (str.replace t r s)
+   (str.++ s t))
+ 
+ (define-cond-rule str-replace-contains-pre ((t1 ?Seq) (t2 ?Seq :list) (s ?Seq) (r ?Seq))
+@@ -255,9 +268,10 @@
+   (str.len (str.++ s2 s3))
+   (+ (str.len s1) _))
+ 
+-(define-rule str-indexof-self ((t String) (n Int))
++(define-rule str-indexof-self ((t ?Seq) (n Int))
++  (def (emp (@seq.empty_of_type (@type_of t))))
+   (str.indexof t t n)
+-  (str.indexof "" "" n))
++  (str.indexof emp emp n))
+ 
+ (define-cond-rule str-indexof-no-contains ((t ?Seq) (s ?Seq) (n Int))
+   (not (str.contains (str.substr t n (str.len t)) s))
+@@ -419,3 +433,8 @@
+ (define-rule seq-len-unit ((x ?)) (str.len (seq.unit x)) 1)
+ (define-rule seq-nth-unit ((x ?)) (seq.nth (seq.unit x) 0) x)
+ (define-rule seq-rev-unit ((x ?)) (str.rev (seq.unit x)) (seq.unit x))
++
++(define-cond-rule seq-len-empty ((x ?Seq))
++  (= x (@seq.empty_of_type (@type_of x)))
++  (str.len x) 
++  0)
+diff --git a/src/theory/strings/theory_strings_type_rules.cpp b/src/theory/strings/theory_strings_type_rules.cpp
+index 251ff4db3..595d259a2 100644
+--- a/src/theory/strings/theory_strings_type_rules.cpp
++++ b/src/theory/strings/theory_strings_type_rules.cpp
+@@ -548,6 +548,19 @@ TypeNode SeqNthTypeRule::computeType(NodeManager* nodeManager,
+   return t.getSequenceElementType();
+ }
+ 
++TypeNode SeqEmptyOfTypeTypeRule::preComputeType(NodeManager* nm, TNode n)
++{
++  return TypeNode::null();
++}
++
++TypeNode SeqEmptyOfTypeTypeRule::computeType(NodeManager* nm,
++                                             TNode n,
++                                             bool check,
++                                             std::ostream* errOut)
++{
++  return nm->mkAbstractType(Kind::SEQUENCE_TYPE);
++}
++
+ Cardinality SequenceProperties::computeCardinality(TypeNode type)
+ {
+   Assert(type.getKind() == Kind::SEQUENCE_TYPE);
+diff --git a/src/theory/strings/theory_strings_type_rules.h b/src/theory/strings/theory_strings_type_rules.h
+index d709a9095..8d931826f 100644
+--- a/src/theory/strings/theory_strings_type_rules.h
++++ b/src/theory/strings/theory_strings_type_rules.h
+@@ -204,6 +204,19 @@ class SeqNthTypeRule
+                               bool check,
+                               std::ostream* errOut);
+ };
++/**
++ * Type rule for seq.empty_of_type
++ */
++class SeqEmptyOfTypeTypeRule
++{
++ public:
++  static TypeNode preComputeType(NodeManager* nm, TNode n);
++
++  static TypeNode computeType(NodeManager* nodeManager,
++                              TNode n,
++                              bool check,
++                              std::ostream* errOut);
++};
+ 
+ /** Properties of the sequence type */
+ struct SequenceProperties
+-- 
+2.47.1
+

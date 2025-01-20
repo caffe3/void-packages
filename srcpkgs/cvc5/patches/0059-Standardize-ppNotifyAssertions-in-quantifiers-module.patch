@@ -1,0 +1,113 @@
+From fb2bcc7280f8d29ae7a5430843cedaf81da55d3b Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 18 Sep 2024 11:35:56 -0500
+Subject: [PATCH 059/312] Standardize ppNotifyAssertions in quantifiers modules
+ (#11203)
+
+---
+ src/theory/quantifiers/quant_module.h         |  2 ++
+ src/theory/quantifiers/sygus/synth_engine.cpp | 15 +++++++++------
+ src/theory/quantifiers/sygus/synth_engine.h   |  2 +-
+ src/theory/quantifiers/sygus_inst.h           |  2 +-
+ src/theory/quantifiers_engine.cpp             | 17 +++--------------
+ 5 files changed, 16 insertions(+), 22 deletions(-)
+
+diff --git a/src/theory/quantifiers/quant_module.h b/src/theory/quantifiers/quant_module.h
+index 08049337d..a43c6236d 100644
+--- a/src/theory/quantifiers/quant_module.h
++++ b/src/theory/quantifiers/quant_module.h
+@@ -147,6 +147,8 @@ class QuantifiersModule : protected EnvObj
+    * Called when a quantified formula q is asserted to the quantifiers theory
+    */
+   virtual void assertNode(Node q) {}
++  /** notify preprocessed assertion */
++  virtual void ppNotifyAssertions(const std::vector<Node>& assertions) {}
+   /**
+    * Identify this module (for debugging, dynamic configuration, etc..).
+    * This name is printed in -o inst-strategy.
+diff --git a/src/theory/quantifiers/sygus/synth_engine.cpp b/src/theory/quantifiers/sygus/synth_engine.cpp
+index 74ec6c758..95707a60d 100644
+--- a/src/theory/quantifiers/sygus/synth_engine.cpp
++++ b/src/theory/quantifiers/sygus/synth_engine.cpp
+@@ -207,14 +207,17 @@ bool SynthEngine::getSynthSolutions(
+   return ret;
+ }
+ 
+-void SynthEngine::ppNotifyAssertion(Node n)
++void SynthEngine::ppNotifyAssertions(const std::vector<Node>& assertions)
+ {
+-  // check if it sygus conjecture
+-  if (QuantAttributes::checkSygusConjecture(n))
++  for (const Node& n : assertions)
+   {
+-    // this is a sygus conjecture
+-    Trace("cegqi") << "Preregister sygus conjecture : " << n << std::endl;
+-    d_conj->ppNotifyConjecture(n);
++    // check if it sygus conjecture
++    if (QuantAttributes::checkSygusConjecture(n))
++    {
++      // this is a sygus conjecture
++      Trace("cegqi") << "Preregister sygus conjecture : " << n << std::endl;
++      d_conj->ppNotifyConjecture(n);
++    }
+   }
+ }
+ 
+diff --git a/src/theory/quantifiers/sygus/synth_engine.h b/src/theory/quantifiers/sygus/synth_engine.h
+index 7367ffe13..55894ccb7 100644
+--- a/src/theory/quantifiers/sygus/synth_engine.h
++++ b/src/theory/quantifiers/sygus/synth_engine.h
+@@ -77,7 +77,7 @@ class SynthEngine : public QuantifiersModule
+    * to help when trying to reconstruct a solution that fits a given input
+    * syntax.
+    */
+-  void ppNotifyAssertion(Node n);
++  void ppNotifyAssertions(const std::vector<Node>& assertions) override;
+ 
+  private:
+   /** The synthesis conjectures that this class is managing. */
+diff --git a/src/theory/quantifiers/sygus_inst.h b/src/theory/quantifiers/sygus_inst.h
+index 78e9ac997..6133c1154 100644
+--- a/src/theory/quantifiers/sygus_inst.h
++++ b/src/theory/quantifiers/sygus_inst.h
+@@ -90,7 +90,7 @@ class SygusInst : public QuantifiersModule
+   void preRegisterQuantifier(Node q) override;
+ 
+   /* For collecting global terms from all available assertions. */
+-  void ppNotifyAssertions(const std::vector<Node>& assertions);
++  void ppNotifyAssertions(const std::vector<Node>& assertions) override;
+ 
+   std::string identify() const override;
+ 
+diff --git a/src/theory/quantifiers_engine.cpp b/src/theory/quantifiers_engine.cpp
+index 1bbc40091..eda9fa17f 100644
+--- a/src/theory/quantifiers_engine.cpp
++++ b/src/theory/quantifiers_engine.cpp
+@@ -174,21 +174,10 @@ void QuantifiersEngine::ppNotifyAssertions(
+       QuantAttributes::setInstantiationLevelAttr(a, 0);
+     }
+   }
+-  if (options().quantifiers.sygus)
+-  {
+-    SynthEngine* sye = d_qmodules->d_synth_e.get();
+-    for (const Node& a : assertions)
+-    {
+-      sye->ppNotifyAssertion(a);
+-    }
+-  }
+-  /* The SyGuS instantiation module needs a global view of all available
+-   * assertions to collect global terms that get added to each grammar.
+-   */
+-  if (options().quantifiers.sygusInst)
++  // notify all modules
++  for (QuantifiersModule*& mdl : d_modules)
+   {
+-    SygusInst* si = d_qmodules->d_sygus_inst.get();
+-    si->ppNotifyAssertions(assertions);
++    mdl->ppNotifyAssertions(assertions);
+   }
+ }
+ 
+-- 
+2.47.1
+

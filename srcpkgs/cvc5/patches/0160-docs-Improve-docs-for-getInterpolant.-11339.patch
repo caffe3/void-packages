@@ -1,0 +1,307 @@
+From cf2eeefc1276d40153efe8c8037dba85018b8da3 Mon Sep 17 00:00:00 2001
+From: Aina Niemetz <aina.niemetz@gmail.com>
+Date: Wed, 6 Nov 2024 06:13:37 -0800
+Subject: [PATCH 160/312] docs: Improve docs for getInterpolant. (#11339)
+
+---
+ include/cvc5/c/cvc5.h                   | 43 +++++++++++++----------
+ include/cvc5/cvc5.h                     | 45 +++++++++++++++----------
+ src/api/java/io/github/cvc5/Solver.java | 45 +++++++++++++++----------
+ src/api/python/cvc5.pxi                 | 22 ++++++++----
+ 4 files changed, 96 insertions(+), 59 deletions(-)
+
+diff --git a/include/cvc5/c/cvc5.h b/include/cvc5/c/cvc5.h
+index ffddd66b0..a93f35e4d 100644
+--- a/include/cvc5/c/cvc5.h
++++ b/include/cvc5/c/cvc5.h
+@@ -4831,53 +4831,62 @@ CVC5_EXPORT Cvc5Term cvc5_declare_oracle_fun(Cvc5* cvc5,
+ CVC5_EXPORT void cvc5_add_plugin(Cvc5* cvc5, Cvc5Plugin* plugin);
+ 
+ /**
+- * Get an interpolant
++ * Get an interpolant.
++ *
++ * This determines a term @f$I@f$ such that @f$A \rightarrow I@f$ and
++ * @f$I \rightarrow B@f$ are valid, if such a term exits. @f$A@f$ is the
++ * current set of assertions and @f$B@f$ is the conjecture, given as `conj`.
+  *
+  * SMT-LIB:
+  *
+  * \verbatim embed:rst:leading-asterisk
+  * .. code:: smtlib
+  *
+- *     (get-interpolant <conj>)
++ *     (get-interpolant <symbol> <conj>)
+  *
+- * Requires option
+- * :ref:`produce-interpolants <lbl-option-produce-interpolants>` to be set to
+- * a mode different from `none`. \endverbatim
++ * .. note:: In SMT-LIB, `<symbol>` assigns a symbol to the interpolant.
++ *
++ * .. note:: Requires option
++ *          :ref:`produce-interpolants <lbl-option-produce-interpolants>` to
++ *          be set to a mode different from `none`.
++ * \endverbatim
+  *
+  * @warning This function is experimental and may change in future versions.
+  *
+  * @param cvc5 The solver instance.
+  * @param conj The conjecture term.
+- * @return A Term @f$I@f$ such that @f$A \rightarrow I@f$ and
+- *         @f$I \rightarrow B@f$ are valid, where @f$A@f$ is the
+- *         current set of assertions and @f$B@f$ is given in the input by
+- *         `conj`, or the null term if such a term cannot be found.
++ * @return The interpolant, if an interpolant exists, else the null term.
+  */
+ CVC5_EXPORT Cvc5Term cvc5_get_interpolant(Cvc5* cvc5, Cvc5Term conj);
+ 
+ /**
+  * Get an interpolant
+  *
++ * This determines a term @f$I@f$, with respect to a given grammar, such that
++ * @f$A \rightarrow I@f$ and @f$I \rightarrow B@f$ are valid, if such a term
++ * exits. @f$A@f$ is the current set of assertions and @f$B@f$ is the
++ * conjecture, given as `conj`.
++ *
+  * SMT-LIB:
+  *
+  * \verbatim embed:rst:leading-asterisk
+  * .. code:: smtlib
+  *
+- *     (get-interpolant <conj> <grammar>)
++ *     (get-interpolant <symbol> <conj> <grammar>)
+  *
+- * Requires option
+- * :ref:`produce-interpolants <lbl-option-produce-interpolants>` to be set to
+- * a mode different from `none`. \endverbatim
++ * .. note:: In SMT-LIB, `<symbol>` assigns a symbol to the interpolant.
++ *
++ * .. note:: Requires option
++ *          :ref:`produce-interpolants <lbl-option-produce-interpolants>` to
++ *          be set to a mode different from `none`.
++ * \endverbatim
+  *
+  * @warning This function is experimental and may change in future versions.
+  *
+  * @param cvc5 The solver instance.
+  * @param conj The conjecture term.
+  * @param grammar The grammar for the interpolant I.
+- * @return A Term @f$I@f$ such that @f$A \rightarrow I@f$ and
+- *         @f$I \rightarrow B@f$ are valid, where @f$A@f$ is the
+- *         current set of assertions and @f$B@f$ is given in the input by
+- *         `conj`, or the null term if such a term cannot be found.
++ * @return The interpolant, if an interpolant exists, else the null term.
+  */
+ CVC5_EXPORT Cvc5Term cvc5_get_interpolant_with_grammar(Cvc5* cvc5,
+                                                        Cvc5Term conj,
+diff --git a/include/cvc5/cvc5.h b/include/cvc5/cvc5.h
+index 7b0ca72df..347d80722 100644
+--- a/include/cvc5/cvc5.h
++++ b/include/cvc5/cvc5.h
+@@ -6403,51 +6403,60 @@ class CVC5_EXPORT Solver
+   void pop(uint32_t nscopes = 1) const;
+ 
+   /**
+-   * Get an interpolant
++   * Get an interpolant.
++   *
++   * This determines a term @f$I@f$ such that @f$A \rightarrow I@f$ and
++   * @f$I \rightarrow B@f$ are valid, if such a term exits. @f$A@f$ is the
++   * current set of assertions and @f$B@f$ is the conjecture, given as `conj`.
+    *
+    * SMT-LIB:
+    *
+    * \verbatim embed:rst:leading-asterisk
+    * .. code:: smtlib
+    *
+-   *     (get-interpolant <conj>)
++   *     (get-interpolant <symbol> <conj>)
+    *
+-   * Requires option
+-   * :ref:`produce-interpolants <lbl-option-produce-interpolants>` to be set to
+-   * a mode different from `none`. \endverbatim
++   * .. note:: In SMT-LIB, `<symbol>` assigns a symbol to the interpolant.
++   *
++   * .. note:: Requires option
++   *          :ref:`produce-interpolants <lbl-option-produce-interpolants>` to
++   *          be set to a mode different from `none`.
++   * \endverbatim
+    *
+    * @warning This function is experimental and may change in future versions.
+    *
+    * @param conj The conjecture term.
+-   * @return A Term @f$I@f$ such that @f$A \rightarrow I@f$ and
+-   *         @f$I \rightarrow B@f$ are valid, where @f$A@f$ is the
+-   *         current set of assertions and @f$B@f$ is given in the input by
+-   *         `conj`, or the null term if such a term cannot be found.
++   * @return The interpolant, if an interpolant exists, else the null term.
+    */
+   Term getInterpolant(const Term& conj) const;
+ 
+   /**
+-   * Get an interpolant
++   * Get an interpolant.
++   *
++   * This determines a term @f$I@f$, with respect to a given grammar, such
++   * that @f$A \rightarrow I@f$ and @f$I \rightarrow B@f$ are valid, if such a
++   * term exits. @f$A@f$ is the current set of assertions and @f$B@f$ is the
++   * conjecture, given as `conj`.
+    *
+    * SMT-LIB:
+    *
+    * \verbatim embed:rst:leading-asterisk
+    * .. code:: smtlib
+    *
+-   *     (get-interpolant <conj> <grammar>)
++   *     (get-interpolant <symbol> <conj> <grammar>)
+    *
+-   * Requires option
+-   * :ref:`produce-interpolants <lbl-option-produce-interpolants>` to be set to
+-   * a mode different from `none`. \endverbatim
++   * .. note:: In SMT-LIB, `<symbol>` assigns a symbol to the interpolant.
++   *
++   * .. note:: Requires option
++   *          :ref:`produce-interpolants <lbl-option-produce-interpolants>` to
++   *          be set to a mode different from `none`.
++   * \endverbatim
+    *
+    * @warning This function is experimental and may change in future versions.
+    *
+    * @param conj The conjecture term.
+    * @param grammar The grammar for the interpolant I.
+-   * @return A Term @f$I@f$ such that @f$A \rightarrow I@f$ and
+-   *         @f$I \rightarrow B@f$ are valid, where @f$A@f$ is the
+-   *         current set of assertions and @f$B@f$ is given in the input by
+-   *         `conj`, or the null term if such a term cannot be found.
++   * @return The interpolant, if an interpolant exists, else the null term.
+    */
+   Term getInterpolant(const Term& conj, Grammar& grammar) const;
+ 
+diff --git a/src/api/java/io/github/cvc5/Solver.java b/src/api/java/io/github/cvc5/Solver.java
+index 2ca3eb59a..d4b82eefe 100644
+--- a/src/api/java/io/github/cvc5/Solver.java
++++ b/src/api/java/io/github/cvc5/Solver.java
+@@ -3119,23 +3119,28 @@ public class Solver extends AbstractPointer
+   private native void pop(long pointer, int nscopes);
+ 
+   /**
+-   * Get an interpolant
++   * Get an interpolant.
++   *
++   * <p>
++   * This determines a term {@code I} such that {@code A->I} and {@code I->B}
++   * are valid, if such a term exits. {@code A} is the current set of
++   * assertions and {@code B} is the conjecture, given as {@code conj}.
++   * </p>
+    *
+    * SMT-LIB:
+    * {@code
+-   * ( get-interpolant <conj> )
++   * ( get-interpolant <xsymbol> <conj> )
+    * }
+    *
+-   * Requires option {@code produce-interpolants} to be set to a mode different
+-   * from {@code none}.
++   * @api.note In SMT-LIB, {@code <symbol>} assigns a symbol to the interpolant.
++   *
++   * @api.note Requires option {@code produce-interpolants} to be set to a mode
++   * different from {@code none}.
+    *
+    * @api.note This method is experimental and may change in future versions.
+    *
+    * @param conj The conjecture term.
+-   * @return A Term I such that {@code A->I} and {@code I->B} are valid, where
+-   *         {@code A} is the current set of assertions and {@code B} is given
+-   *         in the input by {@code conj}, or the null term if such a term
+-   *         cannot be found.
++   * @return The interpolant, if an interpolant exists, else the null term.
+    */
+   public Term getInterpolant(Term conj)
+   {
+@@ -3146,24 +3151,30 @@ public class Solver extends AbstractPointer
+   private native long getInterpolant(long pointer, long conjPointer);
+ 
+   /**
+-   * Get an interpolant
++   * Get an interpolant.
++   *
++   * <p>
++   * This determines a term {@code I}, with respect to a given grammar, such
++   * that {@code A->I} and {@code I->B} are valid, if such a term exits.
++   * {@code A} is the current set of assertions and {@code B} is the
++   * conjecture, given as {@code conj}.
++   * </p>
+    *
+    * SMT-LIB:
+    * {@code
+-   * ( get-interpolant <conj> <g> )
++   * ( get-interpolant <symbol> <conj> <g> )
+    * }
+    *
+-   * Requires option {@code produce-interpolants} to be set to a mode different
+-   * from {@code none}.
++   * @api.note In SMT-LIB, {@code <symbol>} assigns a symbol to the interpolant.
++   *
++   * @api.note Requires option {@code produce-interpolants} to be set to a mode
++   * different from {@code none}.
+    *
+    * @api.note This method is experimental and may change in future versions.
+    *
+    * @param conj The conjecture term.
+-   * @param grammar The grammar for the interpolant I.
+-   * @return A Term I such that {@code A->I} and {@code I->B} are valid, where
+-   *         {@code A} is the current set of assertions and {@code B} is given
+-   *         in the input by {@code conj}, or the null term if such a term
+-   *         cannot be found.
++   * @param grammar The grammar for the interpolant {@code I}.
++   * @return The interpolant, if an interpolant exists, else the null term.
+    */
+   public Term getInterpolant(Term conj, Grammar grammar)
+   {
+diff --git a/src/api/python/cvc5.pxi b/src/api/python/cvc5.pxi
+index f16412f80..ce806e578 100644
+--- a/src/api/python/cvc5.pxi
++++ b/src/api/python/cvc5.pxi
+@@ -4313,24 +4313,32 @@ cdef class Solver:
+         """
+             Get an interpolant.
+ 
++            This determines a term :math:`I`, optionally with respect to a
++            a given grammar, such that :math:`A \\rightarrow I` and
++            :math:`I \\rightarrow B` are valid, if such a term exits.
++            :math:`A` is the current set of assertions and :math:`B` is the
++            conjecture, given as :code:`conj`.
++
+             SMT-LIB:
+ 
+             .. code-block:: smtlib
+ 
+-                ( get-interpolant <conj> )
+-                ( get-interpolant <conj> <grammar> )
++                ( get-interpolant <symbol> <conj> )
++                ( get-interpolant <symbol> <conj> <grammar> )
++
++            .. note:: In SMT-LIB, :code:`<symbol>` assigns a symbol to the
++                      interpolant.
+ 
+-            Requires option
+-            :ref:`produce-interpolants <lbl-option-produce-interpolants>`
+-            to be set to a mode different from `none`.
++            .. note:: Requires option
++                 :ref:`produce-interpolants <lbl-option-produce-interpolants>`
++                 to be set to a mode different from :code:`none`.
+ 
+             .. warning:: This function is experimental and may change in future
+                         versions.
+ 
+             :param conj: The conjecture term.
+             :param grammar: A grammar for the interpolant.
+-            :return: The interpolant.
+-                     See :cpp:func:`cvc5::Solver::getInterpolant` for details.
++            :return: The interpolant, if such a term exists.
+         """
+         if grammar is None:
+             return _term(self.tm, self.csolver.getInterpolant(conj.cterm))
+-- 
+2.47.1
+

@@ -1,0 +1,70 @@
+From 024c9822d74d271f96a33ba375bdeac04ed8b227 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 21 Nov 2024 08:13:15 -0600
+Subject: [PATCH 192/312] Formalize more quantifiers theory rewrites in Eunoia
+ (#11361)
+
+---
+ proofs/eo/cpc/rules/Quantifiers.eo | 33 ++++++++++++++++++++++++++++++
+ src/proof/alf/alf_printer.cpp      |  1 +
+ 2 files changed, 34 insertions(+)
+
+diff --git a/proofs/eo/cpc/rules/Quantifiers.eo b/proofs/eo/cpc/rules/Quantifiers.eo
+index 0e095e947..816276ff7 100644
+--- a/proofs/eo/cpc/rules/Quantifiers.eo
++++ b/proofs/eo/cpc/rules/Quantifiers.eo
+@@ -142,6 +142,39 @@
+   :conclusion (= F G)
+ )
+ 
++;;;;; ProofRewriteRule::QUANT_MERGE_PRENEX
++
++; program: $mk_quant_merge_prenex
++; args:
++; - Q (-> @List Bool): The binding operator (forall or exists).
++; - F Bool: The formula for which we are merging prenexes.
++; return: the result of merging all bound variables bound by Q in F.
++(program $mk_quant_merge_prenex ((Q (-> @List Bool)) (x @List) (F Bool))
++  ((-> @List Bool) Bool) Bool
++  (
++  (($mk_quant_merge_prenex Q (Q x F))  (eo::match ((R (-> @List Bool)) (y @List) (G Bool))
++                                         ($mk_quant_merge_prenex Q F)
++                                         ; note that since this method returns Q terms only, R is Q
++                                         (((R y G) (Q (eo::list_concat @list x y) G)))))
++  (($mk_quant_merge_prenex Q F)        (Q @list.nil F))
++  )
++)
++
++; rule: quant-merge-prenex
++; implements: ProofRewriteRule::QUANT_MERGE_PRENEX
++; args:
++; - eq Bool: The equality whose left hand side is a quantified formula.
++; requires: >
++;   The right hand side of the equality is the result of merging quantifier
++;   prenexes in its left hand side.
++; conclusion: The given equality.
++(declare-rule quant-merge-prenex ((Q (-> @List Bool)) (x @List) (F Bool) (G Bool))
++  :args ((= (Q x F) G))
++  :requires (((eo::or (eo::is_eq Q forall) (eo::is_eq Q exists)) true)
++             (($mk_quant_merge_prenex Q (Q x F)) G))
++  :conclusion (= (Q x F) G)
++)
++
+ ;;;;; ProofRewriteRule::QUANT_MINISCOPE
+ 
+ ; program: $mk_quant_miniscope
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 5651a900c..702d45d54 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -261,6 +261,7 @@ bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id, const Node& n)
+     case ProofRewriteRule::EXISTS_ELIM:
+     case ProofRewriteRule::QUANT_UNUSED_VARS:
+     case ProofRewriteRule::ARRAYS_SELECT_CONST:
++    case ProofRewriteRule::QUANT_MERGE_PRENEX:
+     case ProofRewriteRule::QUANT_MINISCOPE:
+     case ProofRewriteRule::QUANT_MINISCOPE_FV:
+     case ProofRewriteRule::QUANT_VAR_ELIM_EQ:
+-- 
+2.47.1
+

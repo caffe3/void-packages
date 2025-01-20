@@ -1,0 +1,516 @@
+From d9249b35a6b7a1387831deb09fd479ef26eaacce Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 18 Dec 2024 11:02:13 -0600
+Subject: [PATCH 254/312] Make DT_CONS_EQ macro, elaborate to simpler version
+ (#11420)
+
+This fixes proof failures in datatypes involving the rule DT_CONS_EQ.
+
+This rule currently involves a more complex implementation than what is
+documented and expected.
+
+This fixes the documentation, makes it a macro, and introduces 2 new
+rules for its elaboration. We then use the simpler version in the
+datatypes infer proof constructor.
+
+The proof elaboration for this macro is not yet complete, but this fixes
+the open proof errors involving this rule, included is an example
+regression.
+---
+ include/cvc5/cvc5_proof_rule.h                | 39 +++++++-
+ src/api/cpp/cvc5_proof_rule_template.cpp      |  2 +
+ src/proof/conv_proof_generator.cpp            | 10 ++
+ src/proof/conv_proof_generator.h              |  6 ++
+ src/rewriter/basic_rewrite_rcons.cpp          | 93 +++++++++++++++++++
+ src/rewriter/basic_rewrite_rcons.h            |  9 ++
+ src/theory/datatypes/datatypes_rewriter.cpp   | 52 +++++++++--
+ src/theory/datatypes/theory_datatypes.cpp     |  2 +-
+ .../datatypes/theory_datatypes_utils.cpp      |  7 +-
+ src/theory/datatypes/theory_datatypes_utils.h | 11 ++-
+ test/regress/cli/CMakeLists.txt               |  2 +
+ .../regress0/datatypes/dt-cons-eq-simple.smt2 | 11 +++
+ .../regress0/proofs/pfcheck-ufdt-distro.smt2  | 19 ++++
+ 13 files changed, 246 insertions(+), 17 deletions(-)
+ create mode 100644 test/regress/cli/regress0/datatypes/dt-cons-eq-simple.smt2
+ create mode 100644 test/regress/cli/regress0/proofs/pfcheck-ufdt-distro.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index b4affb0b9..319ccff2a 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2786,6 +2786,26 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(DT_COLLAPSE_TESTER_SINGLETON),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Datatypes -- Macro constructor equality**
++   *
++   * .. math::
++   *   (t = s) = (t_1 = s_1 \wedge \ldots \wedge t_n = s_n)
++   *
++   * where :math:`t_1, \ldots, t_n` and :math:`s_1, \ldots, s_n` are subterms
++   * of :math:`t` and :math:`s` that occur at the same position respectively
++   * (beneath constructor applications), or alternatively
++   *
++   * .. math::
++   *   (t = s) = false
++   * 
++   * where :math:`t` and :math:`s` have subterms that occur in the same
++   * position (beneath constructor applications) that are distinct.
++   *
++   * \endverbatim
++   */
++  EVALUE(MACRO_DT_CONS_EQ),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Datatypes -- constructor equality**
+@@ -2793,17 +2813,26 @@ enum ENUM(ProofRewriteRule)
+    * .. math::
+    *   (c(t_1, \ldots, t_n) = c(s_1, \ldots, s_n)) =
+    *   (t_1 = s_1 \wedge \ldots \wedge t_n = s_n)
++   * 
++   * where :math:`c` is a constructor.
+    *
+-   * or alternatively
++   * \endverbatim
++   */
++  EVALUE(DT_CONS_EQ),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Datatypes -- constructor equality clash**
+    *
+    * .. math::
+-   *   (c(t_1, \ldots, t_n) = d(s_1, \ldots, s_m)) = false
+-   *
+-   * where :math:`c` and :math:`d` are distinct constructors.
++   *   (t = s) = false
++   * 
++   * where :math:`t` and :math:`s` have subterms that occur in the same
++   * position (beneath constructor applications) that are distinct constructor
++   * applications.
+    *
+    * \endverbatim
+    */
+-  EVALUE(DT_CONS_EQ),
++  EVALUE(DT_CONS_EQ_CLASH),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Datatypes -- cycle**
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index f837d9e90..943d97d78 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -269,7 +269,9 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::DT_COLLAPSE_TESTER: return "dt-collapse-tester";
+     case ProofRewriteRule::DT_COLLAPSE_TESTER_SINGLETON:
+       return "dt-collapse-tester-singleton";
++    case ProofRewriteRule::MACRO_DT_CONS_EQ: return "macro-dt-cons-eq";
+     case ProofRewriteRule::DT_CONS_EQ: return "dt-cons-eq";
++    case ProofRewriteRule::DT_CONS_EQ_CLASH: return "dt-cons-eq-clash";
+     case ProofRewriteRule::DT_CYCLE: return "dt-cycle";
+     case ProofRewriteRule::DT_COLLAPSE_UPDATER: return "dt-collapse-updater";
+     case ProofRewriteRule::DT_UPDATER_ELIM: return "dt-updater-elim";
+diff --git a/src/proof/conv_proof_generator.cpp b/src/proof/conv_proof_generator.cpp
+index 2db8a60d6..6c66381e9 100644
+--- a/src/proof/conv_proof_generator.cpp
++++ b/src/proof/conv_proof_generator.cpp
+@@ -23,6 +23,7 @@
+ #include "proof/proof_checker.h"
+ #include "proof/proof_node.h"
+ #include "proof/proof_node_algorithm.h"
++#include "rewriter/rewrites.h"
+ 
+ using namespace cvc5::internal::kind;
+ 
+@@ -112,6 +113,15 @@ void TConvProofGenerator::addRewriteStep(Node t,
+   }
+ }
+ 
++void TConvProofGenerator::addTheoryRewriteStep(
++    Node t, Node s, ProofRewriteRule id, bool isPre, uint32_t tctx)
++{
++  std::vector<Node> sargs;
++  sargs.push_back(rewriter::mkRewriteRuleNode(id));
++  sargs.push_back(t.eqNode(s));
++  addRewriteStep(t, s, ProofRule::THEORY_REWRITE, {}, sargs, isPre, tctx);
++}
++
+ bool TConvProofGenerator::hasRewriteStep(Node t,
+                                          uint32_t tctx,
+                                          bool isPre) const
+diff --git a/src/proof/conv_proof_generator.h b/src/proof/conv_proof_generator.h
+index 1b7b428aa..942a8ff4e 100644
+--- a/src/proof/conv_proof_generator.h
++++ b/src/proof/conv_proof_generator.h
+@@ -172,6 +172,12 @@ class TConvProofGenerator : protected EnvObj, public ProofGenerator
+                       const std::vector<Node>& args,
+                       bool isPre = false,
+                       uint32_t tctx = 0);
++  /** Same as above, with a theory rewrite step */
++  void addTheoryRewriteStep(Node t,
++                            Node s,
++                            ProofRewriteRule id,
++                            bool isPre = false,
++                            uint32_t tctx = 0);
+   /** Has rewrite step for term t */
+   bool hasRewriteStep(Node t, uint32_t tctx = 0, bool isPre = false) const;
+   /**
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index ec63b44f2..23611a342 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -182,6 +182,12 @@ void BasicRewriteRCons::ensureProofForTheoryRewrite(
+         handledMacro = true;
+       }
+       break;
++    case ProofRewriteRule::MACRO_DT_CONS_EQ:
++      if (ensureProofMacroDtConsEq(cdp, eq))
++      {
++        handledMacro = true;
++      }
++      break;
+     case ProofRewriteRule::MACRO_ARITH_STRING_PRED_ENTAIL:
+       if (ensureProofMacroArithStringPredEntail(cdp, eq))
+       {
+@@ -274,6 +280,93 @@ bool BasicRewriteRCons::ensureProofMacroBoolNnfNorm(CDProof* cdp,
+   return true;
+ }
+ 
++bool BasicRewriteRCons::ensureProofMacroDtConsEq(CDProof* cdp, const Node& eq)
++{
++  Assert(eq.getKind() == Kind::EQUAL);
++  Trace("brc-macro") << "Expand dt cons eq for " << eq << std::endl;
++  TConvProofGenerator tcpg(d_env);
++  theory::Rewriter* rr = d_env.getRewriter();
++  if (eq[1].isConst())
++  {
++    // DT_CONS_EQ_CLASH may suffice if it is purely datatypes
++    Node curRew = rr->rewriteViaRule(ProofRewriteRule::DT_CONS_EQ_CLASH, eq[0]);
++    if (curRew == eq[1])
++    {
++      cdp->addTheoryRewriteStep(eq, ProofRewriteRule::DT_CONS_EQ_CLASH);
++      return true;
++    }
++    // otherwise, we require proving the non-datatype constants are distinct
++    // this case is not yet handled.
++    return false;
++  }
++  std::unordered_set<TNode> visited;
++  std::vector<TNode> visit;
++  TNode cur;
++  visit.push_back(eq[0]);
++  do
++  {
++    cur = visit.back();
++    visit.pop_back();
++    if (visited.find(cur) == visited.end())
++    {
++      visited.insert(cur);
++      if (cur.getKind() == Kind::EQUAL)
++      {
++        // if a reflexive component, it rewrites to true
++        if (cur[0] == cur[1])
++        {
++          Node truen = nodeManager()->mkConst(true);
++          tcpg.addRewriteStep(cur,
++                              truen,
++                              nullptr,
++                              true,
++                              TrustId::MACRO_THEORY_REWRITE_RCONS_SIMPLE);
++          continue;
++        }
++        Node curRew = rr->rewriteViaRule(ProofRewriteRule::DT_CONS_EQ, cur);
++        if (!curRew.isNull())
++        {
++          tcpg.addTheoryRewriteStep(
++              cur, curRew, ProofRewriteRule::DT_CONS_EQ, true);
++          visit.push_back(curRew);
++        }
++      }
++      else
++      {
++        // traverse AND
++        Assert(cur.getKind() == Kind::AND);
++        visit.insert(visit.end(), cur.begin(), cur.end());
++      }
++    }
++  } while (!visit.empty());
++  // get proof for rewriting, which should expand equalities
++  std::shared_ptr<ProofNode> pfn = tcpg.getProofForRewriting(eq[0]);
++  Node res = pfn->getResult();
++  Assert(res.getKind() == Kind::EQUAL);
++  // the right hand side should rewrite to the other side
++  Node rhs = res[1];
++  if (rhs == eq[1])
++  {
++    // no rewrite needed, e.g. one step
++    cdp->addProof(pfn);
++    return true;
++  }
++  // should rewrite via ACI_NORM
++  if (!expr::isACINorm(rhs, eq[1]))
++  {
++    Trace("brc-macro") << "Failed to show " << rhs << " == " << eq[1]
++                       << std::endl;
++    Assert(false) << "Failed to show " << rhs << " == " << eq[1] << std::endl;
++    return false;
++  }
++  // use ACI_NORM
++  cdp->addProof(pfn);
++  Node eqa = rhs.eqNode(eq[1]);
++  cdp->addStep(eqa, ProofRule::ACI_NORM, {}, {eqa});
++  cdp->addStep(eq, ProofRule::TRANS, {res, eqa}, {});
++  return true;
++}
++
+ bool BasicRewriteRCons::ensureProofMacroArithStringPredEntail(CDProof* cdp,
+                                                               const Node& eq)
+ {
+diff --git a/src/rewriter/basic_rewrite_rcons.h b/src/rewriter/basic_rewrite_rcons.h
+index 7ff561a0b..67ab914dc 100644
+--- a/src/rewriter/basic_rewrite_rcons.h
++++ b/src/rewriter/basic_rewrite_rcons.h
+@@ -140,6 +140,15 @@ class BasicRewriteRCons : protected EnvObj
+    * @return true if added a closed proof of eq to cdp.
+    */
+   bool ensureProofMacroBoolNnfNorm(CDProof* cdp, const Node& eq);
++  /**
++   * Elaborate a rewrite eq that was proven by
++   * ProofRewriteRule::MACRO_DT_CONS_EQ.
++   *
++   * @param cdp The proof to add to.
++   * @param eq The rewrite proven by ProofRewriteRule::MACRO_DT_CONS_EQ.
++   * @return true if added a closed proof of eq to cdp.
++   */
++  bool ensureProofMacroDtConsEq(CDProof* cdp, const Node& eq);
+   /**
+    * Elaborate a rewrite eq that was proven by
+    * ProofRewriteRule::MACRO_ARITH_STRING_PRED_ENTAIL.
+diff --git a/src/theory/datatypes/datatypes_rewriter.cpp b/src/theory/datatypes/datatypes_rewriter.cpp
+index d506b6377..b57b00912 100644
+--- a/src/theory/datatypes/datatypes_rewriter.cpp
++++ b/src/theory/datatypes/datatypes_rewriter.cpp
+@@ -49,7 +49,9 @@ DatatypesRewriter::DatatypesRewriter(NodeManager* nm,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::DT_COLLAPSE_TESTER_SINGLETON,
+                            TheoryRewriteCtx::PRE_DSL);
+-  registerProofRewriteRule(ProofRewriteRule::DT_CONS_EQ,
++  // DT_CONS_EQ and DT_CONS_EQ_CLASH are part of the reconstruction of
++  // MACRO_DT_CONS_EQ.
++  registerProofRewriteRule(ProofRewriteRule::MACRO_DT_CONS_EQ,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::DT_COLLAPSE_UPDATER,
+                            TheoryRewriteCtx::PRE_DSL);
+@@ -126,7 +128,7 @@ Node DatatypesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
+-    case ProofRewriteRule::DT_CONS_EQ:
++    case ProofRewriteRule::MACRO_DT_CONS_EQ:
+     {
+       if (n.getKind() == Kind::EQUAL)
+       {
+@@ -136,10 +138,14 @@ Node DatatypesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+         {
+           nn = nodeManager()->mkConst(false);
+         }
+-        else
++        else if (!rew.empty())
+         {
+           nn = nodeManager()->mkAnd(rew);
+         }
++        else
++        {
++          return Node::null();
++        }
+         // In the "else" case above will n if this rewrite does not apply. We
+         // do not return the reflexive equality in this case.
+         if (nn != n)
+@@ -149,6 +155,42 @@ Node DatatypesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
++    case ProofRewriteRule::DT_CONS_EQ:
++    {
++      if (n.getKind() != Kind::EQUAL
++          || n[0].getKind() != Kind::APPLY_CONSTRUCTOR
++          || n[1].getKind() != Kind::APPLY_CONSTRUCTOR)
++      {
++        return Node::null();
++      }
++      if (n[0].getOperator() == n[1].getOperator())
++      {
++        Assert(n[0].getNumChildren() == n[1].getNumChildren());
++        std::vector<Node> children;
++        for (size_t i = 0, size = n[0].getNumChildren(); i < size; i++)
++        {
++          children.push_back(n[0][i].eqNode(n[1][i]));
++        }
++        return nodeManager()->mkAnd(children);
++      }
++    }
++    break;
++    case ProofRewriteRule::DT_CONS_EQ_CLASH:
++    {
++      if (n.getKind() != Kind::EQUAL
++          || n[0].getKind() != Kind::APPLY_CONSTRUCTOR
++          || n[1].getKind() != Kind::APPLY_CONSTRUCTOR)
++      {
++        return Node::null();
++      }
++      // do not look for constant clashing equality between non-datatypes
++      std::vector<Node> rew;
++      if (utils::checkClash(n[0], n[1], rew, false))
++      {
++        return nodeManager()->mkConst(false);
++      }
++    }
++    break;
+     case ProofRewriteRule::DT_UPDATER_ELIM:
+     {
+       if (n.getKind() == Kind::APPLY_UPDATER)
+@@ -379,10 +421,6 @@ RewriteResponse DatatypesRewriter::postRewrite(TNode in)
+       Trace("datatypes-rewrite")
+           << "Rewrite clashing equality " << in << " to false" << std::endl;
+       return RewriteResponse(REWRITE_DONE, nm->mkConst(false));
+-      //}else if( rew.size()==1 && rew[0]!=in ){
+-      //  Trace("datatypes-rewrite") << "Rewrite equality " << in << " to " <<
+-      //  rew[0] << std::endl;
+-      //  return RewriteResponse(REWRITE_AGAIN_FULL, rew[0] );
+     }
+     else if (in[1] < in[0])
+     {
+diff --git a/src/theory/datatypes/theory_datatypes.cpp b/src/theory/datatypes/theory_datatypes.cpp
+index 1b1f50e11..edbab9eef 100644
+--- a/src/theory/datatypes/theory_datatypes.cpp
++++ b/src/theory/datatypes/theory_datatypes.cpp
+@@ -392,7 +392,7 @@ TrustNode TheoryDatatypes::ppStaticRewrite(TNode in)
+                      << endl;
+   if (in.getKind() == Kind::EQUAL)
+   {
+-    Node nn = d_rewriter.rewriteViaRule(ProofRewriteRule::DT_CONS_EQ, in);
++    Node nn = d_rewriter.rewriteViaRule(ProofRewriteRule::MACRO_DT_CONS_EQ, in);
+     if (!nn.isNull() && in != nn)
+     {
+       return TrustNode::mkTrustRewrite(in, nn, nullptr);
+diff --git a/src/theory/datatypes/theory_datatypes_utils.cpp b/src/theory/datatypes/theory_datatypes_utils.cpp
+index 9f953fc38..be7b19094 100644
+--- a/src/theory/datatypes/theory_datatypes_utils.cpp
++++ b/src/theory/datatypes/theory_datatypes_utils.cpp
+@@ -161,7 +161,7 @@ bool isNullaryConstructor(const DTypeConstructor& c)
+   return true;
+ }
+ 
+-bool checkClash(Node n1, Node n2, std::vector<Node>& rew)
++bool checkClash(Node n1, Node n2, std::vector<Node>& rew, bool checkNdtConst)
+ {
+   Trace("datatypes-rewrite-debug")
+       << "Check clash : " << n1 << " " << n2 << std::endl;
+@@ -178,7 +178,7 @@ bool checkClash(Node n1, Node n2, std::vector<Node>& rew)
+     Assert(n1.getNumChildren() == n2.getNumChildren());
+     for (unsigned i = 0, size = n1.getNumChildren(); i < size; i++)
+     {
+-      if (checkClash(n1[i], n2[i], rew))
++      if (checkClash(n1[i], n2[i], rew, checkNdtConst))
+       {
+         return true;
+       }
+@@ -186,7 +186,8 @@ bool checkClash(Node n1, Node n2, std::vector<Node>& rew)
+   }
+   else if (n1 != n2)
+   {
+-    if (n1.isConst() && n2.isConst())
++    // if checking equality between non-datatypes
++    if (checkNdtConst && n1.isConst() && n2.isConst())
+     {
+       Trace("datatypes-rewrite-debug")
+           << "Clash constants : " << n1 << " " << n2 << std::endl;
+diff --git a/src/theory/datatypes/theory_datatypes_utils.h b/src/theory/datatypes/theory_datatypes_utils.h
+index b8450af4d..94d7aa88d 100644
+--- a/src/theory/datatypes/theory_datatypes_utils.h
++++ b/src/theory/datatypes/theory_datatypes_utils.h
+@@ -109,8 +109,17 @@ bool isNullaryConstructor(const DTypeConstructor& c);
+  *   C( x, y ) and C( D( x ), y )
+  *   C( D( x ), y ) and C( x, E( z ) )
+  *   C( x, y ) and z
++ *
++ * @param n1 The first term.
++ * @param n2 The second term.
++ * @param rew The set of entailed equalities.
++ * @param checkNdtConst If true, we consider constants (of non-datatype type) to
++ * be a conflict.
+  */
+-bool checkClash(Node n1, Node n2, std::vector<Node>& rew);
++bool checkClash(Node n1,
++                Node n2,
++                std::vector<Node>& rew,
++                bool checkNdtConst = true);
+ 
+ }  // namespace utils
+ }  // namespace datatypes
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 2c51cb769..71ae0c13d 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -695,6 +695,7 @@ set(regress_0_tests
+   regress0/datatypes/datatype4.cvc.smt2
+   regress0/datatypes/dd.pair-real-bool-const-conf.smt2
+   regress0/datatypes/dt-2.6.smt2
++  regress0/datatypes/dt-cons-eq-simple.smt2
+   regress0/datatypes/dt-different-params.smt2
+   regress0/datatypes/dt-match-pat-param-2.6.smt2
+   regress0/datatypes/dt-param-2.6-print.smt2
+@@ -1358,6 +1359,7 @@ set(regress_0_tests
+   regress0/proofs/open-pf-if-unordered-iff.smt2
+   regress0/proofs/open-pf-rederivation.smt2
+   regress0/proofs/other-optResRecons-corner-case.smt2
++  regress0/proofs/pfcheck-ufdt-distro.smt2
+   regress0/proofs/project-issue317-inc-sat-conflictlit.smt2
+   regress0/proofs/project-issue330-eqproof.smt2
+   regress0/proofs/proj-issue326-nl-bounds-check.smt2
+diff --git a/test/regress/cli/regress0/datatypes/dt-cons-eq-simple.smt2 b/test/regress/cli/regress0/datatypes/dt-cons-eq-simple.smt2
+new file mode 100644
+index 000000000..ef1f4e9ab
+--- /dev/null
++++ b/test/regress/cli/regress0/datatypes/dt-cons-eq-simple.smt2
+@@ -0,0 +1,11 @@
++; EXPECT: unsat
++(set-logic ALL)
++
++(declare-datatype List ((cons (head Int) (tail List)) (nil)))
++
++(declare-fun x () Int)
++(declare-fun y () Int)
++
++(assert (not (= x y)))
++(assert (= (cons x nil) (cons y nil)))
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/pfcheck-ufdt-distro.smt2 b/test/regress/cli/regress0/proofs/pfcheck-ufdt-distro.smt2
+new file mode 100644
+index 000000000..71f49b602
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/pfcheck-ufdt-distro.smt2
+@@ -0,0 +1,19 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-sort N 0)
++(declare-sort D 0)
++(declare-sort N_ 0)
++(declare-sort _l 0)
++(declare-sort d 0)
++(declare-datatypes ((T 0) (l 0) (T_ 0) (i 0) (_d 0) (N_l 0)) (((r (r D))) ((i) (o ($ N) (l2 l))) ((ni)) ((l3)) ((ni)) ((ni))))
++(declare-fun f () N_)
++(declare-fun n () N)
++(declare-fun c (D) d)
++(declare-fun p (N_) _l)
++(declare-fun m (T d) Bool)
++(declare-fun u (_l l) Bool)
++(declare-fun u (N_ N) D)
++(assert (not (m (r (u f n)) (c (u f n)))))
++(assert (u (p f) (o n (o n i))))
++(assert (forall ((?v l)) (= (u (p f) ?v) (or (exists ((? N) (v N)) (and (= ?v (o v (o ? i))) (m (r (u f ?)) (c (u f v)))))))))
++(check-sat)
+-- 
+2.47.1
+

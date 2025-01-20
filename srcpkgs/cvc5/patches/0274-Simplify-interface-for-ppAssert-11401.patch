@@ -1,0 +1,746 @@
+From 0eb0668694cb0f08663bc055ebe7aab349e23e7e Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 7 Jan 2025 11:57:47 -0600
+Subject: [PATCH 274/312] Simplify interface for ppAssert (#11401)
+
+We never use `PP_ASSERT_STATUS_CONFLICT` currently, and moreover don't
+have proof support in the nonclausal simplifier if this ever were to be
+used, thus this PR simplifies the interface to return a bool (solved vs.
+unsolved).
+---
+ src/preprocessing/passes/miplib_trick.cpp     |   8 +-
+ src/preprocessing/passes/non_clausal_simp.cpp | 123 ++++++++----------
+ src/prop/zero_level_learner.cpp               |   7 +-
+ src/theory/arith/linear/linear_solver.cpp     |   4 +-
+ src/theory/arith/linear/linear_solver.h       |   3 +-
+ .../arith/linear/theory_arith_private.cpp     |   8 +-
+ .../arith/linear/theory_arith_private.h       |   3 +-
+ src/theory/arith/theory_arith.cpp             |   4 +-
+ src/theory/arith/theory_arith.h               |   3 +-
+ src/theory/arrays/theory_arrays.cpp           |  10 +-
+ src/theory/arrays/theory_arrays.h             |   3 +-
+ src/theory/booleans/theory_bool.cpp           |  21 +--
+ src/theory/booleans/theory_bool.h             |   3 +-
+ src/theory/bv/theory_bv.cpp                   |  11 +-
+ src/theory/bv/theory_bv.h                     |   3 +-
+ src/theory/quantifiers/theory_quantifiers.cpp |   9 +-
+ src/theory/quantifiers/theory_quantifiers.h   |   3 +-
+ src/theory/sets/theory_sets.cpp               |   9 +-
+ src/theory/sets/theory_sets.h                 |   3 +-
+ src/theory/theory.cpp                         |   9 +-
+ src/theory/theory.h                           |  32 +----
+ src/theory/theory_engine.cpp                  |   7 +-
+ src/theory/theory_engine.h                    |   8 +-
+ 23 files changed, 127 insertions(+), 167 deletions(-)
+
+diff --git a/src/preprocessing/passes/miplib_trick.cpp b/src/preprocessing/passes/miplib_trick.cpp
+index 47f78f8ee..2c6114605 100644
+--- a/src/preprocessing/passes/miplib_trick.cpp
++++ b/src/preprocessing/passes/miplib_trick.cpp
+@@ -536,15 +536,13 @@ PreprocessingPassResult MipLibTrick::applyInternal(
+                   n, false, nullptr, TrustId::PREPROCESS_MIPLIB_TRICK_LEMMA);
+               TrustSubstitutionMap tnullMap(d_env, &fakeContext);
+               CVC5_UNUSED SubstitutionMap& nullMap = tnullMap.get();
+-              Theory::PPAssertStatus status CVC5_UNUSED;  // just for assertions
++              bool status CVC5_UNUSED;  // just for assertions
+               status = te->solve(tgeq, tnullMap);
+-              Assert(status == Theory::PP_ASSERT_STATUS_UNSOLVED)
+-                  << "unexpected solution from arith's ppAssert()";
++              Assert(!status) << "unexpected solution from arith's ppAssert()";
+               Assert(nullMap.empty())
+                   << "unexpected substitution from arith's ppAssert()";
+               status = te->solve(tleq, tnullMap);
+-              Assert(status == Theory::PP_ASSERT_STATUS_UNSOLVED)
+-                  << "unexpected solution from arith's ppAssert()";
++              Assert(!status) << "unexpected solution from arith's ppAssert()";
+               Assert(nullMap.empty())
+                   << "unexpected substitution from arith's ppAssert()";
+               newVars.push_back(newVar);
+diff --git a/src/preprocessing/passes/non_clausal_simp.cpp b/src/preprocessing/passes/non_clausal_simp.cpp
+index ef0295d2e..b28ea978d 100644
+--- a/src/preprocessing/passes/non_clausal_simp.cpp
++++ b/src/preprocessing/passes/non_clausal_simp.cpp
+@@ -178,84 +178,69 @@ PreprocessingPassResult NonClausalSimp::applyInternal(
+ 
+     TrustNode tlearnedLiteral =
+         TrustNode::mkTrustLemma(learnedLiteral, d_llpg.get());
+-    Theory::PPAssertStatus solveStatus =
+-        d_preprocContext->getTheoryEngine()->solve(tlearnedLiteral,
+-                                                   *newSubstitutions.get());
++    bool solveStatus = d_preprocContext->getTheoryEngine()->solve(
++        tlearnedLiteral, *newSubstitutions.get());
+ 
+-    switch (solveStatus)
++    if (solveStatus)
+     {
+-      case Theory::PP_ASSERT_STATUS_SOLVED:
+-      {
+-        // The literal should rewrite to true
+-        Trace("non-clausal-simplify")
+-            << "solved " << learnedLiteral << std::endl;
+-        Assert(rewrite(nss.apply(learnedLiteral)).isConst());
+-        // else fall through
+-        break;
+-      }
+-      case Theory::PP_ASSERT_STATUS_CONFLICT:
++      // The literal should rewrite to true
++      Trace("non-clausal-simplify") << "solved " << learnedLiteral << std::endl;
++      Assert(rewrite(nss.apply(learnedLiteral)).isConst());
++    }
++    else
++    {
++      TNode t;
++      TNode c;
++      if (learnedLiteral.getKind() == Kind::EQUAL
++          && (learnedLiteral[0].isConst() || learnedLiteral[1].isConst()))
+       {
+-        // If in conflict, we return false
+-        Trace("non-clausal-simplify")
+-            << "conflict while solving " << learnedLiteral << std::endl;
+-        Node n = nm->mkConst<bool>(false);
+-        assertionsToPreprocess->push_back(n);
+-        return PreprocessingPassResult::CONFLICT;
+-      }
+-      default:
+-        TNode t;
+-        TNode c;
+-        if (learnedLiteral.getKind() == Kind::EQUAL
+-            && (learnedLiteral[0].isConst() || learnedLiteral[1].isConst()))
+-        {
+-          // constant propagation
+-          if (learnedLiteral[0].isConst())
+-          {
+-            t = learnedLiteral[1];
+-            c = learnedLiteral[0];
+-          }
+-          else
+-          {
+-            t = learnedLiteral[0];
+-            c = learnedLiteral[1];
+-          }
+-        }
+-        else if (options().smt.simplificationBoolConstProp)
++        // constant propagation
++        if (learnedLiteral[0].isConst())
+         {
+-          // From non-equalities, learn the Boolean equality. Notice that
+-          // the equality case above is strictly more powerful that this, since
+-          // e.g. (= t c) * { t -> c } also simplifies to true.
+-          bool pol = learnedLiteral.getKind() != Kind::NOT;
+-          c = nm->mkConst(pol);
+-          t = pol ? learnedLiteral : learnedLiteral[0];
++          t = learnedLiteral[1];
++          c = learnedLiteral[0];
+         }
+-        if (!t.isNull())
++        else
+         {
+-          Assert(!t.isConst());
+-          Assert(rewrite(cps.apply(t)) == t);
+-          Assert(top_level_substs.apply(t) == t);
+-          Assert(nss.apply(t) == t);
+-          // also add to learned literal
+-          ProofGenerator* cpg = constantPropagations->addSubstitutionSolved(
+-              t, c, tlearnedLiteral);
+-          // We need to justify (= t c) as a literal, since it is reasserted
+-          // to the assertion pipeline below. We do this with the proof
+-          // generator returned by the above call.
+-          if (isProofEnabled())
+-          {
+-            d_llpg->notifyNewAssert(t.eqNode(c), cpg);
+-          }
++          t = learnedLiteral[0];
++          c = learnedLiteral[1];
+         }
+-        else
++      }
++      else if (options().smt.simplificationBoolConstProp)
++      {
++        // From non-equalities, learn the Boolean equality. Notice that
++        // the equality case above is strictly more powerful that this, since
++        // e.g. (= t c) * { t -> c } also simplifies to true.
++        bool pol = learnedLiteral.getKind() != Kind::NOT;
++        c = nm->mkConst(pol);
++        t = pol ? learnedLiteral : learnedLiteral[0];
++      }
++      if (!t.isNull())
++      {
++        Assert(!t.isConst());
++        Assert(rewrite(cps.apply(t)) == t);
++        Assert(top_level_substs.apply(t) == t);
++        Assert(nss.apply(t) == t);
++        // also add to learned literal
++        ProofGenerator* cpg =
++            constantPropagations->addSubstitutionSolved(t, c, tlearnedLiteral);
++        // We need to justify (= t c) as a literal, since it is reasserted
++        // to the assertion pipeline below. We do this with the proof
++        // generator returned by the above call.
++        if (isProofEnabled())
+         {
+-          // Keep the learned literal
+-          learned_literals[j++] = learned_literals[i];
++          d_llpg->notifyNewAssert(t.eqNode(c), cpg);
+         }
+-        // Its a literal that could not be processed as a substitution or
+-        // conflict. In this case, we notify the context of the learned
+-        // literal, which will process it with the learned literal manager.
+-        d_preprocContext->notifyLearnedLiteral(learnedLiteral);
+-        break;
++      }
++      else
++      {
++        // Keep the learned literal
++        learned_literals[j++] = learned_literals[i];
++      }
++      // Its a literal that could not be processed as a substitution or
++      // conflict. In this case, we notify the context of the learned
++      // literal, which will process it with the learned literal manager.
++      d_preprocContext->notifyLearnedLiteral(learnedLiteral);
+     }
+   }
+ 
+diff --git a/src/prop/zero_level_learner.cpp b/src/prop/zero_level_learner.cpp
+index 02eaf5718..f381a511c 100644
+--- a/src/prop/zero_level_learner.cpp
++++ b/src/prop/zero_level_learner.cpp
+@@ -246,7 +246,8 @@ modes::LearnedLitType ZeroLevelLearner::computeLearnedLiteralType(
+   Node lit = d_tsmap.apply(input, d_env.getRewriter());
+   modes::LearnedLitType ltype =
+       internal ? modes::LearnedLitType::INTERNAL : modes::LearnedLitType::INPUT;
+-  if (internal || d_trackSimplifications)
++  // we don't try to solve for literals that simplify to constants
++  if ((internal || d_trackSimplifications) && !lit.isConst())
+   {
+     Subs ss;
+     bool processed = false;
+@@ -431,8 +432,8 @@ bool ZeroLevelLearner::getSolved(const Node& lit, Subs& subs)
+   context::Context dummyContext;
+   theory::TrustSubstitutionMap subsOut(d_env, &dummyContext);
+   TrustNode tlit = TrustNode::mkTrustLemma(lit);
+-  theory::Theory::PPAssertStatus status = d_theoryEngine->solve(tlit, subsOut);
+-  if (status == theory::Theory::PP_ASSERT_STATUS_SOLVED)
++  bool status = d_theoryEngine->solve(tlit, subsOut);
++  if (status)
+   {
+     Trace("level-zero-debug") << lit << " is solvable" << std::endl;
+     // extract the substitution
+diff --git a/src/theory/arith/linear/linear_solver.cpp b/src/theory/arith/linear/linear_solver.cpp
+index 0db286b47..13c685733 100644
+--- a/src/theory/arith/linear/linear_solver.cpp
++++ b/src/theory/arith/linear/linear_solver.cpp
+@@ -50,8 +50,8 @@ void LinearSolver::presolve() { d_internal.presolve(); }
+ 
+ void LinearSolver::notifyRestart() { d_internal.notifyRestart(); }
+ 
+-Theory::PPAssertStatus LinearSolver::ppAssert(
+-    TrustNode tin, TrustSubstitutionMap& outSubstitutions)
++bool LinearSolver::ppAssert(TrustNode tin,
++                            TrustSubstitutionMap& outSubstitutions)
+ {
+   return d_internal.ppAssert(tin, outSubstitutions);
+ }
+diff --git a/src/theory/arith/linear/linear_solver.h b/src/theory/arith/linear/linear_solver.h
+index b0dcde3d9..6e842f292 100644
+--- a/src/theory/arith/linear/linear_solver.h
++++ b/src/theory/arith/linear/linear_solver.h
+@@ -73,8 +73,7 @@ class LinearSolver : protected EnvObj
+   /** Notify restart */
+   void notifyRestart();
+   /** Preprocess assert */
+-  Theory::PPAssertStatus ppAssert(TrustNode tin,
+-                                  TrustSubstitutionMap& outSubstitutions);
++  bool ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions);
+   /** Preprocess static learn */
+   void ppStaticLearn(TNode in, std::vector<TrustNode>& learned);
+ 
+diff --git a/src/theory/arith/linear/theory_arith_private.cpp b/src/theory/arith/linear/theory_arith_private.cpp
+index ef59e9da0..6a94e1e28 100644
+--- a/src/theory/arith/linear/theory_arith_private.cpp
++++ b/src/theory/arith/linear/theory_arith_private.cpp
+@@ -945,8 +945,8 @@ Node TheoryArithPrivate::getCandidateModelValue(TNode term)
+   }
+ }
+ 
+-Theory::PPAssertStatus TheoryArithPrivate::ppAssert(
+-    TrustNode tin, TrustSubstitutionMap& outSubstitutions)
++bool TheoryArithPrivate::ppAssert(TrustNode tin,
++                                  TrustSubstitutionMap& outSubstitutions)
+ {
+   TimerStat::CodeTimer codeTimer(d_statistics.d_simplifyTimer);
+   TNode in = tin.getNode();
+@@ -1005,7 +1005,7 @@ Theory::PPAssertStatus TheoryArithPrivate::ppAssert(
+                           << minVar << " |-> " << elim << endl;
+         Assert(elim.getType() == minVar.getType());
+         outSubstitutions.addSubstitutionSolved(minVar, elim, tin);
+-        return Theory::PP_ASSERT_STATUS_SOLVED;
++        return true;
+       }
+       else
+       {
+@@ -1032,7 +1032,7 @@ Theory::PPAssertStatus TheoryArithPrivate::ppAssert(
+       break;
+   }
+ 
+-  return Theory::PP_ASSERT_STATUS_UNSOLVED;
++  return false;
+ }
+ 
+ void TheoryArithPrivate::ppStaticLearn(TNode n, std::vector<TrustNode>& learned)
+diff --git a/src/theory/arith/linear/theory_arith_private.h b/src/theory/arith/linear/theory_arith_private.h
+index 0e3310f12..d34bc7e50 100644
+--- a/src/theory/arith/linear/theory_arith_private.h
++++ b/src/theory/arith/linear/theory_arith_private.h
+@@ -471,8 +471,7 @@ private:
+                           std::map<Node, Node>& arithModelIllTyped);
+   void presolve();
+   void notifyRestart();
+-  Theory::PPAssertStatus ppAssert(TrustNode tin,
+-                                  TrustSubstitutionMap& outSubstitutions);
++  bool ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions);
+   void ppStaticLearn(TNode in, std::vector<TrustNode>& learned);
+ 
+   std::string identify() const { return std::string("TheoryArith"); }
+diff --git a/src/theory/arith/theory_arith.cpp b/src/theory/arith/theory_arith.cpp
+index e9aa2eee1..de20c6d63 100644
+--- a/src/theory/arith/theory_arith.cpp
++++ b/src/theory/arith/theory_arith.cpp
+@@ -212,8 +212,8 @@ TrustNode TheoryArith::ppStaticRewrite(TNode atom)
+   return TrustNode::null();
+ }
+ 
+-Theory::PPAssertStatus TheoryArith::ppAssert(
+-    TrustNode tin, TrustSubstitutionMap& outSubstitutions)
++bool TheoryArith::ppAssert(TrustNode tin,
++                           TrustSubstitutionMap& outSubstitutions)
+ {
+   return d_internal.ppAssert(tin, outSubstitutions);
+ }
+diff --git a/src/theory/arith/theory_arith.h b/src/theory/arith/theory_arith.h
+index afbdda9a5..e76410a6e 100644
+--- a/src/theory/arith/theory_arith.h
++++ b/src/theory/arith/theory_arith.h
+@@ -94,8 +94,7 @@ class TheoryArith : public Theory {
+ 
+   void presolve() override;
+   void notifyRestart() override;
+-  PPAssertStatus ppAssert(TrustNode tin,
+-                          TrustSubstitutionMap& outSubstitutions) override;
++  bool ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions) override;
+   /**
+    * Preprocess rewrite terms, return the trust node encapsulating the
+    * preprocessed form of n, and the proof generator that can provide the
+diff --git a/src/theory/arrays/theory_arrays.cpp b/src/theory/arrays/theory_arrays.cpp
+index 31bce8dda..1ecd29d70 100644
+--- a/src/theory/arrays/theory_arrays.cpp
++++ b/src/theory/arrays/theory_arrays.cpp
+@@ -363,8 +363,8 @@ TrustNode TheoryArrays::ppRewrite(TNode term, std::vector<SkolemLemma>& lems)
+   return TrustNode::null();
+ }
+ 
+-Theory::PPAssertStatus TheoryArrays::ppAssert(
+-    TrustNode tin, TrustSubstitutionMap& outSubstitutions)
++bool TheoryArrays::ppAssert(TrustNode tin,
++                            TrustSubstitutionMap& outSubstitutions)
+ {
+   TNode in = tin.getNode();
+   switch(in.getKind()) {
+@@ -375,12 +375,12 @@ Theory::PPAssertStatus TheoryArrays::ppAssert(
+       if (in[0].isVar() && d_valuation.isLegalElimination(in[0], in[1]))
+       {
+         outSubstitutions.addSubstitutionSolved(in[0], in[1], tin);
+-        return PP_ASSERT_STATUS_SOLVED;
++        return true;
+       }
+       if (in[1].isVar() && d_valuation.isLegalElimination(in[1], in[0]))
+       {
+         outSubstitutions.addSubstitutionSolved(in[1], in[0], tin);
+-        return PP_ASSERT_STATUS_SOLVED;
++        return true;
+       }
+       break;
+     }
+@@ -398,7 +398,7 @@ Theory::PPAssertStatus TheoryArrays::ppAssert(
+     default:
+       break;
+   }
+-  return PP_ASSERT_STATUS_UNSOLVED;
++  return false;
+ }
+ 
+ 
+diff --git a/src/theory/arrays/theory_arrays.h b/src/theory/arrays/theory_arrays.h
+index f11e7413d..1e81a1838 100644
+--- a/src/theory/arrays/theory_arrays.h
++++ b/src/theory/arrays/theory_arrays.h
+@@ -190,8 +190,7 @@ class TheoryArrays : public Theory {
+   InferenceManager d_im;
+ 
+  public:
+-  PPAssertStatus ppAssert(TrustNode tin,
+-                          TrustSubstitutionMap& outSubstitutions) override;
++  bool ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions) override;
+   TrustNode ppRewrite(TNode atom, std::vector<SkolemLemma>& lems) override;
+ 
+   /////////////////////////////////////////////////////////////////////////////
+diff --git a/src/theory/booleans/theory_bool.cpp b/src/theory/booleans/theory_bool.cpp
+index be7022996..9e787d3a6 100644
+--- a/src/theory/booleans/theory_bool.cpp
++++ b/src/theory/booleans/theory_bool.cpp
+@@ -40,15 +40,18 @@ TheoryBool::TheoryBool(Env& env, OutputChannel& out, Valuation valuation)
+ {
+ }
+ 
+-Theory::PPAssertStatus TheoryBool::ppAssert(
+-    TrustNode tin, TrustSubstitutionMap& outSubstitutions)
++bool TheoryBool::ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions)
+ {
+   Assert(tin.getKind() == TrustNodeKind::LEMMA);
+   TNode in = tin.getNode();
+-  if (in.getKind() == Kind::CONST_BOOLEAN && !in.getConst<bool>())
++  if (in.getKind() == Kind::CONST_BOOLEAN)
+   {
+-    // If we get a false literal, we're in conflict
+-    return PP_ASSERT_STATUS_CONFLICT;
++    if (in.getConst<bool>())
++    {
++      return true;
++    }
++    // should not be a false literal, which should be caught by preprocessing
++    Assert(in.getConst<bool>());
+   }
+ 
+   // Add the substitution from the variable to its value
+@@ -58,7 +61,7 @@ Theory::PPAssertStatus TheoryBool::ppAssert(
+     {
+       outSubstitutions.addSubstitutionSolved(
+           in[0], nodeManager()->mkConst<bool>(false), tin);
+-      return PP_ASSERT_STATUS_SOLVED;
++      return true;
+     }
+     else if (in[0].getKind() == Kind::EQUAL && in[0][0].getType().isBoolean())
+     {
+@@ -66,12 +69,12 @@ Theory::PPAssertStatus TheoryBool::ppAssert(
+       if (eq[0].isVar() && d_valuation.isLegalElimination(eq[0], eq[1]))
+       {
+         outSubstitutions.addSubstitutionSolved(eq[0], eq[1].notNode(), tin);
+-        return PP_ASSERT_STATUS_SOLVED;
++        return true;
+       }
+       else if (eq[1].isVar() && d_valuation.isLegalElimination(eq[1], eq[0]))
+       {
+         outSubstitutions.addSubstitutionSolved(eq[1], eq[0].notNode(), tin);
+-        return PP_ASSERT_STATUS_SOLVED;
++        return true;
+       }
+     }
+   }
+@@ -79,7 +82,7 @@ Theory::PPAssertStatus TheoryBool::ppAssert(
+   {
+     outSubstitutions.addSubstitutionSolved(
+         in, nodeManager()->mkConst<bool>(true), tin);
+-    return PP_ASSERT_STATUS_SOLVED;
++    return true;
+   }
+ 
+   // the positive Boolean equality case is handled in the default way
+diff --git a/src/theory/booleans/theory_bool.h b/src/theory/booleans/theory_bool.h
+index 6ddb73aa9..2ace89aa8 100644
+--- a/src/theory/booleans/theory_bool.h
++++ b/src/theory/booleans/theory_bool.h
+@@ -36,8 +36,7 @@ class TheoryBool : public Theory {
+   /** get the proof checker of this theory */
+   ProofRuleChecker* getProofChecker() override;
+ 
+-  PPAssertStatus ppAssert(TrustNode tin,
+-                          TrustSubstitutionMap& outSubstitutions) override;
++  bool ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions) override;
+ 
+   std::string identify() const override;
+ 
+diff --git a/src/theory/bv/theory_bv.cpp b/src/theory/bv/theory_bv.cpp
+index bf7afbe20..0aa4fb85d 100644
+--- a/src/theory/bv/theory_bv.cpp
++++ b/src/theory/bv/theory_bv.cpp
+@@ -180,14 +180,13 @@ bool TheoryBV::collectModelValues(TheoryModel* m, const std::set<Node>& termSet)
+ 
+ void TheoryBV::propagate(Effort e) { return d_internal->propagate(e); }
+ 
+-Theory::PPAssertStatus TheoryBV::ppAssert(
+-    TrustNode tin, TrustSubstitutionMap& outSubstitutions)
++bool TheoryBV::ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions)
+ {
+   Kind k = tin.getNode().getKind();
+   if (k == Kind::EQUAL)
+   {
+-    auto status = Theory::ppAssert(tin, outSubstitutions);
+-    if (status != Theory::PP_ASSERT_STATUS_UNSOLVED)
++    bool status = Theory::ppAssert(tin, outSubstitutions);
++    if (status)
+     {
+       return status;
+     }
+@@ -242,12 +241,12 @@ Theory::PPAssertStatus TheoryBV::ppAssert(
+         if (d_valuation.isLegalElimination(extract[0], concat))
+         {
+           outSubstitutions.addSubstitutionSolved(extract[0], concat, tin);
+-          return Theory::PP_ASSERT_STATUS_SOLVED;
++          return true;
+         }
+       }
+     }
+   }
+-  return Theory::PP_ASSERT_STATUS_UNSOLVED;
++  return false;
+ }
+ 
+ TrustNode TheoryBV::ppRewrite(TNode t, std::vector<SkolemLemma>& lems)
+diff --git a/src/theory/bv/theory_bv.h b/src/theory/bv/theory_bv.h
+index 6ce46e597..62aa10762 100644
+--- a/src/theory/bv/theory_bv.h
++++ b/src/theory/bv/theory_bv.h
+@@ -85,8 +85,7 @@ class TheoryBV : public Theory
+ 
+   std::string identify() const override { return std::string("TheoryBV"); }
+ 
+-  PPAssertStatus ppAssert(TrustNode in,
+-                          TrustSubstitutionMap& outSubstitutions) override;
++  bool ppAssert(TrustNode in, TrustSubstitutionMap& outSubstitutions) override;
+ 
+   TrustNode ppRewrite(TNode t, std::vector<SkolemLemma>& lems) override;
+ 
+diff --git a/src/theory/quantifiers/theory_quantifiers.cpp b/src/theory/quantifiers/theory_quantifiers.cpp
+index db6329512..497ad413d 100644
+--- a/src/theory/quantifiers/theory_quantifiers.cpp
++++ b/src/theory/quantifiers/theory_quantifiers.cpp
+@@ -107,8 +107,8 @@ void TheoryQuantifiers::presolve() {
+   }
+ }
+ 
+-Theory::PPAssertStatus TheoryQuantifiers::ppAssert(
+-    TrustNode tin, TrustSubstitutionMap& outSubstitutions)
++bool TheoryQuantifiers::ppAssert(TrustNode tin,
++                                 TrustSubstitutionMap& outSubstitutions)
+ {
+   if (d_qmacros != nullptr)
+   {
+@@ -123,12 +123,13 @@ Theory::PPAssertStatus TheoryQuantifiers::ppAssert(
+         // add substitution solved, which ensures we track that eq depends on
+         // tin, which can impact unsat cores.
+         outSubstitutions.addSubstitutionSolved(eq[0], eq[1], tin);
+-        return Theory::PP_ASSERT_STATUS_SOLVED;
++        return true;
+       }
+     }
+   }
+-  return Theory::PP_ASSERT_STATUS_UNSOLVED;
++  return false;
+ }
++
+ void TheoryQuantifiers::ppNotifyAssertions(
+     const std::vector<Node>& assertions) {
+   Trace("quantifiers-presolve")
+diff --git a/src/theory/quantifiers/theory_quantifiers.h b/src/theory/quantifiers/theory_quantifiers.h
+index bbe0779ba..52bd36c8e 100644
+--- a/src/theory/quantifiers/theory_quantifiers.h
++++ b/src/theory/quantifiers/theory_quantifiers.h
+@@ -56,8 +56,7 @@ class TheoryQuantifiers : public Theory {
+   /**
+    * Preprocess assert, which solves for quantifier macros when enabled.
+    */
+-  PPAssertStatus ppAssert(TrustNode tin,
+-                          TrustSubstitutionMap& outSubstitutions) override;
++  bool ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions) override;
+   void ppNotifyAssertions(const std::vector<Node>& assertions) override;
+   //--------------------------------- standard check
+   /** Post-check, called after the fact queue of the theory is processed. */
+diff --git a/src/theory/sets/theory_sets.cpp b/src/theory/sets/theory_sets.cpp
+index 34e5ddc8c..b436113ea 100644
+--- a/src/theory/sets/theory_sets.cpp
++++ b/src/theory/sets/theory_sets.cpp
+@@ -192,12 +192,11 @@ TrustNode TheorySets::ppRewrite(TNode n, std::vector<SkolemLemma>& lems)
+   return d_internal->ppRewrite(n, lems);
+ }
+ 
+-Theory::PPAssertStatus TheorySets::ppAssert(
+-    TrustNode tin, TrustSubstitutionMap& outSubstitutions)
++bool TheorySets::ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions)
+ {
+   TNode in = tin.getNode();
+   Trace("sets-proc") << "ppAssert : " << in << std::endl;
+-  Theory::PPAssertStatus status = Theory::PP_ASSERT_STATUS_UNSOLVED;
++  bool status = false;
+ 
+   // this is based off of Theory::ppAssert
+   if (in.getKind() == Kind::EQUAL)
+@@ -211,7 +210,7 @@ Theory::PPAssertStatus TheorySets::ppAssert(
+       if (!in[0].getType().isSet() || !options().sets.setsExp)
+       {
+         outSubstitutions.addSubstitutionSolved(in[0], in[1], tin);
+-        status = Theory::PP_ASSERT_STATUS_SOLVED;
++        status = true;
+       }
+     }
+     else if (in[1].isVar() && d_valuation.isLegalElimination(in[1], in[0]))
+@@ -219,7 +218,7 @@ Theory::PPAssertStatus TheorySets::ppAssert(
+       if (!in[0].getType().isSet() || !options().sets.setsExp)
+       {
+         outSubstitutions.addSubstitutionSolved(in[1], in[0], tin);
+-        status = Theory::PP_ASSERT_STATUS_SOLVED;
++        status = true;
+       }
+     }
+   }
+diff --git a/src/theory/sets/theory_sets.h b/src/theory/sets/theory_sets.h
+index c64f13a2f..86272f442 100644
+--- a/src/theory/sets/theory_sets.h
++++ b/src/theory/sets/theory_sets.h
+@@ -81,8 +81,7 @@ class TheorySets : public Theory
+    * and is_singleton.
+    */
+   TrustNode ppRewrite(TNode n, std::vector<SkolemLemma>& lems) override;
+-  PPAssertStatus ppAssert(TrustNode tin,
+-                          TrustSubstitutionMap& outSubstitutions) override;
++  bool ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions) override;
+   void presolve() override;
+   bool isEntailed(Node n, bool pol);
+ 
+diff --git a/src/theory/theory.cpp b/src/theory/theory.cpp
+index dea89fa8d..a712509a5 100644
+--- a/src/theory/theory.cpp
++++ b/src/theory/theory.cpp
+@@ -390,8 +390,7 @@ bool Theory::collectModelValues(TheoryModel* m, const std::set<Node>& termSet)
+   return true;
+ }
+ 
+-Theory::PPAssertStatus Theory::ppAssert(TrustNode tin,
+-                                        TrustSubstitutionMap& outSubstitutions)
++bool Theory::ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions)
+ {
+   Assert(tin.getKind() == TrustNodeKind::LEMMA);
+   TNode in = tin.getNode();
+@@ -404,16 +403,16 @@ Theory::PPAssertStatus Theory::ppAssert(TrustNode tin,
+     if (in[0].isVar() && d_valuation.isLegalElimination(in[0], in[1]))
+     {
+       outSubstitutions.addSubstitutionSolved(in[0], in[1], tin);
+-      return PP_ASSERT_STATUS_SOLVED;
++      return true;
+     }
+     if (in[1].isVar() && d_valuation.isLegalElimination(in[1], in[0]))
+     {
+       outSubstitutions.addSubstitutionSolved(in[1], in[0], tin);
+-      return PP_ASSERT_STATUS_SOLVED;
++      return true;
+     }
+   }
+ 
+-  return PP_ASSERT_STATUS_UNSOLVED;
++  return false;
+ }
+ 
+ std::pair<bool, Node> Theory::entailmentCheck(TNode lit)
+diff --git a/src/theory/theory.h b/src/theory/theory.h
+index 4175225ea..322a760ab 100644
+--- a/src/theory/theory.h
++++ b/src/theory/theory.h
+@@ -589,16 +589,6 @@ class Theory : protected EnvObj
+    */
+   virtual void ppStaticLearn(TNode in, std::vector<TrustNode>& learned) {}
+ 
+-  enum PPAssertStatus
+-  {
+-    /** Atom has been solved  */
+-    PP_ASSERT_STATUS_SOLVED,
+-    /** Atom has not been solved */
+-    PP_ASSERT_STATUS_UNSOLVED,
+-    /** Atom is inconsistent */
+-    PP_ASSERT_STATUS_CONFLICT
+-  };
+-
+   /**
+    * Given a literal and its proof generator (encapsulated by trust node tin),
+    * add the solved substitutions to the map, if any. The method should return
+@@ -607,9 +597,13 @@ class Theory : protected EnvObj
+    * Note that tin has trust node kind LEMMA. Its proof generator should be
+    * taken into account when adding a substitution to outSubstitutions when
+    * proofs are enabled.
++   *
++   * @param tin The literal and its proof generator.
++   * @param outSubstitutions The substitution map to add to, if applicable.
++   * @return true iff the literal can be removed from the input, e.g. when
++   * the substitution it entails is added to outSubstitutions.
+    */
+-  virtual PPAssertStatus ppAssert(TrustNode tin,
+-                                  TrustSubstitutionMap& outSubstitutions);
++  virtual bool ppAssert(TrustNode tin, TrustSubstitutionMap& outSubstitutions);
+ 
+   /**
+    * Given a term of the theory coming from the input formula or
+@@ -814,20 +808,6 @@ inline std::ostream& operator<<(std::ostream& out,
+   return out << theory.identify();
+ }
+ 
+-inline std::ostream& operator << (std::ostream& out, theory::Theory::PPAssertStatus status) {
+-  switch (status) {
+-  case theory::Theory::PP_ASSERT_STATUS_SOLVED:
+-    out << "SOLVE_STATUS_SOLVED"; break;
+-  case theory::Theory::PP_ASSERT_STATUS_UNSOLVED:
+-    out << "SOLVE_STATUS_UNSOLVED"; break;
+-  case theory::Theory::PP_ASSERT_STATUS_CONFLICT:
+-    out << "SOLVE_STATUS_CONFLICT"; break;
+-  default:
+-    Unhandled();
+-  }
+-  return out;
+-}
+-
+ }  // namespace theory
+ }  // namespace cvc5::internal
+ 
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index dbac31082..ec793210f 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -861,8 +861,8 @@ bool TheoryEngine::isLegalElimination(TNode x, TNode val)
+   return tm->isLegalElimination(x, val);
+ }
+ 
+-theory::Theory::PPAssertStatus TheoryEngine::solve(
+-    TrustNode tliteral, TrustSubstitutionMap& substitutionOut)
++bool TheoryEngine::solve(TrustNode tliteral,
++                         TrustSubstitutionMap& substitutionOut)
+ {
+   Assert(tliteral.getKind() == TrustNodeKind::LEMMA);
+   // Reset the interrupt flag
+@@ -885,8 +885,7 @@ theory::Theory::PPAssertStatus TheoryEngine::solve(
+     throw LogicException(ss.str());
+   }
+ 
+-  Theory::PPAssertStatus solveStatus =
+-      d_theoryTable[tid]->ppAssert(tliteral, substitutionOut);
++  bool solveStatus = d_theoryTable[tid]->ppAssert(tliteral, substitutionOut);
+   Trace("theory::solve") << "TheoryEngine::solve(" << literal << ") => " << solveStatus << endl;
+   return solveStatus;
+ }
+diff --git a/src/theory/theory_engine.h b/src/theory/theory_engine.h
+index 3d0c523cd..3171bc826 100644
+--- a/src/theory/theory_engine.h
++++ b/src/theory/theory_engine.h
+@@ -263,9 +263,13 @@ class TheoryEngine : protected EnvObj
+    * Solve the given literal with a theory that owns it. The proof of tliteral
+    * is carried in the trust node. The proof added to substitutionOut should
+    * take this proof into account (when proofs are enabled).
++   *
++   * @param tin The literal and its proof generator.
++   * @param outSubstitutions The substitution map to add to, if applicable.
++   * @return true iff the literal can be removed from the input, e.g. when
++   * the substitution it entails is added to outSubstitutions.
+    */
+-  theory::Theory::PPAssertStatus solve(
+-      TrustNode tliteral, theory::TrustSubstitutionMap& substitutionOut);
++  bool solve(TrustNode tliteral, theory::TrustSubstitutionMap& substitutionOut);
+ 
+   /**
+    * Preregister a Theory atom with the responsible theory (or
+-- 
+2.47.1
+

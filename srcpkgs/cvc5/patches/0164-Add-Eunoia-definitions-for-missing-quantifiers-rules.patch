@@ -1,0 +1,261 @@
+From 91e4ddf8e17bc9b257caff20d6652288931ba0ae Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 7 Nov 2024 08:32:54 -0600
+Subject: [PATCH 164/312] Add Eunoia definitions for missing quantifiers rules
+ (#11305)
+
+Note that `ProofRewriteRule::QUANT_MINISCOPE` does not currently work
+for this Eunoia definition, since the internal implementation of this
+rule includes some hidden alpha equivalence steps. A followup PR will
+make the existing form of this a MACRO rule and then reconstruct the
+proofs into one that replays in the Eunoia signature.
+
+Disables cpc on a regression that involves an unhandled case of variable
+shadowing.
+
+---------
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ proofs/eo/cpc/rules/Quantifiers.eo            | 69 +++++++++++++++++++
+ src/proof/alf/alf_printer.cpp                 | 18 ++---
+ src/proof/alf/alf_printer.h                   | 13 ++--
+ .../quantifiers/quantifiers_rewriter.cpp      |  4 +-
+ .../issue11066-fresh-binders-err.smt2         |  1 +
+ 5 files changed, 89 insertions(+), 16 deletions(-)
+
+diff --git a/proofs/eo/cpc/rules/Quantifiers.eo b/proofs/eo/cpc/rules/Quantifiers.eo
+index 5fe004dbb..04701fd96 100644
+--- a/proofs/eo/cpc/rules/Quantifiers.eo
++++ b/proofs/eo/cpc/rules/Quantifiers.eo
+@@ -102,6 +102,75 @@
+     :conclusion (= (forall x F) (forall y F))
+ )
+ 
++;;;;; ProofRewriteRule::EXISTS_ELIM
++
++; rule: exists-elim
++; implements: ProofRewriteRule::EXISTS_ELIM
++; args:
++; - eq Bool: The equality whose left hand side is an existential quantified formula.
++; conclusion: The given equality.
++(declare-rule exists-elim ((x @List) (F Bool))
++  :args ((= (exists x F) (not (forall x (not F)))))
++  :conclusion (= (exists x F) (not (forall x (not F))))
++)
++
++;;;;; ProofRewriteRule::QUANT_UNUSED_VARS
++
++; program: $is_quant_unused_vars
++; args:
++; - F Bool: The first formula in question.
++; - G Bool: The second formula in question.
++; return: true iff G is the result of removing unused variables from F.
++(program $is_quant_unused_vars ((x @List) (y @List) (F Bool) (Q (-> @List Bool Bool)))
++  (Bool Bool) Bool
++  (
++  (($is_quant_unused_vars (Q x F) (Q y F)) (eo::not ($contains_subterm_list F ($nary_diff @list @list.nil x y))))
++  (($is_quant_unused_vars (Q x F) F)       (eo::not ($contains_subterm_list F x)))
++  )
++)
++
++; rule: quant-unused-vars
++; implements: ProofRewriteRule::QUANT_UNUSED_VARS
++; args:
++; - eq Bool: The equality whose left hand side is a quantified formula.
++; requires: >
++;   The variables removed from the left hand side do not occur in its body.
++; conclusion: The given equality.
++(declare-rule quant-unused-vars ((F Bool) (G Bool))
++  :args ((= F G))
++  :requires ((($is_quant_unused_vars F G) true))
++  :conclusion (= F G)
++)
++
++;;;;; ProofRewriteRule::QUANT_MINISCOPE
++
++; program: $mk_quant_miniscope
++; args:
++; - x @List: The list of variables of the formula.
++; - F Bool: The body of the formula in question.
++; return: The result of miniscoping (forall x F) based on conjunctions.
++(program $mk_quant_miniscope ((x @List) (f Bool) (fs Bool :list))
++  (@List Bool) Bool
++  (
++  (($mk_quant_miniscope x (and f fs)) (and (forall x f) ($mk_quant_miniscope x fs)))
++  (($mk_quant_miniscope x true)       true)
++  )
++)
++
++; rule: quant-miniscope
++; implements: ProofRewriteRule::QUANT_MINISCOPE
++; args:
++; - eq Bool: The equality whose left hand side is a quantified formula.
++; requires: >
++;   The right hand side of the equality is the result of miniscoping the
++;   left hand side.
++; conclusion: The given equality.
++(declare-rule quant-miniscope ((x @List) (F Bool) (G Bool))
++  :args ((= (forall x F) G))
++  :requires ((($mk_quant_miniscope x F) G))
++  :conclusion (= (forall x F) G)
++)
++
+ ;;;;; ProofRewriteRule::QUANT_MINISCOPE_FV
+ 
+ ; program: $is_quant_miniscope_fv
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index f5f3b3af6..42315919f 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -63,12 +63,13 @@ AlfPrinter::AlfPrinter(Env& env,
+   d_false = nodeManager()->mkConst(false);
+ }
+ 
+-bool AlfPrinter::isHandled(const ProofNode* pfn) const
++bool AlfPrinter::isHandled(const Options& opts, const ProofNode* pfn)
+ {
+   const std::vector<Node> pargs = pfn->getArguments();
+   switch (pfn->getRule())
+   {
+     // List of handled rules
++    case ProofRule::ASSUME:
+     case ProofRule::SCOPE:
+     case ProofRule::REFL:
+     case ProofRule::SYMM:
+@@ -231,7 +232,7 @@ bool AlfPrinter::isHandled(const ProofNode* pfn) const
+       if (k == Kind::STRING_TO_CODE || k == Kind::STRING_FROM_CODE)
+       {
+         // must use standard alphabet size
+-        return options().strings.stringsAlphaCard == String::num_codes();
++        return opts.strings.stringsAlphaCard == String::num_codes();
+       }
+       return k == Kind::STRING_CONTAINS || k == Kind::STRING_INDEXOF
+              || k == Kind::STRING_INDEXOF_RE || k == Kind::STRING_IN_REGEXP;
+@@ -253,8 +254,7 @@ bool AlfPrinter::isHandled(const ProofNode* pfn) const
+   return false;
+ }
+ 
+-bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id,
+-                                        const Node& n) const
++bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id, const Node& n)
+ {
+   switch (id)
+   {
+@@ -263,6 +263,8 @@ bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id,
+     case ProofRewriteRule::LAMBDA_ELIM:
+     case ProofRewriteRule::ARITH_STRING_PRED_ENTAIL:
+     case ProofRewriteRule::ARITH_STRING_PRED_SAFE_APPROX:
++    case ProofRewriteRule::EXISTS_ELIM:
++    case ProofRewriteRule::QUANT_UNUSED_VARS:
+     case ProofRewriteRule::ARRAYS_SELECT_CONST:
+     case ProofRewriteRule::QUANT_MINISCOPE_FV:
+     case ProofRewriteRule::RE_LOOP_ELIM:
+@@ -281,7 +283,7 @@ bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id,
+   return false;
+ }
+ 
+-bool AlfPrinter::isHandledBitblastStep(const Node& eq) const
++bool AlfPrinter::isHandledBitblastStep(const Node& eq)
+ {
+   Assert(eq.getKind() == Kind::EQUAL);
+   if (eq[0].isVar())
+@@ -301,7 +303,7 @@ bool AlfPrinter::isHandledBitblastStep(const Node& eq) const
+   return false;
+ }
+ 
+-bool AlfPrinter::canEvaluate(Node n) const
++bool AlfPrinter::canEvaluate(Node n)
+ {
+   std::unordered_set<TNode> visited;
+   std::vector<TNode> visit;
+@@ -391,7 +393,7 @@ bool AlfPrinter::canEvaluate(Node n) const
+   return true;
+ }
+ 
+-bool AlfPrinter::canEvaluateRegExp(Node r) const
++bool AlfPrinter::canEvaluateRegExp(Node r)
+ {
+   Assert(r.getType().isRegExp());
+   Trace("alf-printer-debug") << "canEvaluateRegExp? " << r << std::endl;
+@@ -932,7 +934,7 @@ void AlfPrinter::printStepPost(AlfPrintChannel* out, const ProofNode* pn)
+   std::vector<std::shared_ptr<ProofNode>> children;
+   getChildrenFromProofRule(pn, children);
+   std::vector<Node> args;
+-  bool handled = isHandled(pn);
++  bool handled = isHandled(options(), pn);
+   if (handled)
+   {
+     getArgsFromProofRule(pn, args);
+diff --git a/src/proof/alf/alf_printer.h b/src/proof/alf/alf_printer.h
+index 678edcfcd..03421d605 100644
+--- a/src/proof/alf/alf_printer.h
++++ b/src/proof/alf/alf_printer.h
+@@ -88,24 +88,25 @@ class AlfPrinter : protected EnvObj
+    */
+   LetBinding* getLetBinding();
+ 
+- private:
+   /** Return true if it is possible to trust the topmost application in pfn */
+-  bool isHandled(const ProofNode* pfn) const;
++  static bool isHandled(const Options& opts, const ProofNode* pfn);
++
++ private:
+   /** Return true if id is handled as a theory rewrite for term n */
+-  bool isHandledTheoryRewrite(ProofRewriteRule id, const Node& n) const;
++  static bool isHandledTheoryRewrite(ProofRewriteRule id, const Node& n);
+   /** Return if the equality is handled as a bitblast step */
+-  bool isHandledBitblastStep(const Node& eq) const;
++  static bool isHandledBitblastStep(const Node& eq);
+   /**
+    * Return true if it is possible to evaluate n using the evaluation side
+    * condition in the ALF signature. Notice this requires that all subterms of n
+    * are handled. This method is used for determining if an application of
+    * ProofRule::EVALUATE can be applied.
+    */
+-  bool canEvaluate(Node n) const;
++  static bool canEvaluate(Node n);
+   /**
+    * Whether we support evaluating (str.in_re s r) for any constant string s.
+    */
+-  bool canEvaluateRegExp(Node r) const;
++  static bool canEvaluateRegExp(Node r);
+   /* Returns the normalized name of the proof rule of pfn */
+   std::string getRuleName(const ProofNode* pfn) const;
+ 
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index efa18e540..9bf117a78 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -126,7 +126,7 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+       std::vector<Node> fchildren;
+       fchildren.push_back(n[0]);
+-      fchildren.push_back(n[1].negate());
++      fchildren.push_back(n[1].notNode());
+       if (n.getNumChildren() == 3)
+       {
+         fchildren.push_back(n[2]);
+@@ -436,7 +436,7 @@ RewriteResponse QuantifiersRewriter::postRewrite(TNode in)
+   {
+     std::vector<Node> children;
+     children.push_back(in[0]);
+-    children.push_back(in[1].negate());
++    children.push_back(in[1].notNode());
+     if (in.getNumChildren() == 3)
+     {
+       children.push_back(in[2]);
+diff --git a/test/regress/cli/regress0/quantifiers/issue11066-fresh-binders-err.smt2 b/test/regress/cli/regress0/quantifiers/issue11066-fresh-binders-err.smt2
+index da00df974..144a2dc0b 100644
+--- a/test/regress/cli/regress0/quantifiers/issue11066-fresh-binders-err.smt2
++++ b/test/regress/cli/regress0/quantifiers/issue11066-fresh-binders-err.smt2
+@@ -1,5 +1,6 @@
+ ; DISABLE-TESTER: dump
+ ; DISABLE-TESTER: alethe
++; DISABLE-TESTER: cpc
+ ; REQUIRES: no-competition
+ ; EXPECT-ERROR: Constructing a fresh variable for x since this symbol occurs in a let term that is present in the current context. Set fresh-binders to true or use -q to avoid this warning.
+ ; EXPECT: unsat
+-- 
+2.47.1
+

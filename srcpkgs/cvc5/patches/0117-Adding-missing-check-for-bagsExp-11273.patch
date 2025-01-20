@@ -1,0 +1,53 @@
+From 49e23e7050c0286e27179d26bd2745636b89140e Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 10 Oct 2024 12:48:31 -0500
+Subject: [PATCH 117/312] Adding missing check for bagsExp (#11273)
+
+The PR https://github.com/cvc5/cvc5/pull/11162 introduced `--bags-exp`
+but forgot to check this option.
+
+This ensures bags are disabled when `--safe-options` is used.
+---
+ src/options/bags_options.toml   | 2 +-
+ src/theory/bags/theory_bags.cpp | 7 +++++++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/options/bags_options.toml b/src/options/bags_options.toml
+index 33e2e7999..ef3812465 100644
+--- a/src/options/bags_options.toml
++++ b/src/options/bags_options.toml
+@@ -6,5 +6,5 @@ name   = "Bags Theory"
+   category   = "expert"
+   long       = "bags-exp"
+   type       = "bool"
+-  default    = "false"
++  default    = "true"
+   help       = "enables the bags solver"
+diff --git a/src/theory/bags/theory_bags.cpp b/src/theory/bags/theory_bags.cpp
+index fc663f1b9..b95029659 100644
+--- a/src/theory/bags/theory_bags.cpp
++++ b/src/theory/bags/theory_bags.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "expr/emptybag.h"
+ #include "expr/skolem_manager.h"
++#include "options/bags_options.h"
+ #include "proof/proof_checker.h"
+ #include "smt/logic_exception.h"
+ #include "theory/bags/bags_utils.h"
+@@ -426,6 +427,12 @@ Node TheoryBags::getCandidateModelValue(TNode node) { return Node::null(); }
+ 
+ void TheoryBags::preRegisterTerm(TNode n)
+ {
++  if (!options().bags.bagsExp)
++  {
++    std::stringstream ss;
++    ss << "Bags not available in this configuration, try --bags-exp.";
++    throw LogicException(ss.str());
++  }
+   Trace("bags") << "TheoryBags::preRegisterTerm(" << n << ")" << std::endl;
+   switch (n.getKind())
+   {
+-- 
+2.47.1
+

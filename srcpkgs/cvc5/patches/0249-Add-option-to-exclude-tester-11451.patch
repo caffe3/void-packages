@@ -1,0 +1,46 @@
+From 6c11825ddf1c43a2747e0d35d8468831fd997e63 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jos=C3=A9=20Neto?= <netolcc06@gmail.com>
+Date: Tue, 17 Dec 2024 15:21:34 -0300
+Subject: [PATCH 249/312] Add option to exclude tester (#11451)
+
+Added flag to allow removal of specific testers in the regression test
+setup. The idea is using this mechanism to disable the alethe tester for
+some machine at the buildbot.
+---
+ test/regress/cli/run_regression.py | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/test/regress/cli/run_regression.py b/test/regress/cli/run_regression.py
+index bf386f170..9bc6adf3f 100755
+--- a/test/regress/cli/run_regression.py
++++ b/test/regress/cli/run_regression.py
+@@ -938,10 +938,13 @@ def main():
+     parser = argparse.ArgumentParser(
+         description="Runs benchmark and checks for correct exit status and output."
+     )
+-    tester_choices = ["all"] + list(g_testers.keys())
++    
++    g_testers_keys = list(g_testers.keys())
++    tester_choices = ["all"] + g_testers_keys
+     parser.add_argument("--use-skip-return-code", action="store_true")
+     parser.add_argument("--skip-timeout", action="store_true")
+     parser.add_argument("--tester", choices=tester_choices, action="append")
++    parser.add_argument("--tester-exc", choices=g_testers_keys, action="append")
+     parser.add_argument("--lfsc-binary", default="")
+     parser.add_argument("--lfsc-sig-dir", default="")
+     parser.add_argument("--carcara-binary", default="")
+@@ -973,7 +976,10 @@ def main():
+     if not testers:
+         testers = g_default_testers
+     elif "all" in testers:
+-        testers = list(g_testers.keys())
++        testers = g_testers_keys
++
++    if g_args.tester_exc:
++        testers = [t for t in testers if t not in g_args.tester_exc]
+ 
+     lfsc_sigs = []
+     if not g_args.lfsc_sig_dir == "":
+-- 
+2.47.1
+

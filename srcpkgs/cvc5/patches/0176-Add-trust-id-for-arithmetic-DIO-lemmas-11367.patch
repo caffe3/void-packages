@@ -1,0 +1,74 @@
+From c12ed2dfeb2e271de77bc62bab6b9002f940feea Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 15 Nov 2024 13:05:25 -0600
+Subject: [PATCH 176/312] Add trust id for arithmetic DIO lemmas (#11367)
+
+This is the last known source of arithmetic not covered by proofs that
+are allowable with `--safe-options`.
+---
+ src/proof/trust_id.cpp                        |  1 +
+ src/proof/trust_id.h                          |  2 ++
+ .../arith/linear/theory_arith_private.cpp     | 22 ++++++++++++++++++-
+ 3 files changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/src/proof/trust_id.cpp b/src/proof/trust_id.cpp
+index cca4a00ed..e75911f0c 100644
+--- a/src/proof/trust_id.cpp
++++ b/src/proof/trust_id.cpp
+@@ -38,6 +38,7 @@ const char* toString(TrustId id)
+     case TrustId::ARITH_NL_COVERING_DIRECT: return "ARITH_NL_COVERING_DIRECT";
+     case TrustId::ARITH_NL_COVERING_RECURSIVE:
+       return "ARITH_NL_COVERING_RECURSIVE";
++    case TrustId::ARITH_DIO_LEMMA: return "ARITH_DIO_LEMMA";
+     case TrustId::EXT_THEORY_REWRITE: return "EXT_THEORY_REWRITE";
+     case TrustId::REWRITE_NO_ELABORATE: return "REWRITE_NO_ELABORATE";
+     case TrustId::FLATTENING_REWRITE: return "FLATTENING_REWRITE";
+diff --git a/src/proof/trust_id.h b/src/proof/trust_id.h
+index 670a2203e..8347cb045 100644
+--- a/src/proof/trust_id.h
++++ b/src/proof/trust_id.h
+@@ -95,6 +95,8 @@ enum class TrustId : uint32_t
+    * no :math:`x_i` exists that extends the cell and satisfies all assumptions.
+    */
+   ARITH_NL_COVERING_RECURSIVE,
++  /** A lemma from the DIO solver */
++  ARITH_DIO_LEMMA,
+   /** An extended theory rewrite */
+   EXT_THEORY_REWRITE,
+   /** A rewrite whose proof could not be elaborated */
+diff --git a/src/theory/arith/linear/theory_arith_private.cpp b/src/theory/arith/linear/theory_arith_private.cpp
+index 8fecd1590..618b2da03 100644
+--- a/src/theory/arith/linear/theory_arith_private.cpp
++++ b/src/theory/arith/linear/theory_arith_private.cpp
+@@ -3395,7 +3395,27 @@ bool TheoryArithPrivate::postCheck(Theory::Effort effortLevel)
+         revertOutOfConflict();
+         Trace("arith::conflict") << "dio conflict   " << possibleConflict << endl;
+         // TODO (project #37): justify (proofs in the DIO solver)
+-        raiseBlackBoxConflict(possibleConflict);
++        Pf pf;
++        if (isProofEnabled())
++        {
++          std::vector<Node> assump;
++          if (possibleConflict.getKind() == Kind::AND)
++          {
++            assump.insert(
++                assump.end(), possibleConflict.begin(), possibleConflict.end());
++          }
++          else
++          {
++            assump.push_back(possibleConflict);
++          }
++          Node falsen = nodeManager()->mkConst(false);
++          CDProof cdp(d_env);
++          cdp.addTrustedStep(falsen, TrustId::ARITH_DIO_LEMMA, assump, {});
++          Node npc = possibleConflict.notNode();
++          cdp.addStep(npc, ProofRule::SCOPE, {falsen}, assump);
++          pf = cdp.getProofFor(npc);
++        }
++        raiseBlackBoxConflict(possibleConflict, pf);
+         outputConflicts();
+         emmittedConflictOrSplit = true;
+       }
+-- 
+2.47.1
+

@@ -1,0 +1,62 @@
+From 652d3083b14147821dbbc53fbb22cbf718de3098 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 24 Sep 2024 10:32:45 -0500
+Subject: [PATCH 067/312] A few minor changes to how proofs are configured
+ (#11195)
+
+Makes the following changes:
+- `--proof-mode` is not overridden if set by user.
+- `TRUST` is not eliminated when granularity is set to `MACRO`.
+- Allows the user to ask for a proof when theory proofs are disabled.
+---
+ src/smt/proof_manager.cpp | 4 ++--
+ src/smt/set_defaults.cpp  | 2 +-
+ src/smt/solver_engine.cpp | 3 ++-
+ 3 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/src/smt/proof_manager.cpp b/src/smt/proof_manager.cpp
+index b655d714c..382aac139 100644
+--- a/src/smt/proof_manager.cpp
++++ b/src/smt/proof_manager.cpp
+@@ -136,9 +136,9 @@ PfManager::PfManager(Env& env)
+     // theory-specific lazy proof reconstruction
+     d_pfpp->setEliminateRule(ProofRule::MACRO_STRING_INFERENCE);
+     d_pfpp->setEliminateRule(ProofRule::MACRO_BV_BITBLAST);
++    // we only try to eliminate TRUST if not macro level
++    d_pfpp->setEliminateRule(ProofRule::TRUST);
+   }
+-  // always try to eliminate TRUST
+-  d_pfpp->setEliminateRule(ProofRule::TRUST);
+   d_false = nodeManager()->mkConst(false);
+ }
+ 
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index 07c82a163..14d855451 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -175,7 +175,7 @@ void SetDefaults::setDefaultsPre(Options& opts)
+     // if the user requested proofs, proof mode is (at least) full
+     if (opts.smt.proofMode < options::ProofMode::FULL)
+     {
+-      SET_AND_NOTIFY(
++      SET_AND_NOTIFY_IF_NOT_USER(
+           smt, proofMode, options::ProofMode::FULL, "enabling proofs");
+     }
+     // Default granularity is theory rewrite if we are intentionally using
+diff --git a/src/smt/solver_engine.cpp b/src/smt/solver_engine.cpp
+index 5f283aa87..d2933c656 100644
+--- a/src/smt/solver_engine.cpp
++++ b/src/smt/solver_engine.cpp
+@@ -1667,7 +1667,8 @@ std::vector<std::shared_ptr<ProofNode>> SolverEngine::getProof(
+ {
+   Trace("smt") << "SMT getProof()\n";
+   const Options& opts = d_env->getOptions();
+-  if (!opts.smt.produceProofs || !d_env->isTheoryProofProducing())
++  // must be at least SAT proof producing
++  if (!opts.smt.produceProofs || !d_env->isSatProofProducing())
+   {
+     throw ModalException("Cannot get a proof when proof option is off.");
+   }
+-- 
+2.47.1
+

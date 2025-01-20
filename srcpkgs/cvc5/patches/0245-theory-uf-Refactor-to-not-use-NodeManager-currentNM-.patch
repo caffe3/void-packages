@@ -1,0 +1,552 @@
+From d851f4fb898bd40610986069bb4cd837e3d3b276 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Fri, 13 Dec 2024 14:09:31 -0600
+Subject: [PATCH 245/312] theory/uf: Refactor to not use
+ NodeManager::currentNM() (#11423)
+
+---
+ src/expr/node_manager_template.cpp      |  2 +-
+ src/expr/node_manager_template.h        | 18 +++++++------
+ src/expr/skolem_manager.cpp             |  3 ++-
+ src/expr/skolem_manager.h               |  2 +-
+ src/theory/uf/cardinality_extension.cpp | 36 ++++++++++++-------------
+ src/theory/uf/conversions_solver.cpp    |  6 ++---
+ src/theory/uf/eq_proof.cpp              | 16 +++++------
+ src/theory/uf/function_const.cpp        | 12 ++++-----
+ src/theory/uf/lambda_lift.cpp           |  9 +++----
+ src/theory/uf/theory_uf_model.cpp       | 16 +++++------
+ src/theory/uf/theory_uf_rewriter.cpp    |  6 ++---
+ src/theory/uf/theory_uf_type_rules.cpp  |  5 ++--
+ src/theory/uf/type_enumerator.cpp       |  2 +-
+ 13 files changed, 64 insertions(+), 69 deletions(-)
+
+diff --git a/src/expr/node_manager_template.cpp b/src/expr/node_manager_template.cpp
+index 934d39920..ed1f5cdcc 100644
+--- a/src/expr/node_manager_template.cpp
++++ b/src/expr/node_manager_template.cpp
+@@ -1134,7 +1134,7 @@ Node NodeManager::getBoundVarListForFunctionType(TypeNode tn)
+     {
+       vars.push_back(mkBoundVar(tn[i]));
+     }
+-    bvl = mkNode(Kind::BOUND_VAR_LIST, vars);
++    bvl = tn.getNodeManager()->mkNode(Kind::BOUND_VAR_LIST, vars);
+     Trace("functions") << "Make standard bound var list " << bvl << " for "
+                        << tn << std::endl;
+     tn.setAttribute(LambdaBoundVarListAttr(), bvl);
+diff --git a/src/expr/node_manager_template.h b/src/expr/node_manager_template.h
+index af70a9f10..67b8285a6 100644
+--- a/src/expr/node_manager_template.h
++++ b/src/expr/node_manager_template.h
+@@ -140,7 +140,7 @@ class NodeManager
+   const DType& getDTypeFor(Node n) const;
+ 
+   /** get the canonical bound variable list for function type tn */
+-  Node getBoundVarListForFunctionType(TypeNode tn);
++  static Node getBoundVarListForFunctionType(TypeNode tn);
+ 
+   /**
+    * Get the (singleton) operator of an OPERATOR-kinded kind.  The
+@@ -459,7 +459,7 @@ class NodeManager
+   TypeNode mkFiniteFieldType(const Integer& modulus);
+ 
+   /** Make the type of arrays with the given parameterization */
+-  TypeNode mkArrayType(TypeNode indexType, TypeNode constituentType);
++  static TypeNode mkArrayType(TypeNode indexType, TypeNode constituentType);
+ 
+   /** Make the type of set with the given parameterization */
+   TypeNode mkSetType(TypeNode elementType);
+@@ -556,20 +556,21 @@ class NodeManager
+   Node mkOr(const std::vector<NodeTemplate<ref_count> >& children);
+ 
+   /** Create a node (with no children) by operator. */
+-  Node mkNode(TNode opNode);
++  static Node mkNode(TNode opNode);
+ 
+   /** Create a node with one child by operator. */
+-  Node mkNode(TNode opNode, TNode child1);
++  static Node mkNode(TNode opNode, TNode child1);
+ 
+   /** Create a node with two children by operator. */
+-  Node mkNode(TNode opNode, TNode child1, TNode child2);
++  static Node mkNode(TNode opNode, TNode child1, TNode child2);
+ 
+   /** Create a node with three children by operator. */
+-  Node mkNode(TNode opNode, TNode child1, TNode child2, TNode child3);
++  static Node mkNode(TNode opNode, TNode child1, TNode child2, TNode child3);
+ 
+   /** Create a node by applying an operator to the children. */
+   template <bool ref_count>
+-  Node mkNode(TNode opNode, const std::vector<NodeTemplate<ref_count> >& children);
++  static Node mkNode(TNode opNode,
++                     const std::vector<NodeTemplate<ref_count>>& children);
+ 
+   /**
+    * Create a node by applying an operator to an arbitrary number of children.
+@@ -1095,7 +1096,8 @@ inline TypeNode NodeManager::mkArrayType(TypeNode indexType,
+   Assert(!constituentType.isNull()) << "unexpected NULL constituent type";
+   Trace("arrays") << "making array type " << indexType << " "
+                   << constituentType << std::endl;
+-  return mkTypeNode(Kind::ARRAY_TYPE, indexType, constituentType);
++  NodeManager* nm = indexType.getNodeManager();
++  return nm->mkTypeNode(Kind::ARRAY_TYPE, indexType, constituentType);
+ }
+ 
+ inline TypeNode NodeManager::mkSetType(TypeNode elementType)
+diff --git a/src/expr/skolem_manager.cpp b/src/expr/skolem_manager.cpp
+index 1349b10c5..140248e31 100644
+--- a/src/expr/skolem_manager.cpp
++++ b/src/expr/skolem_manager.cpp
+@@ -43,8 +43,9 @@ SkolemManager::SkolemManager() : d_skolemCounter(0) {}
+ 
+ Node SkolemManager::mkPurifySkolem(Node t)
+ {
++  SkolemManager* skm = t.getNodeManager()->getSkolemManager();
+   // We do not recursively compute the original form of t here
+-  Node k = mkSkolemFunction(SkolemId::PURIFY, {t});
++  Node k = skm->mkSkolemFunction(SkolemId::PURIFY, {t});
+   Trace("sk-manager-skolem") << "skolem: " << k << " purify " << t << std::endl;
+   return k;
+ }
+diff --git a/src/expr/skolem_manager.h b/src/expr/skolem_manager.h
+index 20b675363..e0bc4ea6b 100644
+--- a/src/expr/skolem_manager.h
++++ b/src/expr/skolem_manager.h
+@@ -96,7 +96,7 @@ class SkolemManager
+    * @param t The term to purify
+    * @return The purification skolem for t
+    */
+-  Node mkPurifySkolem(Node t);
++  static Node mkPurifySkolem(Node t);
+   /**
+    * Make skolem function. This method should be used for creating fixed
+    * skolem functions of the forms described in SkolemId. The user of this
+diff --git a/src/theory/uf/cardinality_extension.cpp b/src/theory/uf/cardinality_extension.cpp
+index 38330dbf1..038d52551 100644
+--- a/src/theory/uf/cardinality_extension.cpp
++++ b/src/theory/uf/cardinality_extension.cpp
+@@ -173,7 +173,7 @@ void Region::setDisequal( Node n1, Node n2, int type, bool valid ){
+         //if they are both a part of testClique, then remove split
+         if( d_testClique.find( n1 )!=d_testClique.end() && d_testClique[n1] &&
+             d_testClique.find( n2 )!=d_testClique.end() && d_testClique[n2] ){
+-          Node eq = NodeManager::currentNM()->mkNode(Kind::EQUAL, n1, n2);
++          Node eq = NodeManager::mkNode(Kind::EQUAL, n1, n2);
+           if( d_splits.find( eq )!=d_splits.end() && d_splits[ eq ] ){
+             Trace("uf-ss-debug") << "removing split for " << n1 << " " << n2
+                                  << std::endl;
+@@ -343,8 +343,7 @@ bool Region::check( Theory::Effort level, int cardinality,
+             if( !isDisequal( newClique[j], newClique[k], 1 ) ){
+               Node at_j = newClique[j];
+               Node at_k = newClique[k];
+-              Node j_eq_k =
+-                  NodeManager::currentNM()->mkNode(Kind::EQUAL, at_j, at_k);
++              Node j_eq_k = NodeManager::mkNode(Kind::EQUAL, at_j, at_k);
+               d_splits[ j_eq_k ] = true;
+               d_splitsSize = d_splitsSize + 1;
+             }
+@@ -457,7 +456,7 @@ SortModel::CardinalityDecisionStrategy::CardinalityDecisionStrategy(
+ 
+ Node SortModel::CardinalityDecisionStrategy::mkLiteral(unsigned i)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   Node cco = nm->mkConst(CardinalityConstraint(d_type, Integer(i + 1)));
+   return nm->mkNode(Kind::CARDINALITY_CONSTRAINT, cco);
+ }
+@@ -1017,8 +1016,8 @@ int SortModel::addSplit(Region* r)
+     Node ss = rewrite(s);
+     if (ss.getKind() != Kind::EQUAL)
+     {
+-      Node b_t = NodeManager::currentNM()->mkConst( true );
+-      Node b_f = NodeManager::currentNM()->mkConst( false );
++      Node b_t = nodeManager()->mkConst(true);
++      Node b_f = nodeManager()->mkConst(false);
+       if( ss==b_f ){
+         Trace("uf-ss-lemma") << "....Assert disequal directly : "
+                              << s[0] << " " << s[1] << std::endl;
+@@ -1049,7 +1048,7 @@ int SortModel::addSplit(Region* r)
+     //Trace("uf-ss-lemma") << d_th->getEqualityEngine()->areDisequal( s[0], s[1] ) << std::endl;
+     //Trace("uf-ss-lemma") << s[0].getType() << " " << s[1].getType() << std::endl;
+     //split on the equality s
+-    Node lem = NodeManager::currentNM()->mkNode(Kind::OR, ss, ss.negate());
++    Node lem = NodeManager::mkNode(Kind::OR, ss, ss.negate());
+     // send lemma, with caching
+     if (d_im.lemma(lem, InferenceId::UF_CARD_SPLIT))
+     {
+@@ -1082,7 +1081,7 @@ void SortModel::addCliqueLemma(std::vector<Node>& clique)
+     }
+   }
+   eqs.push_back(d_cardinality_literal[d_cardinality].notNode());
+-  Node lem = NodeManager::currentNM()->mkNode(Kind::OR, eqs);
++  Node lem = nodeManager()->mkNode(Kind::OR, eqs);
+   // send lemma, with caching
+   if (d_im.lemma(lem, InferenceId::UF_CARD_CLIQUE))
+   {
+@@ -1093,10 +1092,10 @@ void SortModel::addCliqueLemma(std::vector<Node>& clique)
+ 
+ void SortModel::simpleCheckCardinality() {
+   if( d_maxNegCard.get()!=0 && d_hasCard.get() && d_cardinality.get()<d_maxNegCard.get() ){
+-    Node lem = NodeManager::currentNM()->mkNode(
+-        Kind::AND,
+-        getCardinalityLiteral(d_cardinality.get()),
+-        getCardinalityLiteral(d_maxNegCard.get()).negate());
++    Node lem =
++        NodeManager::mkNode(Kind::AND,
++                            getCardinalityLiteral(d_cardinality.get()),
++                            getCardinalityLiteral(d_maxNegCard.get()).negate());
+     Trace("uf-ss-lemma") << "*** Simple cardinality conflict : " << lem << std::endl;
+     d_im.conflict(lem, InferenceId::UF_CARD_SIMPLE_CONFLICT);
+   }
+@@ -1134,7 +1133,6 @@ void SortModel::debugPrint( const char* c ){
+ 
+ bool SortModel::checkLastCall()
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   TheoryModel* m = d_state.getModel();
+   if( TraceIsOn("uf-ss-warn") ){
+     std::vector< Node > eqcs;
+@@ -1193,7 +1191,8 @@ bool SortModel::checkLastCall()
+           }
+         }
+         Node cl = getCardinalityLiteral( d_maxNegCard );
+-        Node lem = nm->mkNode(Kind::OR, cl, nm->mkAnd(force_cl));
++        Node lem =
++            NodeManager::mkNode(Kind::OR, cl, nodeManager()->mkAnd(force_cl));
+         Trace("uf-ss-lemma") << "*** Enforce negative cardinality constraint lemma : " << lem << std::endl;
+         d_im.lemma(lem, InferenceId::UF_CARD_ENFORCE_NEGATIVE);
+         return false;
+@@ -1546,8 +1545,7 @@ void CardinalityExtension::check(Theory::Effort level)
+                   Node b = itel->second[j];
+                   if( !d_th->getEqualityEngine()->areDisequal( a, b, false ) ){
+                     Node eq = rewrite(a.eqNode(b));
+-                    Node lem = NodeManager::currentNM()->mkNode(
+-                        Kind::OR, eq, eq.negate());
++                    Node lem = NodeManager::mkNode(Kind::OR, eq, eq.negate());
+                     Trace("uf-ss-lemma") << "*** Split (no-minimal) : " << lem << std::endl;
+                     d_im.lemma(lem, InferenceId::UF_CARD_SPLIT);
+                     d_im.preferPhase(eq, true);
+@@ -1590,7 +1588,7 @@ CardinalityExtension::CombinedCardinalityDecisionStrategy::
+ Node CardinalityExtension::CombinedCardinalityDecisionStrategy::mkLiteral(
+     unsigned i)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   Node cco = nm->mkConst(CombinedCardinalityConstraint(Integer(i)));
+   return nm->mkNode(Kind::COMBINED_CARDINALITY_CONSTRAINT, cco);
+ }
+@@ -1749,7 +1747,7 @@ void CardinalityExtension::checkCombinedCardinality()
+         std::vector< Node > conf;
+         conf.push_back( d_rep_model[d_tn_mono_master]->getCardinalityLiteral( mc ) );
+         conf.push_back( d_rep_model[maxSlaveType]->getCardinalityLiteral( maxMonoSlave ).negate() );
+-        Node cf = NodeManager::currentNM()->mkNode(Kind::AND, conf);
++        Node cf = nodeManager()->mkNode(Kind::AND, conf);
+         Trace("uf-ss-lemma") << "*** Combined monotone cardinality conflict"
+                              << " : " << cf << std::endl;
+         Trace("uf-ss-com-card") << "*** Combined monotone cardinality conflict"
+@@ -1788,7 +1786,7 @@ void CardinalityExtension::checkCombinedCardinality()
+           }
+         }
+       }
+-      Node cf = NodeManager::currentNM()->mkNode(Kind::AND, conf);
++      Node cf = nodeManager()->mkNode(Kind::AND, conf);
+       Trace("uf-ss-lemma") << "*** Combined cardinality conflict : " << cf
+                            << std::endl;
+       Trace("uf-ss-com-card") << "*** Combined cardinality conflict : " << cf
+diff --git a/src/theory/uf/conversions_solver.cpp b/src/theory/uf/conversions_solver.cpp
+index 2ff09c9ed..31b5a871e 100644
+--- a/src/theory/uf/conversions_solver.cpp
++++ b/src/theory/uf/conversions_solver.cpp
+@@ -79,12 +79,12 @@ void ConversionsSolver::checkReduction(Node n)
+   }
+   if (options().uf.modelBasedArithBvConv)
+   {
+-    NodeManager* nm = NodeManager::currentNM();
+     Node argval = d_state.getModel()->getValue(n[0]);
+     Trace("bv-convs-debug") << "  arg value = " << argval << std::endl;
+-    Node eval = rewrite(nm->mkNode(n.getOperator(), argval));
++    Node eval = rewrite(NodeManager::mkNode(n.getOperator(), argval));
+     Trace("bv-convs-debug") << "  evaluated = " << eval << std::endl;
+-    Node lem = nm->mkNode(Kind::IMPLIES, n[0].eqNode(argval), n.eqNode(eval));
++    Node lem =
++        NodeManager::mkNode(Kind::IMPLIES, n[0].eqNode(argval), n.eqNode(eval));
+     d_im.lemma(lem, InferenceId::UF_ARITH_BV_CONV_VALUE_REFINE);
+     return;
+   }
+diff --git a/src/theory/uf/eq_proof.cpp b/src/theory/uf/eq_proof.cpp
+index ea0bc1394..c7db8551d 100644
+--- a/src/theory/uf/eq_proof.cpp
++++ b/src/theory/uf/eq_proof.cpp
+@@ -144,7 +144,7 @@ bool EqProof::expandTransitivityForDisequalities(
+         << "EqProof::expandTransitivityForDisequalities: no need.\n";
+     return false;
+   }
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = conclusion.getNodeManager();
+   Assert(termPos == 0 || termPos == 1);
+   Trace("eqproof-conv") << "EqProof::expandTransitivityForDisequalities: found "
+                            "offending equality at index "
+@@ -595,7 +595,7 @@ bool EqProof::expandTransitivityForTheoryDisequalities(
+   //   (= (= t1 t2) (= c1 c2))         (= (= c1 c2) false)
+   //  --------------------------------------------------------------------- TR
+   //                   (= (= t1 t2) false)
+-  Node constApp = NodeManager::currentNM()->mkNode(Kind::EQUAL, constChildren);
++  Node constApp = conclusion.getNodeManager()->mkNode(Kind::EQUAL, constChildren);
+   Node constEquality = constApp.eqNode(conclusion[1 - termPos]);
+   Trace("eqproof-conv")
+       << "EqProof::expandTransitivityForTheoryDisequalities: adding "
+@@ -953,13 +953,13 @@ Node EqProof::addToProof(CDProof* p,
+       {
+         intro = ProofRule::FALSE_INTRO;
+         conclusion =
+-            d_node[0].eqNode(NodeManager::currentNM()->mkConst<bool>(false));
++            d_node[0].eqNode(d_node.getNodeManager()->mkConst<bool>(false));
+       }
+       else
+       {
+         intro = ProofRule::TRUE_INTRO;
+         conclusion =
+-            d_node.eqNode(NodeManager::currentNM()->mkConst<bool>(true));
++            d_node.eqNode(d_node.getNodeManager()->mkConst<bool>(true));
+       }
+       Trace("eqproof-conv") << "EqProof::addToProof: adding " << intro
+                             << " step for " << d_node << "\n";
+@@ -1007,7 +1007,7 @@ Node EqProof::addToProof(CDProof* p,
+     if (d_children.empty())
+     {
+       Node conclusion =
+-          d_node[0].eqNode(NodeManager::currentNM()->mkConst<bool>(false));
++          d_node[0].eqNode(d_node.getNodeManager()->mkConst<bool>(false));
+       p->addStep(d_node, ProofRule::MACRO_SR_PRED_INTRO, {}, {d_node});
+       p->addStep(conclusion, ProofRule::FALSE_INTRO, {d_node}, {});
+       visited[d_node] = conclusion;
+@@ -1088,7 +1088,7 @@ Node EqProof::addToProof(CDProof* p,
+     {
+       constChildren.insert(constChildren.begin(), d_node[0].getOperator());
+     }
+-    Node constApp = NodeManager::currentNM()->mkNode(k, constChildren);
++    Node constApp = d_node.getNodeManager()->mkNode(k, constChildren);
+     Node constEquality = constApp.eqNode(d_node[1]);
+     Trace("eqproof-conv") << "EqProof::addToProof: adding "
+                           << ProofRule::MACRO_SR_PRED_INTRO << " step for "
+@@ -1123,7 +1123,7 @@ Node EqProof::addToProof(CDProof* p,
+     Node conclusion =
+         d_node.getKind() != Kind::NOT
+             ? d_node
+-            : d_node[0].eqNode(NodeManager::currentNM()->mkConst<bool>(false));
++            : d_node[0].eqNode(d_node.getNodeManager()->mkConst<bool>(false));
+     // If the conclusion is an assumption, its derivation was spurious, so it
+     // can be discarded. Moreover, reconstructing the step may lead to cyclic
+     // proofs, so we *must* cut here.
+@@ -1261,7 +1261,7 @@ Node EqProof::addToProof(CDProof* p,
+   // whether the transitivity matrix computed by reduceNestedCongruence contains
+   // empty rows
+   Node conclusion = d_node;
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = conclusion.getNodeManager();
+   if (isNary)
+   {
+     unsigned emptyRows = 0;
+diff --git a/src/theory/uf/function_const.cpp b/src/theory/uf/function_const.cpp
+index 59d282fd7..711fcdda9 100644
+--- a/src/theory/uf/function_const.cpp
++++ b/src/theory/uf/function_const.cpp
+@@ -64,7 +64,7 @@ Node FunctionConst::toLambda(TNode n)
+     Assert(tn.isFunction());
+     std::vector<TypeNode> argTypes = tn.getArgTypes();
+     std::vector<Node> bvs;
+-    NodeManager* nm = NodeManager::currentNM();
++    NodeManager* nm = n.getNodeManager();
+     BoundVarManager* bvm = nm->getBoundVarManager();
+     // associate a unique bound variable list with the value
+     for (size_t i = 0, nargs = argTypes.size(); i < nargs; i++)
+@@ -94,7 +94,7 @@ TypeNode FunctionConst::getFunctionTypeForArrayType(TypeNode atn, Node bvl)
+     atn = atn.getArrayConstituentType();
+   }
+   children.push_back(atn);
+-  return NodeManager::currentNM()->mkFunctionType(children);
++  return bvl.getNodeManager()->mkFunctionType(children);
+ }
+ 
+ TypeNode FunctionConst::getArrayTypeForFunctionType(TypeNode ftn)
+@@ -106,7 +106,7 @@ TypeNode FunctionConst::getArrayTypeForFunctionType(TypeNode ftn)
+   for (size_t i = 0; i < nchildren - 1; i++)
+   {
+     size_t ii = nchildren - i - 2;
+-    ret = NodeManager::currentNM()->mkArrayType(ftn[ii], ret);
++    ret = NodeManager::mkArrayType(ftn[ii], ret);
+   }
+   return ret;
+ }
+@@ -142,7 +142,7 @@ Node FunctionConst::getLambdaForArrayRepresentationRec(
+           Assert(a[1].getType() == bvl[bvlIndex].getType());
+           Assert(val.getType() == body.getType());
+           Node cond = bvl[bvlIndex].eqNode(a[1]);
+-          ret = NodeManager::currentNM()->mkNode(Kind::ITE, cond, val, body);
++          ret = NodeManager::mkNode(Kind::ITE, cond, val, body);
+         }
+       }
+     }
+@@ -174,7 +174,7 @@ Node FunctionConst::getLambdaForArrayRepresentation(TNode a, TNode bvl)
+   {
+     Trace("builtin-rewrite-debug")
+         << "...got lambda body " << body << std::endl;
+-    return NodeManager::currentNM()->mkNode(Kind::LAMBDA, bvl, body);
++    return NodeManager::mkNode(Kind::LAMBDA, bvl, body);
+   }
+   Trace("builtin-rewrite-debug") << "...failed to get lambda body" << std::endl;
+   return Node::null();
+@@ -184,7 +184,7 @@ Node FunctionConst::getArrayRepresentationForLambdaRec(TNode n,
+                                                        TypeNode retType)
+ {
+   Assert(n.getKind() == Kind::LAMBDA);
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = n.getNodeManager();
+   Trace("builtin-rewrite-debug")
+       << "Get array representation for : " << n << std::endl;
+ 
+diff --git a/src/theory/uf/lambda_lift.cpp b/src/theory/uf/lambda_lift.cpp
+index d21fa1d56..bc6b88c35 100644
+--- a/src/theory/uf/lambda_lift.cpp
++++ b/src/theory/uf/lambda_lift.cpp
+@@ -174,7 +174,7 @@ Node LambdaLift::getAssertionFor(TNode node)
+   Node lambda = FunctionConst::toLambda(node);
+   if (!lambda.isNull())
+   {
+-    NodeManager* nm = NodeManager::currentNM();
++    NodeManager* nm = node.getNodeManager();
+     // The new assertion
+     std::vector<Node> children;
+     // bound variable list
+@@ -222,9 +222,7 @@ Node LambdaLift::getSkolemFor(TNode node)
+       Trace("rtf-proof-debug")
+           << "RemoveTermFormulas::run: make LAMBDA skolem" << std::endl;
+       // Make the skolem to represent the lambda
+-      NodeManager* nm = NodeManager::currentNM();
+-      SkolemManager* sm = nm->getSkolemManager();
+-      skolem = sm->mkPurifySkolem(node);
++      skolem = SkolemManager::mkPurifySkolem(node);
+     }
+   }
+   return skolem;
+@@ -258,11 +256,10 @@ TrustNode LambdaLift::betaReduce(TNode node) const
+ Node LambdaLift::betaReduce(TNode lam, const std::vector<Node>& args) const
+ {
+   Assert(lam.getKind() == Kind::LAMBDA);
+-  NodeManager* nm = NodeManager::currentNM();
+   std::vector<Node> betaRed;
+   betaRed.push_back(lam);
+   betaRed.insert(betaRed.end(), args.begin(), args.end());
+-  Node app = nm->mkNode(Kind::APPLY_UF, betaRed);
++  Node app = nodeManager()->mkNode(Kind::APPLY_UF, betaRed);
+   app = rewrite(app);
+   return app;
+ }
+diff --git a/src/theory/uf/theory_uf_model.cpp b/src/theory/uf/theory_uf_model.cpp
+index 962af4354..f416d55ab 100644
+--- a/src/theory/uf/theory_uf_model.cpp
++++ b/src/theory/uf/theory_uf_model.cpp
+@@ -81,16 +81,15 @@ Node UfModelTreeNode::getFunctionValue(const std::vector<Node>& args,
+       }
+     }
+ 
+-    NodeManager* nm = NodeManager::currentNM();
+     Node retNode = defaultValue;
+     // condense function values
+     for (size_t i = 0, cargs = caseArgs.size(); i < cargs; i++)
+     {
+       size_t ii = cargs - i - 1;
+-      retNode = nm->mkNode(Kind::ITE,
+-                           args[index].eqNode(caseArgs[ii]),
+-                           caseValues[caseArgs[ii]],
+-                           retNode);
++      retNode = NodeManager::mkNode(Kind::ITE,
++                                    args[index].eqNode(caseArgs[ii]),
++                                    caseValues[caseArgs[ii]],
++                                    retNode);
+     }
+     return retNode;
+   }
+@@ -207,9 +206,8 @@ Node UfModelTree::getFunctionValue(const std::vector<Node>& args, Rewriter* r)
+   {
+     body = r->rewrite(body);
+   }
+-  Node boundVarList =
+-      NodeManager::currentNM()->mkNode(Kind::BOUND_VAR_LIST, args);
+-  return NodeManager::currentNM()->mkNode(Kind::LAMBDA, boundVarList, body);
++  Node boundVarList = body.getNodeManager()->mkNode(Kind::BOUND_VAR_LIST, args);
++  return NodeManager::mkNode(Kind::LAMBDA, boundVarList, body);
+ }
+ 
+ Node UfModelTree::getFunctionValue(const std::string& argPrefix, Rewriter* r)
+@@ -219,7 +217,7 @@ Node UfModelTree::getFunctionValue(const std::string& argPrefix, Rewriter* r)
+   for( size_t i=0; i<type.getNumChildren()-1; i++ ){
+     std::stringstream ss;
+     ss << argPrefix << (i+1);
+-    vars.push_back( NodeManager::currentNM()->mkBoundVar( ss.str(), type[i] ) );
++    vars.push_back(NodeManager::mkBoundVar(ss.str(), type[i]));
+   }
+   return getFunctionValue(vars, r);
+ }
+diff --git a/src/theory/uf/theory_uf_rewriter.cpp b/src/theory/uf/theory_uf_rewriter.cpp
+index 9c94c681b..138d9a589 100644
+--- a/src/theory/uf/theory_uf_rewriter.cpp
++++ b/src/theory/uf/theory_uf_rewriter.cpp
+@@ -78,7 +78,7 @@ RewriteResponse TheoryUfRewriter::postRewrite(TNode node)
+         std::vector<TNode> args;
+         args.push_back(lambdaRew);
+         args.insert(args.end(), node.begin(), node.end());
+-        NodeManager* nm = NodeManager::currentNM();
++        NodeManager* nm = nodeManager();
+         Node ret = nm->mkNode(Kind::APPLY_UF, args);
+         Assert(ret != node);
+         return RewriteResponse(REWRITE_AGAIN_FULL, ret);
+@@ -257,7 +257,7 @@ Node TheoryUfRewriter::getHoApplyForApplyUf(TNode n)
+   Node curr = n.getOperator();
+   for (unsigned i = 0; i < n.getNumChildren(); i++)
+   {
+-    curr = NodeManager::currentNM()->mkNode(Kind::HO_APPLY, curr, n[i]);
++    curr = NodeManager::mkNode(Kind::HO_APPLY, curr, n[i]);
+   }
+   return curr;
+ }
+@@ -268,7 +268,7 @@ Node TheoryUfRewriter::getApplyUfForHoApply(TNode n)
+   // if operator is standard
+   if (canUseAsApplyUfOperator(curr))
+   {
+-    return NodeManager::currentNM()->mkNode(Kind::APPLY_UF, children);
++    return n.getNodeManager()->mkNode(Kind::APPLY_UF, children);
+   }
+   // cannot construct APPLY_UF if operator is partially applied or is not
+   // standard
+diff --git a/src/theory/uf/theory_uf_type_rules.cpp b/src/theory/uf/theory_uf_type_rules.cpp
+index 267af22d1..e094902c7 100644
+--- a/src/theory/uf/theory_uf_type_rules.cpp
++++ b/src/theory/uf/theory_uf_type_rules.cpp
+@@ -278,10 +278,9 @@ bool FunctionProperties::isWellFounded(TypeNode type)
+ 
+ Node FunctionProperties::mkGroundTerm(TypeNode type)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node bvl = nm->getBoundVarListForFunctionType(type);
++  Node bvl = NodeManager::getBoundVarListForFunctionType(type);
+   Node ret = NodeManager::mkGroundTerm(type.getRangeType());
+-  return nm->mkNode(Kind::LAMBDA, bvl, ret);
++  return NodeManager::mkNode(Kind::LAMBDA, bvl, ret);
+ }
+ 
+ TypeNode IntToBitVectorOpTypeRule::preComputeType(NodeManager* nm, TNode n)
+diff --git a/src/theory/uf/type_enumerator.cpp b/src/theory/uf/type_enumerator.cpp
+index f06730688..25077bb9f 100644
+--- a/src/theory/uf/type_enumerator.cpp
++++ b/src/theory/uf/type_enumerator.cpp
+@@ -37,7 +37,7 @@ Node FunctionEnumerator::operator*()
+     throw NoMoreValuesException(getType());
+   }
+   Node a = *d_arrayEnum;
+-  return NodeManager::currentNM()->mkConst(FunctionArrayConst(getType(), a));
++  return a.getNodeManager()->mkConst(FunctionArrayConst(getType(), a));
+ }
+ 
+ FunctionEnumerator& FunctionEnumerator::operator++()
+-- 
+2.47.1
+

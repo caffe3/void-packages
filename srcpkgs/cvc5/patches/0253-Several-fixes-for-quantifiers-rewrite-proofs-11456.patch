@@ -1,0 +1,150 @@
+From f102069ee7a7f629bc83aa886df67208c2843227 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 18 Dec 2024 10:09:32 -0600
+Subject: [PATCH 253/312] Several fixes for quantifiers rewrite proofs (#11456)
+
+1. We had an incorrect definition of quant_unused_vars in Eunoia.
+
+2. We did not checking for shadowing in miniscope_or internally, which
+would lead to checking failures.
+A regression is added that triggers both issues 1 and 2.
+
+3. The elaboration for macro quant rewrite body did not properly take
+instantiation pattern lists into account. A regression is added for this
+issue.
+---
+ proofs/eo/cpc/rules/Quantifiers.eo            |  3 ++-
+ src/rewriter/basic_rewrite_rcons.cpp          | 10 +++++++-
+ .../quantifiers/quantifiers_rewriter.cpp      |  6 +++++
+ test/regress/cli/CMakeLists.txt               |  2 ++
+ .../quantifiers/dd_spark2014-pat.smt2         | 15 ++++++++++++
+ .../quantifiers/quick-sort-q-rew.smt2         | 23 +++++++++++++++++++
+ 6 files changed, 57 insertions(+), 2 deletions(-)
+ create mode 100644 test/regress/cli/regress0/quantifiers/dd_spark2014-pat.smt2
+ create mode 100644 test/regress/cli/regress1/quantifiers/quick-sort-q-rew.smt2
+
+diff --git a/proofs/eo/cpc/rules/Quantifiers.eo b/proofs/eo/cpc/rules/Quantifiers.eo
+index 23f35f021..e9702c2cc 100644
+--- a/proofs/eo/cpc/rules/Quantifiers.eo
++++ b/proofs/eo/cpc/rules/Quantifiers.eo
+@@ -127,7 +127,8 @@
+   (($mk_quant_unused_vars_rec @list.nil F)    @list.nil)
+   (($mk_quant_unused_vars_rec (@list x xs) F) (eo::define ((r ($mk_quant_unused_vars_rec xs F)))
+                                               (eo::ite ($contains_subterm F x)
+-                                                (eo::ite ($contains_subterm r x) r (eo::cons @list x r))
++                                                ; remove the duplicate of x in r if it exists
++                                                (eo::cons @list x ($nary_remove @list @list.nil x r))
+                                                 r)))
+   )
+ )
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index df7c4ebe9..ec63b44f2 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -1086,7 +1086,15 @@ bool BasicRewriteRCons::ensureProofMacroQuantRewriteBody(CDProof* cdp,
+                      << std::endl;
+   // Call the utility again with proof tracking and construct the term
+   // conversion proof. This proof itself may have trust steps in it.
+-  TConvProofGenerator tcpg(d_env, nullptr);
++  // We ensure the proof generator does not rewrite in the pattern list using a
++  // term context.
++  WithinKindTermContext wktc(Kind::INST_PATTERN_LIST);
++  TConvProofGenerator tcpg(d_env,
++                           nullptr,
++                           TConvPolicy::FIXPOINT,
++                           TConvCachePolicy::NEVER,
++                           "EnsureProofMacroQuantRewrite",
++                           &wktc);
+   theory::quantifiers::QuantifiersRewriter qrew(
+       nodeManager(), d_env.getRewriter(), options());
+   Node qr = qrew.computeRewriteBody(eq[0], &tcpg);
+diff --git a/src/theory/quantifiers/quantifiers_rewriter.cpp b/src/theory/quantifiers/quantifiers_rewriter.cpp
+index 9770a1742..8a2e639f6 100644
+--- a/src/theory/quantifiers/quantifiers_rewriter.cpp
++++ b/src/theory/quantifiers/quantifiers_rewriter.cpp
+@@ -279,6 +279,12 @@ Node QuantifiersRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+         size_t prevVarIndex = varIndex;
+         while (varIndex < nvars && fvs.find(n[0][varIndex]) != fvs.end())
+         {
++          // cannot have shadowing
++          if (varsUsed.find(n[0][varIndex]) != varsUsed.end())
++          {
++            return Node::null();
++          }
++          varsUsed.insert(n[0][varIndex]);
+           varIndex++;
+         }
+         std::vector<Node> dvs(n[0].begin() + prevVarIndex,
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 5ccfe96ef..2c51cb769 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1457,6 +1457,7 @@ set(regress_0_tests
+   regress0/quantifiers/clock-3.smt2
+   regress0/quantifiers/cond-var-elim-binary.smt2
+   regress0/quantifiers/dd_german169_semi_eval.smt2
++  regress0/quantifiers/dd_spark2014-pat.smt2
+   regress0/quantifiers/dd.german169-ieval.smt2
+   regress0/quantifiers/dd.german169-lemma-inp.smt2
+   regress0/quantifiers/dd.ho-matching-enum.smt2
+@@ -2918,6 +2919,7 @@ set(regress_1_tests
+   regress1/quantifiers/qid-debug-inst.smt2
+   regress1/quantifiers/quant-wf-int-ind.smt2
+   regress1/quantifiers/quaternion_ds1_symm_0428.fof.smt2
++  regress1/quantifiers/quick-sort-q-rew.smt2
+   regress1/quantifiers/qs-has-term.smt2
+   regress1/quantifiers/recfact.cvc.smt2
+   regress1/quantifiers/rel-trigger-unusable.smt2
+diff --git a/test/regress/cli/regress0/quantifiers/dd_spark2014-pat.smt2 b/test/regress/cli/regress0/quantifiers/dd_spark2014-pat.smt2
+new file mode 100644
+index 000000000..babf76bbb
+--- /dev/null
++++ b/test/regress/cli/regress0/quantifiers/dd_spark2014-pat.smt2
+@@ -0,0 +1,15 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-sort i 0)
++(declare-fun ii (i) Int)
++(define-fun t ((x i)) Int (ii x))
++(declare-fun o (Int) i)
++(assert (forall ((x i)) (! (= x (o (t x))) :pattern ((t x)))))
++(declare-sort t 0)
++(declare-fun l (t) i)
++(declare-fun m (Int Int) t)
++(declare-datatypes ((u 0)) (((uc (e (Array Int i)) (r t)))))
++(declare-fun s (i Int) (Array Int i))
++(assert (forall ((v i)) (forall ((i Int)) (= v (select (s v i) i)))))
++(assert (exists ((n u)) (not (=> (exists ((o i)) (= 1 (ii o))) (= (- 1) (ii (l (r (uc (s (o 1) 0) (m 0 0)))))) (= 1 (ii (select (e (uc (s (o 1) (- 1)) (m 0 0))) (ii (l (r (uc (s (o 1) 0) (m 0 0))))))))))))
++(check-sat)
+diff --git a/test/regress/cli/regress1/quantifiers/quick-sort-q-rew.smt2 b/test/regress/cli/regress1/quantifiers/quick-sort-q-rew.smt2
+new file mode 100644
+index 000000000..e37a4c3b1
+--- /dev/null
++++ b/test/regress/cli/regress1/quantifiers/quick-sort-q-rew.smt2
+@@ -0,0 +1,23 @@
++; EXPECT: unsat
++(set-logic AUFBVDTLIA)
++(declare-datatypes ((List!1123 0)) (((Cons!1124 (head!1125 (_ BitVec 32)) (tail!1126 List!1123)) (Nil!1127))
++))
++(declare-datatypes ((OptInt!1128 0)) (((None!1129) (Some!1130 (i!1131 (_ BitVec 32))))
++))
++(declare-fun error_value!1132 () OptInt!1128)
++(declare-fun error_value!1133 () OptInt!1128)
++(declare-fun max!216 (List!1123) OptInt!1128)
++(declare-fun error_value!1134 () List!1123)
++(declare-fun smaller!233 ((_ BitVec 32) List!1123) List!1123)
++(declare-fun error_value!1135 () Bool)
++(declare-sort I_max!216 0)
++(declare-fun max!216_arg_0_1 (I_max!216) List!1123)
++(declare-sort I_smaller!233 0)
++(declare-fun smaller!233_arg_0_2 (I_smaller!233) (_ BitVec 32))
++(declare-fun smaller!233_arg_1_3 (I_smaller!233) List!1123)
++(assert (forall ((?i I_max!216)) (and (= (max!216 (max!216_arg_0_1 ?i)) (ite ((_ is Nil!1127) (max!216_arg_0_1 ?i)) None!1129 (ite ((_ is Cons!1124) (max!216_arg_0_1 ?i)) (ite ((_ is Some!1130) (max!216 (tail!1126 (max!216_arg_0_1 ?i)))) (ite (not (bvslt (head!1125 (max!216_arg_0_1 ?i)) (i!1131 (max!216 (tail!1126 (max!216_arg_0_1 ?i)))))) (Some!1130 (head!1125 (max!216_arg_0_1 ?i))) (Some!1130 (i!1131 (max!216 (tail!1126 (max!216_arg_0_1 ?i)))))) (ite ((_ is None!1129) (max!216 (tail!1126 (max!216_arg_0_1 ?i)))) (Some!1130 (head!1125 (max!216_arg_0_1 ?i))) error_value!1132)) error_value!1133))) (ite ((_ is Nil!1127) (max!216_arg_0_1 ?i)) true (ite ((_ is Cons!1124) (max!216_arg_0_1 ?i)) (and (not (forall ((?z I_max!216)) (not (= (max!216_arg_0_1 ?z) (tail!1126 (max!216_arg_0_1 ?i)))) )) (ite ((_ is Some!1130) (max!216 (tail!1126 (max!216_arg_0_1 ?i)))) (and (not (forall ((?z I_max!216)) (not (= (max!216_arg_0_1 ?z) (tail!1126 (max!216_arg_0_1 ?i)))) )) (ite (not (bvslt (head!1125 (max!216_arg_0_1 ?i)) (i!1131 (max!216 (tail!1126 (max!216_arg_0_1 ?i)))))) true (not (forall ((?z I_max!216)) (not (= (max!216_arg_0_1 ?z) (tail!1126 (max!216_arg_0_1 ?i)))) )))) (not (forall ((?z I_max!216)) (not (= (max!216_arg_0_1 ?z) (tail!1126 (max!216_arg_0_1 ?i)))) )))) true))) ))
++(assert (forall ((?i I_smaller!233)) (and (= (smaller!233 (smaller!233_arg_0_2 ?i) (smaller!233_arg_1_3 ?i)) (ite ((_ is Nil!1127) (smaller!233_arg_1_3 ?i)) Nil!1127 (ite ((_ is Cons!1124) (smaller!233_arg_1_3 ?i)) (ite (bvslt (head!1125 (smaller!233_arg_1_3 ?i)) (smaller!233_arg_0_2 ?i)) (Cons!1124 (head!1125 (smaller!233_arg_1_3 ?i)) (smaller!233 (smaller!233_arg_0_2 ?i) (tail!1126 (smaller!233_arg_1_3 ?i)))) (smaller!233 (smaller!233_arg_0_2 ?i) (tail!1126 (smaller!233_arg_1_3 ?i)))) error_value!1134))) (ite ((_ is Nil!1127) (smaller!233_arg_1_3 ?i)) true (ite ((_ is Cons!1124) (smaller!233_arg_1_3 ?i)) (ite (bvslt (head!1125 (smaller!233_arg_1_3 ?i)) (smaller!233_arg_0_2 ?i)) (not (forall ((?z I_smaller!233)) (not (and (= (smaller!233_arg_0_2 ?z) (smaller!233_arg_0_2 ?i)) (= (smaller!233_arg_1_3 ?z) (tail!1126 (smaller!233_arg_1_3 ?i))))) )) (not (forall ((?z I_smaller!233)) (not (and (= (smaller!233_arg_0_2 ?z) (smaller!233_arg_0_2 ?i)) (= (smaller!233_arg_1_3 ?z) (tail!1126 (smaller!233_arg_1_3 ?i))))) ))) true))) ))
++(assert (not (forall ((n!234 (_ BitVec 32))) (or (ite ((_ is Some!1130) (max!216 (smaller!233 (i!1131 (max!216 (smaller!233 n!234 Nil!1127))) Nil!1127))) (bvslt n!234 n!234) (or (ite ((_ is None!1129) (max!216 (smaller!233 n!234 Nil!1127))) true error_value!1135) (forall ((?z I_max!216)) (not (= (max!216_arg_0_1 ?z) (smaller!233 n!234 Nil!1127))) ) (forall ((?z I_smaller!233)) (not (and (= (smaller!233_arg_0_2 ?z) n!234) (= (smaller!233_arg_1_3 ?z) Nil!1127))) ))) (forall ((?z I_max!216)) (not (= (max!216_arg_0_1 ?z) (smaller!233 (i!1131 (max!216 (smaller!233 n!234 Nil!1127))) Nil!1127))) ) (forall ((?z I_smaller!233)) (not (and (= (smaller!233_arg_0_2 ?z) (i!1131 (max!216 (smaller!233 n!234 Nil!1127)))) (= (smaller!233_arg_1_3 ?z) Nil!1127))) ) (forall ((?z I_max!216)) (not (= (max!216_arg_0_1 ?z) (smaller!233 n!234 Nil!1127))) ) (forall ((?z I_smaller!233)) (not (and (= (smaller!233_arg_0_2 ?z) n!234) (= (smaller!233_arg_1_3 ?z) Nil!1127))) )) )))
++(check-sat)
++(exit)
++
+-- 
+2.47.1
+

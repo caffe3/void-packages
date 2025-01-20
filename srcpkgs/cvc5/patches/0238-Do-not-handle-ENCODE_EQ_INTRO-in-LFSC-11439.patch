@@ -1,0 +1,52 @@
+From 86bb23090d2eb13195906da83049531025807243 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 11 Dec 2024 10:22:59 -0600
+Subject: [PATCH 238/312] Do not handle ENCODE_EQ_INTRO in LFSC (#11439)
+
+This rule was updated from a previous version ENCODE_PRED_TRANSFORM, but
+the LFSC printer was never updated to handle this, we drop support for
+this.
+
+Fixes 2 of the failing regressions in the nightlies.
+
+Also downgrades a warning to a trace message, fixing a further issue in
+the nightlies.
+---
+ src/proof/lfsc/lfsc_printer.cpp      | 5 -----
+ src/smt/proof_post_processor_dsl.cpp | 3 ++-
+ 2 files changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/src/proof/lfsc/lfsc_printer.cpp b/src/proof/lfsc/lfsc_printer.cpp
+index f3ddf9ccc..34976f197 100644
+--- a/src/proof/lfsc/lfsc_printer.cpp
++++ b/src/proof/lfsc/lfsc_printer.cpp
+@@ -540,11 +540,6 @@ void LfscPrinter::printProofInternal(
+           Assert(passumeIt != passumeMap.end());
+           out->printId(passumeIt->second, d_assumpPrefix);
+         }
+-        else if (r == ProofRule::ENCODE_EQ_INTRO)
+-        {
+-          // just add child
+-          visit.push_back(PExpr(cur->getChildren()[0].get()));
+-        }
+         else if (isLambda)
+         {
+           Assert(cur->getArguments().size() == 3);
+diff --git a/src/smt/proof_post_processor_dsl.cpp b/src/smt/proof_post_processor_dsl.cpp
+index 185c2e043..ac1b16cb9 100644
+--- a/src/smt/proof_post_processor_dsl.cpp
++++ b/src/smt/proof_post_processor_dsl.cpp
+@@ -96,8 +96,9 @@ void ProofPostprocessDsl::reconstruct(
+     Trace("pp-dsl") << "REM SUBGOALS: " << std::endl;
+     for (std::shared_ptr<ProofNode> p : d_subgoals)
+     {
+-      Warning() << "WARNING: unproven subgoal " << p->getResult() << std::endl;
+       Trace("pp-dsl") << "  " << p->getResult() << std::endl;
++      Trace("pp-dsl-warn") << "WARNING: unproven subgoal " << p->getResult()
++                           << std::endl;
+     }
+     d_subgoals.clear();
+   }
+-- 
+2.47.1
+

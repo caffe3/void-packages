@@ -1,0 +1,625 @@
+From 8dca52eb78a01c1c831680cb180284d5d1c797fc Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 14 Jan 2025 15:51:29 -0600
+Subject: [PATCH 303/312] booleans/builtin: Refactor to not use
+ NodeManager::currentNM() (#11522)
+
+This PR introduces some calls to NodeManager::currentNM(), which will be
+removed in subsequent PRs.
+---
+ src/smt/proof_post_processor.cpp              |  3 +-
+ src/theory/arith/pp_rewrite_eq.cpp            |  3 +-
+ src/theory/booleans/circuit_propagator.cpp    | 18 +++--
+ .../booleans/proof_circuit_propagator.cpp     | 66 ++++++++++---------
+ .../booleans/proof_circuit_propagator.h       | 10 ++-
+ src/theory/builtin/generic_op.cpp             | 10 +--
+ src/theory/builtin/generic_op.h               |  4 +-
+ src/theory/builtin/proof_checker.cpp          |  5 +-
+ src/theory/builtin/proof_checker.h            |  2 +-
+ src/theory/ff/cocoa_encoder.cpp               |  5 +-
+ src/theory/ff/cocoa_encoder.h                 |  2 +-
+ src/theory/ff/split_gb.cpp                    |  2 +-
+ src/theory/ff/sub_theory.cpp                  |  7 +-
+ src/theory/ff/util.cpp                        |  4 +-
+ src/theory/ff/util.h                          |  2 +-
+ src/theory/rewriter.cpp                       |  3 +-
+ src/theory/theory_engine.cpp                  | 15 +++--
+ src/theory/uf/symmetry_breaker.cpp            |  8 +--
+ src/theory/uf/symmetry_breaker.h              | 20 +++---
+ 19 files changed, 112 insertions(+), 77 deletions(-)
+
+diff --git a/src/smt/proof_post_processor.cpp b/src/smt/proof_post_processor.cpp
+index c69915037..2c6b9bb22 100644
+--- a/src/smt/proof_post_processor.cpp
++++ b/src/smt/proof_post_processor.cpp
+@@ -881,7 +881,8 @@ Node ProofPostprocessCallback::expandMacros(ProofRule id,
+         {
+           // update to TRUST_THEORY_REWRITE with idr
+           Assert(args.size() >= 1);
+-          Node tid = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(theoryId);
++          Node tid = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(
++              nodeManager(), theoryId);
+           cdp->addStep(
+               eq, ProofRule::TRUST_THEORY_REWRITE, {}, {eq, tid, args[1]});
+         }
+diff --git a/src/theory/arith/pp_rewrite_eq.cpp b/src/theory/arith/pp_rewrite_eq.cpp
+index 8baf6b30a..53ddf81a9 100644
+--- a/src/theory/arith/pp_rewrite_eq.cpp
++++ b/src/theory/arith/pp_rewrite_eq.cpp
+@@ -45,7 +45,8 @@ TrustNode PreprocessRewriteEq::ppRewriteEq(TNode atom)
+   // don't need to rewrite terms since rewritten is not a non-standard op
+   if (d_env.isTheoryProofProducing())
+   {
+-    Node t = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_ARITH);
++    Node t = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(nodeManager(),
++                                                              THEORY_ARITH);
+     Node eq = atom.eqNode(rewritten);
+     return d_ppPfGen.mkTrustedRewrite(
+         atom,
+diff --git a/src/theory/booleans/circuit_propagator.cpp b/src/theory/booleans/circuit_propagator.cpp
+index b3bf5c609..965442d28 100644
+--- a/src/theory/booleans/circuit_propagator.cpp
++++ b/src/theory/booleans/circuit_propagator.cpp
+@@ -75,7 +75,7 @@ void CircuitPropagator::assertTrue(TNode assertion)
+   else if (assertion.getKind() == Kind::AND)
+   {
+     ProofCircuitPropagatorBackward prover{
+-        d_env.getProofNodeManager(), assertion, true};
++        d_env.getNodeManager(), d_env.getProofNodeManager(), assertion, true};
+     if (isProofEnabled())
+     {
+       addProof(assertion, prover.assume(assertion));
+@@ -167,7 +167,8 @@ void CircuitPropagator::makeConflict(Node n)
+     {
+       return;
+     }
+-    ProofCircuitPropagator pcp(d_env.getProofNodeManager());
++    ProofCircuitPropagator pcp(d_env.getNodeManager(),
++                               d_env.getProofNodeManager());
+     if (n == bfalse)
+     {
+       d_epg->setProofFor(bfalse, pcp.assume(bfalse));
+@@ -239,8 +240,10 @@ void CircuitPropagator::propagateBackward(TNode parent, bool parentAssignment)
+ {
+   Trace("circuit-prop") << "CircuitPropagator::propagateBackward(" << parent
+                         << ", " << parentAssignment << ")" << endl;
+-  ProofCircuitPropagatorBackward prover{
+-      d_env.getProofNodeManager(), parent, parentAssignment};
++  ProofCircuitPropagatorBackward prover{d_env.getNodeManager(),
++                                        d_env.getProofNodeManager(),
++                                        parent,
++                                        parentAssignment};
+ 
+   // backward rules
+   switch (parent.getKind())
+@@ -452,8 +455,11 @@ void CircuitPropagator::propagateForward(TNode child, bool childAssignment)
+     Trace("circuit-prop") << "Parent: " << parent << endl;
+     Assert(expr::hasSubterm(parent, child));
+ 
+-    ProofCircuitPropagatorForward prover{
+-        d_env.getProofNodeManager(), child, childAssignment, parent};
++    ProofCircuitPropagatorForward prover{d_env.getNodeManager(),
++                                         d_env.getProofNodeManager(),
++                                         child,
++                                         childAssignment,
++                                         parent};
+ 
+     // Forward rules
+     switch (parent.getKind())
+diff --git a/src/theory/booleans/proof_circuit_propagator.cpp b/src/theory/booleans/proof_circuit_propagator.cpp
+index ee9822f19..781260e88 100644
+--- a/src/theory/booleans/proof_circuit_propagator.cpp
++++ b/src/theory/booleans/proof_circuit_propagator.cpp
+@@ -31,9 +31,9 @@ namespace {
+ 
+ /** Shorthand to create a Node from a constant number */
+ template <typename T>
+-Node mkInt(T val)
++Node mkInt(NodeManager* nm, T val)
+ {
+-  return NodeManager::currentNM()->mkConstInt(Rational(val));
++  return nm->mkConstInt(Rational(val));
+ }
+ 
+ /**
+@@ -58,8 +58,9 @@ inline std::vector<Node> collectButHoldout(TNode parent,
+ 
+ }  // namespace
+ 
+-ProofCircuitPropagator::ProofCircuitPropagator(ProofNodeManager* pnm)
+-    : d_pnm(pnm)
++ProofCircuitPropagator::ProofCircuitPropagator(NodeManager* nm,
++                                               ProofNodeManager* pnm)
++    : d_nm(nm), d_pnm(pnm)
+ {
+ }
+ 
+@@ -270,7 +271,6 @@ std::shared_ptr<ProofNode> ProofCircuitPropagator::mkCResolution(
+     const std::vector<Node>& lits,
+     const std::vector<bool>& polarity)
+ {
+-  auto* nm = NodeManager::currentNM();
+   std::vector<std::shared_ptr<ProofNode>> children = {clause};
+   std::vector<Node> cpols;
+   std::vector<Node> clits;
+@@ -296,12 +296,12 @@ std::shared_ptr<ProofNode> ProofCircuitPropagator::mkCResolution(
+     {
+       children.emplace_back(assume(lit));
+     }
+-    cpols.emplace_back(nm->mkConst(pol));
++    cpols.emplace_back(d_nm->mkConst(pol));
+     clits.emplace_back(lit);
+   }
+   std::vector<Node> args;
+-  args.push_back(nm->mkNode(Kind::SEXPR, cpols));
+-  args.push_back(nm->mkNode(Kind::SEXPR, clits));
++  args.push_back(d_nm->mkNode(Kind::SEXPR, cpols));
++  args.push_back(d_nm->mkNode(Kind::SEXPR, clits));
+   return mkProof(ProofRule::CHAIN_RESOLUTION, children, args);
+ }
+ 
+@@ -316,21 +316,21 @@ std::shared_ptr<ProofNode> ProofCircuitPropagator::mkCResolution(
+ std::shared_ptr<ProofNode> ProofCircuitPropagator::mkResolution(
+     const std::shared_ptr<ProofNode>& clause, const Node& lit, bool polarity)
+ {
+-  auto* nm = NodeManager::currentNM();
+   if (polarity)
+   {
+     if (lit.getKind() == Kind::NOT)
+     {
+       return mkProof(ProofRule::RESOLUTION,
+                      {clause, assume(lit[0])},
+-                     {nm->mkConst(false), lit[0]});
++                     {d_nm->mkConst(false), lit[0]});
+     }
+     return mkProof(ProofRule::RESOLUTION,
+                    {clause, assume(lit.notNode())},
+-                   {nm->mkConst(true), lit});
++                   {d_nm->mkConst(true), lit});
+   }
+-  return mkProof(
+-      ProofRule::RESOLUTION, {clause, assume(lit)}, {nm->mkConst(false), lit});
++  return mkProof(ProofRule::RESOLUTION,
++                 {clause, assume(lit)},
++                 {d_nm->mkConst(false), lit});
+ }
+ 
+ std::shared_ptr<ProofNode> ProofCircuitPropagator::mkNot(
+@@ -345,8 +345,8 @@ std::shared_ptr<ProofNode> ProofCircuitPropagator::mkNot(
+ }
+ 
+ ProofCircuitPropagatorBackward::ProofCircuitPropagatorBackward(
+-    ProofNodeManager* pnm, TNode parent, bool parentAssignment)
+-    : ProofCircuitPropagator(pnm),
++    NodeManager* nm, ProofNodeManager* pnm, TNode parent, bool parentAssignment)
++    : ProofCircuitPropagator(nm, pnm),
+       d_parent(parent),
+       d_parentAssignment(parentAssignment)
+ {
+@@ -359,8 +359,9 @@ std::shared_ptr<ProofNode> ProofCircuitPropagatorBackward::andTrue(
+   {
+     return nullptr;
+   }
+-  return mkProof(
+-      ProofRule::AND_ELIM, {assume(d_parent)}, {mkInt(i - d_parent.begin())});
++  return mkProof(ProofRule::AND_ELIM,
++                 {assume(d_parent)},
++                 {mkInt(d_nm, i - d_parent.begin())});
+ }
+ 
+ std::shared_ptr<ProofNode> ProofCircuitPropagatorBackward::orFalse(
+@@ -372,7 +373,7 @@ std::shared_ptr<ProofNode> ProofCircuitPropagatorBackward::orFalse(
+   }
+   return mkNot(mkProof(ProofRule::NOT_OR_ELIM,
+                        {assume(d_parent.notNode())},
+-                       {mkInt(i - d_parent.begin())}));
++                       {mkInt(d_nm, i - d_parent.begin())}));
+ }
+ 
+ std::shared_ptr<ProofNode> ProofCircuitPropagatorBackward::iteC(bool c)
+@@ -437,8 +438,12 @@ std::shared_ptr<ProofNode> ProofCircuitPropagatorBackward::impliesNegY()
+ }
+ 
+ ProofCircuitPropagatorForward::ProofCircuitPropagatorForward(
+-    ProofNodeManager* pnm, Node child, bool childAssignment, Node parent)
+-    : ProofCircuitPropagator{pnm},
++    NodeManager* nm,
++    ProofNodeManager* pnm,
++    Node child,
++    bool childAssignment,
++    Node parent)
++    : ProofCircuitPropagator{nm, pnm},
+       d_child(child),
+       d_childAssignment(childAssignment),
+       d_parent(parent)
+@@ -466,11 +471,11 @@ std::shared_ptr<ProofNode> ProofCircuitPropagatorForward::andOneFalse()
+     return nullptr;
+   }
+   auto it = std::find(d_parent.begin(), d_parent.end(), d_child);
+-  return mkResolution(
+-      mkProof(
+-          ProofRule::CNF_AND_POS, {}, {d_parent, mkInt(it - d_parent.begin())}),
+-      d_child,
+-      true);
++  return mkResolution(mkProof(ProofRule::CNF_AND_POS,
++                              {},
++                              {d_parent, mkInt(d_nm, it - d_parent.begin())}),
++                      d_child,
++                      true);
+ }
+ 
+ std::shared_ptr<ProofNode> ProofCircuitPropagatorForward::orOneTrue()
+@@ -480,11 +485,12 @@ std::shared_ptr<ProofNode> ProofCircuitPropagatorForward::orOneTrue()
+     return nullptr;
+   }
+   auto it = std::find(d_parent.begin(), d_parent.end(), d_child);
+-  return mkNot(mkResolution(
+-      mkProof(
+-          ProofRule::CNF_OR_NEG, {}, {d_parent, mkInt(it - d_parent.begin())}),
+-      d_child,
+-      false));
++  return mkNot(
++      mkResolution(mkProof(ProofRule::CNF_OR_NEG,
++                           {},
++                           {d_parent, mkInt(d_nm, it - d_parent.begin())}),
++                   d_child,
++                   false));
+ }
+ 
+ std::shared_ptr<ProofNode> ProofCircuitPropagatorForward::orFalse()
+diff --git a/src/theory/booleans/proof_circuit_propagator.h b/src/theory/booleans/proof_circuit_propagator.h
+index 56d3d2c48..0903c264a 100644
+--- a/src/theory/booleans/proof_circuit_propagator.h
++++ b/src/theory/booleans/proof_circuit_propagator.h
+@@ -39,7 +39,7 @@ namespace booleans {
+ class ProofCircuitPropagator
+ {
+  public:
+-  ProofCircuitPropagator(ProofNodeManager* pnm);
++  ProofCircuitPropagator(NodeManager* nm, ProofNodeManager* pnm);
+ 
+   /** Assuming the given node */
+   std::shared_ptr<ProofNode> assume(Node n);
+@@ -117,6 +117,8 @@ class ProofCircuitPropagator
+   /** Apply NOT_NOT_ELIM rule if n.getResult() is a nested negation */
+   std::shared_ptr<ProofNode> mkNot(const std::shared_ptr<ProofNode>& n);
+ 
++  /** The associated node manager */
++  NodeManager* d_nm;
+   /** The proof node manager */
+   ProofNodeManager* d_pnm;
+ };
+@@ -128,7 +130,8 @@ class ProofCircuitPropagator
+ class ProofCircuitPropagatorBackward : public ProofCircuitPropagator
+ {
+  public:
+-  ProofCircuitPropagatorBackward(ProofNodeManager* pnm,
++  ProofCircuitPropagatorBackward(NodeManager* nm,
++                                 ProofNodeManager* pnm,
+                                  TNode parent,
+                                  bool parentAssignment);
+ 
+@@ -172,7 +175,8 @@ class ProofCircuitPropagatorBackward : public ProofCircuitPropagator
+ class ProofCircuitPropagatorForward : public ProofCircuitPropagator
+ {
+  public:
+-  ProofCircuitPropagatorForward(ProofNodeManager* pnm,
++  ProofCircuitPropagatorForward(NodeManager* nm,
++                                ProofNodeManager* pnm,
+                                 Node child,
+                                 bool childAssignment,
+                                 Node parent);
+diff --git a/src/theory/builtin/generic_op.cpp b/src/theory/builtin/generic_op.cpp
+index 7a3247561..cf36bb610 100644
+--- a/src/theory/builtin/generic_op.cpp
++++ b/src/theory/builtin/generic_op.cpp
+@@ -267,11 +267,12 @@ bool convertToNumeralList(const std::vector<Node>& indices,
+   return true;
+ }
+ 
+-Node GenericOp::getOperatorForIndices(Kind k, const std::vector<Node>& indices)
++Node GenericOp::getOperatorForIndices(NodeManager* nm,
++                                      Kind k,
++                                      const std::vector<Node>& indices)
+ {
+   // all indices should be constant!
+   Assert(isIndexedOperatorKind(k));
+-  NodeManager* nm = NodeManager::currentNM();
+   if (isNumeralIndexedOperatorKind(k))
+   {
+     std::vector<uint32_t> numerals;
+@@ -400,7 +401,8 @@ Node GenericOp::getConcreteApp(const Node& app)
+   // usually one, but we handle cases where it is >1.
+   size_t nargs = metakind::getMinArityForKind(okind);
+   std::vector<Node> indices(app.begin(), app.end() - nargs);
+-  Node op = getOperatorForIndices(okind, indices);
++  NodeManager* nm = NodeManager::currentNM();
++  Node op = getOperatorForIndices(nm, okind, indices);
+   // could have a bad index, in which case we don't rewrite
+   if (op.isNull())
+   {
+@@ -409,7 +411,7 @@ Node GenericOp::getConcreteApp(const Node& app)
+   std::vector<Node> args;
+   args.push_back(op);
+   args.insert(args.end(), app.end() - nargs, app.end());
+-  Node ret = NodeManager::currentNM()->mkNode(okind, args);
++  Node ret = nm->mkNode(okind, args);
+   // could be ill typed, in which case we don't rewrite
+   if (ret.getTypeOrNull(true).isNull())
+   {
+diff --git a/src/theory/builtin/generic_op.h b/src/theory/builtin/generic_op.h
+index bd596aca3..fc3964061 100644
+--- a/src/theory/builtin/generic_op.h
++++ b/src/theory/builtin/generic_op.h
+@@ -53,7 +53,9 @@ class GenericOp
+    * Return the operator of kind k whose indices are the constants in the
+    * given vector.
+    */
+-  static Node getOperatorForIndices(Kind k, const std::vector<Node>& indices);
++  static Node getOperatorForIndices(NodeManager* nm,
++                                    Kind k,
++                                    const std::vector<Node>& indices);
+   /**
+    * Get the concrete term corresponding to the application of
+    * APPLY_INDEXED_SYMBOLIC. Requires all indices to be constant.
+diff --git a/src/theory/builtin/proof_checker.cpp b/src/theory/builtin/proof_checker.cpp
+index 1075167b2..93ab18814 100644
+--- a/src/theory/builtin/proof_checker.cpp
++++ b/src/theory/builtin/proof_checker.cpp
+@@ -497,10 +497,9 @@ bool BuiltinProofRuleChecker::getTheoryId(TNode n, TheoryId& tid)
+   return true;
+ }
+ 
+-Node BuiltinProofRuleChecker::mkTheoryIdNode(TheoryId tid)
++Node BuiltinProofRuleChecker::mkTheoryIdNode(NodeManager* nm, TheoryId tid)
+ {
+-  return NodeManager::currentNM()->mkConstInt(
+-      Rational(static_cast<uint32_t>(tid)));
++  return nm->mkConstInt(Rational(static_cast<uint32_t>(tid)));
+ }
+ 
+ }  // namespace builtin
+diff --git a/src/theory/builtin/proof_checker.h b/src/theory/builtin/proof_checker.h
+index 3df4546fc..d42f0a239 100644
+--- a/src/theory/builtin/proof_checker.h
++++ b/src/theory/builtin/proof_checker.h
+@@ -106,7 +106,7 @@ class BuiltinProofRuleChecker : public ProofRuleChecker
+   /** get a TheoryId from a node, return false if we fail */
+   static bool getTheoryId(TNode n, TheoryId& tid);
+   /** Make a TheoryId into a node */
+-  static Node mkTheoryIdNode(TheoryId tid);
++  static Node mkTheoryIdNode(NodeManager* nm, TheoryId tid);
+   /**
+    * @param nm The node manager.
+    * @param n The term to rewrite via ENCODE_EQ_INTRO.
+diff --git a/src/theory/ff/cocoa_encoder.cpp b/src/theory/ff/cocoa_encoder.cpp
+index 00880e30b..e88e23830 100644
+--- a/src/theory/ff/cocoa_encoder.cpp
++++ b/src/theory/ff/cocoa_encoder.cpp
+@@ -76,7 +76,10 @@ CoCoA::symbol cocoaSym(const std::string& varName, std::optional<size_t> index)
+   return index.has_value() ? CoCoA::symbol(s, *index) : CoCoA::symbol(s);
+ }
+ 
+-CocoaEncoder::CocoaEncoder(const FfSize& size) : FieldObj(size) {}
++CocoaEncoder::CocoaEncoder(NodeManager* nm, const FfSize& size)
++    : FieldObj(nm, size)
++{
++}
+ 
+ CoCoA::symbol CocoaEncoder::freshSym(const std::string& varName,
+                                      std::optional<size_t> index)
+diff --git a/src/theory/ff/cocoa_encoder.h b/src/theory/ff/cocoa_encoder.h
+index 52352b63a..7420b0d86 100644
+--- a/src/theory/ff/cocoa_encoder.h
++++ b/src/theory/ff/cocoa_encoder.h
+@@ -64,7 +64,7 @@ class CocoaEncoder : public FieldObj
+ {
+  public:
+   /** Create a new encoder, for this field. */
+-  CocoaEncoder(const FfSize& size);
++  CocoaEncoder(NodeManager* nm, const FfSize& size);
+   /** Add a fact (one must call this twice per fact, once per stage). */
+   void addFact(const Node& fact);
+   /** Start Stage::Encode. */
+diff --git a/src/theory/ff/split_gb.cpp b/src/theory/ff/split_gb.cpp
+index ab3e3d15a..e5352ed48 100644
+--- a/src/theory/ff/split_gb.cpp
++++ b/src/theory/ff/split_gb.cpp
+@@ -41,7 +41,7 @@ std::optional<std::unordered_map<Node, FiniteFieldValue>> split(
+     const std::vector<Node>& facts, const FfSize& size, const Env& env)
+ {
+   std::unordered_set<Node> bits{};
+-  CocoaEncoder enc(size);
++  CocoaEncoder enc(env.getNodeManager(), size);
+   for (const auto& fact : facts)
+   {
+     enc.addFact(fact);
+diff --git a/src/theory/ff/sub_theory.cpp b/src/theory/ff/sub_theory.cpp
+index 741aac7bd..fadf82ff5 100644
+--- a/src/theory/ff/sub_theory.cpp
++++ b/src/theory/ff/sub_theory.cpp
+@@ -47,7 +47,10 @@ namespace theory {
+ namespace ff {
+ 
+ SubTheory::SubTheory(Env& env, FfStatistics* stats, Integer modulus)
+-    : EnvObj(env), FieldObj(modulus), d_facts(context()), d_stats(stats)
++    : EnvObj(env),
++      FieldObj(nodeManager(), modulus),
++      d_facts(context()),
++      d_stats(stats)
+ {
+   AlwaysAssert(modulus.isProbablePrime()) << "non-prime fields are unsupported";
+   // must be initialized before using CoCoA.
+@@ -85,7 +88,7 @@ Result SubTheory::postCheck(Theory::Effort e)
+       }
+       else if (options().ff.ffSolver == options::FfSolver::GB)
+       {
+-        CocoaEncoder enc(size());
++        CocoaEncoder enc(nodeManager(), size());
+         // collect leaves
+         for (const Node& node : d_facts)
+         {
+diff --git a/src/theory/ff/util.cpp b/src/theory/ff/util.cpp
+index 27e3f1194..3874fee13 100644
+--- a/src/theory/ff/util.cpp
++++ b/src/theory/ff/util.cpp
+@@ -30,9 +30,9 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace ff {
+ 
+-FieldObj::FieldObj(const FfSize& size)
++FieldObj::FieldObj(NodeManager* nm, const FfSize& size)
+     : d_size(size),
+-      d_nm(NodeManager::currentNM()),
++      d_nm(nm),
+       d_zero(d_nm->mkConst(FiniteFieldValue(0, d_size))),
+       d_one(d_nm->mkConst(FiniteFieldValue(1, d_size)))
+ #ifdef CVC5_USE_COCOA
+diff --git a/src/theory/ff/util.h b/src/theory/ff/util.h
+index 16e5672da..321771ced 100644
+--- a/src/theory/ff/util.h
++++ b/src/theory/ff/util.h
+@@ -47,7 +47,7 @@ using FfModel = std::unordered_map<Node, FiniteFieldValue>;
+ class FieldObj
+ {
+  public:
+-  FieldObj(const FfSize& size);
++  FieldObj(NodeManager* nm, const FfSize& size);
+   /** create a sum (with as few as 0 elements); accepts Nodes or TNodes */
+   template <bool ref_count>
+   Node mkAdd(const std::vector<NodeTemplate<ref_count>>& summands);
+diff --git a/src/theory/rewriter.cpp b/src/theory/rewriter.cpp
+index a80eefa16..cebbb343e 100644
+--- a/src/theory/rewriter.cpp
++++ b/src/theory/rewriter.cpp
+@@ -496,7 +496,8 @@ RewriteResponse Rewriter::processTrustRewriteResponse(
+     ProofGenerator* pg = trn.getGenerator();
+     if (pg == nullptr)
+     {
+-      Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(theoryId);
++      Node tidn =
++          builtin::BuiltinProofRuleChecker::mkTheoryIdNode(d_nm, theoryId);
+       // add small step trusted rewrite
+       Node rid = mkMethodId(d_nm,
+                             isPre ? MethodId::RW_REWRITE_THEORY_PRE
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index 5a8a00a88..13f7e2eb8 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -925,7 +925,8 @@ TrustNode TheoryEngine::ppRewrite(TNode term,
+     if (tskl.getGenerator() == nullptr)
+     {
+       Node proven = tskl.getProven();
+-      Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(tid);
++      Node tidn =
++          builtin::BuiltinProofRuleChecker::mkTheoryIdNode(nodeManager(), tid);
+       d_lazyProof->addTrustedStep(
+           proven, TrustId::THEORY_PREPROCESS_LEMMA, {}, {tidn});
+       skl.d_lemma = TrustNode::mkTrustLemma(proven, d_lazyProof.get());
+@@ -1316,7 +1317,8 @@ TrustNode TheoryEngine::getExplanation(TNode node)
+       {
+         Node proven = texplanation.getProven();
+         TheoryId tid = theoryOf(atom)->getId();
+-        Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(tid);
++        Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(
++            nodeManager(), tid);
+         d_lazyProof->addTrustedStep(proven, TrustId::THEORY_LEMMA, {}, {tidn});
+         texplanation =
+             TrustNode::mkTrustPropExp(node, explanation, d_lazyProof.get());
+@@ -1507,7 +1509,8 @@ void TheoryEngine::lemma(TrustNode tlemma,
+     if (tlemma.getGenerator() == nullptr)
+     {
+       // add theory lemma step to proof
+-      Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(from);
++      Node tidn =
++          builtin::BuiltinProofRuleChecker::mkTheoryIdNode(nodeManager(), from);
+       d_lazyProof->addTrustedStep(lemma, TrustId::THEORY_LEMMA, {}, {tidn});
+       // update the trust node
+       tlemma = TrustNode::mkTrustLemma(lemma, d_lazyProof.get());
+@@ -1608,7 +1611,8 @@ void TheoryEngine::conflict(TrustNode tconflict,
+       else
+       {
+         // add theory lemma step
+-        Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(theoryId);
++        Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(
++            nodeManager(), theoryId);
+         Node conf = tconflict.getProven();
+         d_lazyProof->addTrustedStep(conf, TrustId::THEORY_LEMMA, {}, {tidn});
+       }
+@@ -2007,7 +2011,8 @@ TrustNode TheoryEngine::getExplanation(
+       {
+         Trace("te-proof-exp") << "...via trust THEORY_LEMMA" << std::endl;
+         // otherwise, trusted theory lemma
+-        Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(ttid);
++        Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(
++            nodeManager(), ttid);
+         lcp->addTrustedStep(proven, TrustId::THEORY_LEMMA, {}, {tidn});
+       }
+       std::vector<Node> pfChildren;
+diff --git a/src/theory/uf/symmetry_breaker.cpp b/src/theory/uf/symmetry_breaker.cpp
+index 73c09f53a..7a96e1068 100644
+--- a/src/theory/uf/symmetry_breaker.cpp
++++ b/src/theory/uf/symmetry_breaker.cpp
+@@ -54,8 +54,8 @@ namespace uf {
+ 
+ using namespace cvc5::context;
+ 
+-SymmetryBreaker::Template::Template()
+-    : d_template(), d_assertions(NodeManager::currentNM()), d_sets(), d_reps()
++SymmetryBreaker::Template::Template(NodeManager* nm)
++    : d_template(), d_assertions(nm), d_sets(), d_reps()
+ {
+ }
+ 
+@@ -173,7 +173,7 @@ SymmetryBreaker::SymmetryBreaker(Env& env, std::string name)
+       d_phiSet(),
+       d_permutations(),
+       d_terms(),
+-      d_template(),
++      d_template(nodeManager()),
+       d_normalizationCache(),
+       d_termEqs(),
+       d_termEqsOnly(),
+@@ -438,7 +438,7 @@ void SymmetryBreaker::assertFormula(TNode phi) {
+   d_phi.push_back(phi);
+   if (phi.getKind() == Kind::OR)
+   {
+-    Template t;
++    Template t(nodeManager());
+     Node::iterator i = phi.begin();
+     t.match(*i++);
+     while(i != phi.end()) {
+diff --git a/src/theory/uf/symmetry_breaker.h b/src/theory/uf/symmetry_breaker.h
+index 4e53c3d7d..2b9129222 100644
+--- a/src/theory/uf/symmetry_breaker.h
++++ b/src/theory/uf/symmetry_breaker.h
+@@ -70,15 +70,17 @@ class SymmetryBreaker : protected EnvObj, public context::ContextNotifyObj
+     bool matchRecursive(TNode t, TNode n);
+ 
+   public:
+-    Template();
+-    bool match(TNode n);
+-    std::unordered_map<TNode, std::set<TNode>>& partitions() { return d_sets; }
+-    Node assertions() {
+-      switch(d_assertions.getNumChildren()) {
+-      case 0: return Node::null();
+-      case 1: return d_assertions[0];
+-      default: return Node(d_assertions);
+-      }
++   Template(NodeManager* nm);
++   bool match(TNode n);
++   std::unordered_map<TNode, std::set<TNode>>& partitions() { return d_sets; }
++   Node assertions()
++   {
++     switch (d_assertions.getNumChildren())
++     {
++       case 0: return Node::null();
++       case 1: return d_assertions[0];
++       default: return Node(d_assertions);
++     }
+     }
+     void reset();
+   };/* class SymmetryBreaker::Template */
+-- 
+2.47.1
+

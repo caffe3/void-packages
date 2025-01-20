@@ -1,0 +1,2855 @@
+From 39ac7960675ba5a2a20e083803c6fe94f792d7ef Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 10 Dec 2024 13:28:59 -0600
+Subject: [PATCH 232/312] Replace calls to currentNM with calls to NM static
+ methods (#11432)
+
+---
+ src/expr/annotation_elim_node_converter.cpp   |   2 +-
+ src/expr/bound_var_manager.cpp                |   7 +-
+ src/proof/trust_node.cpp                      |   2 +-
+ src/smt/print_benchmark.cpp                   |   2 +-
+ src/theory/arith/arith_msum.h                 |   2 +-
+ src/theory/arith/arith_utilities.cpp          |  27 +-
+ src/theory/arith/arith_utilities.h            |   9 +-
+ src/theory/arith/linear/normal_form.cpp       |  12 +-
+ src/theory/arith/nl/coverings/cdcac.cpp       |   2 +-
+ src/theory/arith/nl/iand_utils.cpp            |  34 ++-
+ .../arith/nl/transcendental/sine_solver.cpp   | 101 +++----
+ src/theory/arith/rewriter/node_utils.cpp      |   5 +-
+ src/theory/arith/rewriter/rewrite_atom.cpp    |   4 +-
+ src/theory/bags/bags_utils.cpp                |   6 +-
+ src/theory/bv/bitblast/bitblast_utils.h       |  12 +-
+ .../theory_bv_rewrite_rules_normalization.h   |  39 ++-
+ ...ry_bv_rewrite_rules_operator_elimination.h | 248 +++++++++---------
+ .../theory_bv_rewrite_rules_simplification.h  | 151 +++++------
+ src/theory/bv/theory_bv_utils.cpp             |  23 +-
+ .../datatypes/theory_datatypes_utils.cpp      |   7 +-
+ src/theory/fp/fp_word_blaster.cpp             |  87 +++---
+ src/theory/quantifiers/bv_inverter.cpp        |  17 +-
+ src/theory/quantifiers/bv_inverter_utils.cpp  |  34 ++-
+ .../quantifiers/cegqi/ceg_bv_instantiator.cpp |  13 +-
+ src/theory/quantifiers/cegqi/ceg_utils.h      |   2 +-
+ src/theory/quantifiers/cegqi/nested_qe.cpp    |   3 +-
+ .../quantifiers/conjecture_generator.cpp      |   9 +-
+ .../quantifiers/ematching/ho_trigger.cpp      |   2 +-
+ .../ematching/pattern_term_selector.cpp       |   2 +-
+ src/theory/quantifiers/instantiate.cpp        |   2 +-
+ src/theory/quantifiers/term_util.cpp          |   6 +-
+ src/theory/sets/normal_form.h                 |   2 +-
+ src/theory/sets/rels_utils.cpp                |   6 +-
+ src/theory/strings/arith_entail.cpp           |   4 +-
+ src/theory/strings/strings_entail.cpp         |  22 +-
+ src/theory/strings/term_registry.cpp          |   5 +-
+ .../strings/theory_strings_preprocess.cpp     |  20 +-
+ src/theory/strings/theory_strings_utils.cpp   |  28 +-
+ src/theory/theory_engine.cpp                  |   3 +-
+ 39 files changed, 452 insertions(+), 510 deletions(-)
+
+diff --git a/src/expr/annotation_elim_node_converter.cpp b/src/expr/annotation_elim_node_converter.cpp
+index 87566198b..d16373ca4 100644
+--- a/src/expr/annotation_elim_node_converter.cpp
++++ b/src/expr/annotation_elim_node_converter.cpp
+@@ -28,7 +28,7 @@ Node AnnotationElimNodeConverter::postConvert(Node n)
+ {
+   if (n.isClosure() && n.getNumChildren() == 3)
+   {
+-    return NodeManager::currentNM()->mkNode(n.getKind(), n[0], n[1]);
++    return NodeManager::mkNode(n.getKind(), n[0], n[1]);
+   }
+   return n;
+ }
+diff --git a/src/expr/bound_var_manager.cpp b/src/expr/bound_var_manager.cpp
+index 53acbc213..f8e34f1b6 100644
+--- a/src/expr/bound_var_manager.cpp
++++ b/src/expr/bound_var_manager.cpp
+@@ -38,17 +38,16 @@ void BoundVarManager::setNameAttr(Node v, const std::string& name)
+ 
+ Node BoundVarManager::getCacheValue(TNode cv1, TNode cv2)
+ {
+-  return NodeManager::currentNM()->mkNode(Kind::SEXPR, cv1, cv2);
++  return NodeManager::mkNode(Kind::SEXPR, cv1, cv2);
+ }
+ Node BoundVarManager::getCacheValue(TNode cv1, TNode cv2, TNode cv3)
+ {
+-  return NodeManager::currentNM()->mkNode(Kind::SEXPR, cv1, cv2, cv3);
++  return NodeManager::mkNode(Kind::SEXPR, cv1, cv2, cv3);
+ }
+ 
+ Node BoundVarManager::getCacheValue(TNode cv1, TNode cv2, size_t i)
+ {
+-  return NodeManager::currentNM()->mkNode(
+-      Kind::SEXPR, cv1, cv2, getCacheValue(i));
++  return NodeManager::mkNode(Kind::SEXPR, cv1, cv2, getCacheValue(i));
+ }
+ 
+ Node BoundVarManager::getCacheValue(size_t i)
+diff --git a/src/proof/trust_node.cpp b/src/proof/trust_node.cpp
+index 02b4555c5..a99c40a2f 100644
+--- a/src/proof/trust_node.cpp
++++ b/src/proof/trust_node.cpp
+@@ -128,7 +128,7 @@ Node TrustNode::getLemmaProven(Node lem) { return lem; }
+ 
+ Node TrustNode::getPropExpProven(TNode lit, Node exp)
+ {
+-  return NodeManager::currentNM()->mkNode(Kind::IMPLIES, exp, lit);
++  return NodeManager::mkNode(Kind::IMPLIES, exp, lit);
+ }
+ 
+ Node TrustNode::getRewriteProven(TNode n, Node nr) { return n.eqNode(nr); }
+diff --git a/src/smt/print_benchmark.cpp b/src/smt/print_benchmark.cpp
+index abb6c25bc..ee2da4d44 100644
+--- a/src/smt/print_benchmark.cpp
++++ b/src/smt/print_benchmark.cpp
+@@ -383,7 +383,7 @@ bool PrintBenchmark::decomposeDefinition(Node a,
+   {
+     isRecDef = true;
+     sym = a[1][0].getOperator();
+-    body = NodeManager::currentNM()->mkNode(Kind::LAMBDA, a[0], a[1][1]);
++    body = NodeManager::mkNode(Kind::LAMBDA, a[0], a[1][1]);
+     return true;
+   }
+   else
+diff --git a/src/theory/arith/arith_msum.h b/src/theory/arith/arith_msum.h
+index 17d63fd26..5ab99a987 100644
+--- a/src/theory/arith/arith_msum.h
++++ b/src/theory/arith/arith_msum.h
+@@ -119,7 +119,7 @@ class ArithMSum
+    */
+   static inline Node mkCoeffTerm(Node c, Node t)
+   {
+-    return c.isNull() ? t : NodeManager::currentNM()->mkNode(Kind::MULT, c, t);
++    return c.isNull() ? t : NodeManager::mkNode(Kind::MULT, c, t);
+   }
+ 
+   /** isolate variable v in constraint ([msum] <k> 0)
+diff --git a/src/theory/arith/arith_utilities.cpp b/src/theory/arith/arith_utilities.cpp
+index a6971449a..8a09c98cd 100644
+--- a/src/theory/arith/arith_utilities.cpp
++++ b/src/theory/arith/arith_utilities.cpp
+@@ -224,9 +224,9 @@ void printRationalApprox(const char* c, Node cr, unsigned prec)
+ 
+ Node mkBounded(Node l, Node a, Node u)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+-  return nm->mkNode(
+-      Kind::AND, nm->mkNode(Kind::GEQ, a, l), nm->mkNode(Kind::LEQ, a, u));
++  return NodeManager::mkNode(Kind::AND,
++                             NodeManager::mkNode(Kind::GEQ, a, l),
++                             NodeManager::mkNode(Kind::LEQ, a, u));
+ }
+ 
+ Rational leastIntGreaterThan(const Rational& q) { return q.floor() + 1; }
+@@ -235,24 +235,23 @@ Rational greatestIntLessThan(const Rational& q) { return q.ceiling() - 1; }
+ 
+ Node negateProofLiteral(TNode n)
+ {
+-  auto nm = NodeManager::currentNM();
+   switch (n.getKind())
+   {
+     case Kind::GT:
+     {
+-      return nm->mkNode(Kind::LEQ, n[0], n[1]);
++      return NodeManager::mkNode(Kind::LEQ, n[0], n[1]);
+     }
+     case Kind::LT:
+     {
+-      return nm->mkNode(Kind::GEQ, n[0], n[1]);
++      return NodeManager::mkNode(Kind::GEQ, n[0], n[1]);
+     }
+     case Kind::LEQ:
+     {
+-      return nm->mkNode(Kind::GT, n[0], n[1]);
++      return NodeManager::mkNode(Kind::GT, n[0], n[1]);
+     }
+     case Kind::GEQ:
+     {
+-      return nm->mkNode(Kind::LT, n[0], n[1]);
++      return NodeManager::mkNode(Kind::LT, n[0], n[1]);
+     }
+     case Kind::EQUAL:
+     case Kind::NOT:
+@@ -281,17 +280,16 @@ Node multConstants(const Node& c1, const Node& c2)
+ 
+ Node mkEquality(const Node& a, const Node& b)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   Assert(a.getType().isRealOrInt());
+   Assert(b.getType().isRealOrInt());
+   // if they have the same type, just make them equal
+   if (a.getType() == b.getType())
+   {
+-    return nm->mkNode(Kind::EQUAL, a, b);
++    return NodeManager::mkNode(Kind::EQUAL, a, b);
+   }
+   // otherwise subtract and set equal to zero
+-  Node diff = nm->mkNode(Kind::SUB, a, b);
+-  return nm->mkNode(Kind::EQUAL, diff, mkZero(diff.getType()));
++  Node diff = NodeManager::mkNode(Kind::SUB, a, b);
++  return NodeManager::mkNode(Kind::EQUAL, diff, mkZero(diff.getType()));
+ }
+ 
+ Node castToReal(NodeManager* nm, const Node& n)
+@@ -308,13 +306,12 @@ std::pair<Node,Node> mkSameType(const Node& a, const Node& b)
+   {
+     return {a, b};
+   }
+-  NodeManager* nm = NodeManager::currentNM();
+   if (at.isInteger() && bt.isReal())
+   {
+-    return {nm->mkNode(Kind::TO_REAL, a), b};
++    return {NodeManager::mkNode(Kind::TO_REAL, a), b};
+   }
+   Assert(at.isReal() && bt.isInteger());
+-  return {a, nm->mkNode(Kind::TO_REAL, b)};
++  return {a, NodeManager::mkNode(Kind::TO_REAL, b)};
+ }
+ 
+ /* ------------------------------------------------------------------------- */
+diff --git a/src/theory/arith/arith_utilities.h b/src/theory/arith/arith_utilities.h
+index dc736d4be..e2a44cbd8 100644
+--- a/src/theory/arith/arith_utilities.h
++++ b/src/theory/arith/arith_utilities.h
+@@ -257,16 +257,15 @@ inline Node safeConstructNaryType(const TypeNode& tn,
+ 
+ // Returns the multiplication of a and b.
+ inline Node mkMult(Node a, Node b) {
+-  return NodeManager::currentNM()->mkNode(Kind::MULT, a, b);
++  return NodeManager::mkNode(Kind::MULT, a, b);
+ }
+ 
+ // Return a constraint that is equivalent to term being is in the range
+ // [start, end). This includes start and excludes end.
+ inline Node mkInRange(Node term, Node start, Node end) {
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node above_start = nm->mkNode(Kind::LEQ, start, term);
+-  Node below_end = nm->mkNode(Kind::LT, term, end);
+-  return nm->mkNode(Kind::AND, above_start, below_end);
++  Node above_start = NodeManager::mkNode(Kind::LEQ, start, term);
++  Node below_end = NodeManager::mkNode(Kind::LT, term, end);
++  return NodeManager::mkNode(Kind::AND, above_start, below_end);
+ }
+ 
+ // Creates an expression that constrains q to be equal to one of two expressions
+diff --git a/src/theory/arith/linear/normal_form.cpp b/src/theory/arith/linear/normal_form.cpp
+index 1ad933e53..cc3af5381 100644
+--- a/src/theory/arith/linear/normal_form.cpp
++++ b/src/theory/arith/linear/normal_form.cpp
+@@ -553,8 +553,7 @@ Node Polynomial::computeQR(const Polynomial& p, const Integer& div){
+   Polynomial p_q = Polynomial::mkPolynomial(q_vec);
+   Polynomial p_r = Polynomial::mkPolynomial(r_vec);
+ 
+-  return NodeManager::currentNM()->mkNode(
+-      Kind::ADD, p_q.getNode(), p_r.getNode());
++  return NodeManager::mkNode(Kind::ADD, p_q.getNode(), p_r.getNode());
+ }
+ 
+ 
+@@ -638,8 +637,7 @@ Node SumPair::computeQR(const SumPair& sp, const Integer& div){
+   SumPair sp_q(p_q, Constant::mkConstant(constant_q));
+   SumPair sp_r(p_r, Constant::mkConstant(constant_r));
+ 
+-  return NodeManager::currentNM()->mkNode(
+-      Kind::ADD, sp_q.getNode(), sp_r.getNode());
++  return NodeManager::mkNode(Kind::ADD, sp_q.getNode(), sp_r.getNode());
+ }
+ 
+ SumPair SumPair::mkSumPair(const Polynomial& p){
+@@ -855,8 +853,7 @@ Node Comparison::toNode(Kind k, const Polynomial& l, const Constant& r) {
+   Assert(isRelationOperator(k));
+   switch(k) {
+     case Kind::GEQ:
+-    case Kind::GT:
+-      return NodeManager::currentNM()->mkNode(k, l.getNode(), r.getNode());
++    case Kind::GT: return NodeManager::mkNode(k, l.getNode(), r.getNode());
+     default: Unhandled() << k;
+   }
+ }
+@@ -866,8 +863,7 @@ Node Comparison::toNode(Kind k, const Polynomial& l, const Polynomial& r) {
+   switch(k) {
+     case Kind::GEQ:
+     case Kind::EQUAL:
+-    case Kind::GT:
+-      return NodeManager::currentNM()->mkNode(k, l.getNode(), r.getNode());
++    case Kind::GT: return NodeManager::mkNode(k, l.getNode(), r.getNode());
+     case Kind::LEQ: return toNode(Kind::GEQ, r, l).notNode();
+     case Kind::LT: return toNode(Kind::GT, r, l).notNode();
+     case Kind::DISTINCT: return toNode(Kind::EQUAL, r, l).notNode();
+diff --git a/src/theory/arith/nl/coverings/cdcac.cpp b/src/theory/arith/nl/coverings/cdcac.cpp
+index d59baee02..b60583a95 100644
+--- a/src/theory/arith/nl/coverings/cdcac.cpp
++++ b/src/theory/arith/nl/coverings/cdcac.cpp
+@@ -271,7 +271,7 @@ PolyVector requiredCoefficientsLazardModified(
+   auto zero = NodeManager::currentNM()->mkConstReal(Rational(0));
+   for (const auto& coeff : poly::coefficients(p))
+   {
+-    conditions.emplace_back(NodeManager::currentNM()->mkNode(
++    conditions.emplace_back(NodeManager::mkNode(
+         Kind::EQUAL, nl::as_cvc_polynomial(coeff, vm), zero));
+   }
+   // if phi is false (i.e. p can not vanish)
+diff --git a/src/theory/arith/nl/iand_utils.cpp b/src/theory/arith/nl/iand_utils.cpp
+index 80850c003..0f703553f 100644
+--- a/src/theory/arith/nl/iand_utils.cpp
++++ b/src/theory/arith/nl/iand_utils.cpp
+@@ -50,13 +50,12 @@ bool oneBitAnd(bool a, bool b) { return (a && b); }
+ Node intExtract(Node x, uint32_t i, uint32_t size)
+ {
+   Assert(size > 0);
+-  NodeManager* nm = NodeManager::currentNM();
+   // extract definition in integers is:
+   // (mod (div a (two_to_the j)) (two_to_the (+ (- i j) 1))))
+-  Node extract =
+-      nm->mkNode(Kind::INTS_MODULUS_TOTAL,
+-                 nm->mkNode(Kind::INTS_DIVISION_TOTAL, x, pow2(i * size)),
+-                 pow2(size));
++  Node extract = NodeManager::mkNode(
++      Kind::INTS_MODULUS_TOTAL,
++      NodeManager::mkNode(Kind::INTS_DIVISION_TOTAL, x, pow2(i * size)),
++      pow2(size));
+   return extract;
+ }
+ 
+@@ -94,11 +93,12 @@ Node IAndUtils::createITEFromTable(
+         continue;
+       }
+       // append the current value to the ite.
+-      ite = nm->mkNode(
++      ite = NodeManager::mkNode(
+           Kind::ITE,
+-          nm->mkNode(Kind::AND,
+-                     nm->mkNode(Kind::EQUAL, x, nm->mkConstInt(Rational(i))),
+-                     nm->mkNode(Kind::EQUAL, y, nm->mkConstInt(Rational(j)))),
++          NodeManager::mkNode(
++              Kind::AND,
++              NodeManager::mkNode(Kind::EQUAL, x, nm->mkConstInt(Rational(i))),
++              NodeManager::mkNode(Kind::EQUAL, y, nm->mkConstInt(Rational(j)))),
+           nm->mkConstInt(Rational(table.at(std::make_pair(i, j)))),
+           ite);
+     }
+@@ -154,10 +154,10 @@ Node IAndUtils::createSumNode(Node x,
+     // compute the ite for this part
+     Node sumPart = createITEFromTable(xExtract, yExtract, granularity, table);
+     // append the current block to the sum
+-    sumNode =
+-        nm->mkNode(Kind::ADD,
+-                   sumNode,
+-                   nm->mkNode(Kind::MULT, pow2(i * granularity), sumPart));
++    sumNode = NodeManager::mkNode(
++        Kind::ADD,
++        sumNode,
++        NodeManager::mkNode(Kind::MULT, pow2(i * granularity), sumPart));
+   }
+   return sumNode;
+ }
+@@ -182,10 +182,9 @@ Node IAndUtils::createBitwiseIAndNode(Node x,
+ 
+ Node IAndUtils::iextract(uint32_t i, uint32_t j, Node n) const
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   //  ((_ extract i j) n) is n / 2^j mod 2^{i-j+1}
+-  Node n2j = nm->mkNode(Kind::INTS_DIVISION_TOTAL, n, twoToK(j));
+-  return nm->mkNode(Kind::INTS_MODULUS_TOTAL, n2j, twoToK(i - j + 1));
++  Node n2j = NodeManager::mkNode(Kind::INTS_DIVISION_TOTAL, n, twoToK(j));
++  return NodeManager::mkNode(Kind::INTS_MODULUS_TOTAL, n2j, twoToK(i - j + 1));
+ }
+ 
+ void IAndUtils::computeAndTable(uint32_t granularity)
+@@ -269,8 +268,7 @@ Node IAndUtils::twoToK(unsigned k) const
+ Node IAndUtils::twoToKMinusOne(unsigned k) const
+ {
+   // could be faster
+-  NodeManager* nm = NodeManager::currentNM();
+-  return nm->mkNode(Kind::SUB, twoToK(k), d_one);
++  return NodeManager::mkNode(Kind::SUB, twoToK(k), d_one);
+ }
+ 
+ }  // namespace nl
+diff --git a/src/theory/arith/nl/transcendental/sine_solver.cpp b/src/theory/arith/nl/transcendental/sine_solver.cpp
+index 4a8483d30..ac4f1a70e 100644
+--- a/src/theory/arith/nl/transcendental/sine_solver.cpp
++++ b/src/theory/arith/nl/transcendental/sine_solver.cpp
+@@ -175,7 +175,6 @@ Node SineSolver::getPhaseShiftLemma(const Node& x)
+ 
+ void SineSolver::doPhaseShift(TNode a, TNode new_a)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   Assert(a.getKind() == Kind::SINE);
+   CDProof* proof = nullptr;
+   Node lem;
+@@ -183,7 +182,8 @@ void SineSolver::doPhaseShift(TNode a, TNode new_a)
+   InferenceId iid;
+   if (TranscendentalState::isSimplePurify(a))
+   {
+-    lem = nm->mkNode(Kind::AND, a.eqNode(new_a), a[0].eqNode(new_a[0]));
++    lem =
++        NodeManager::mkNode(Kind::AND, a.eqNode(new_a), a[0].eqNode(new_a[0]));
+     if (d_data->isProofEnabled())
+     {
+       // simple to justify
+@@ -212,7 +212,6 @@ void SineSolver::doPhaseShift(TNode a, TNode new_a)
+ 
+ void SineSolver::checkInitialRefine()
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   for (std::pair<const Kind, std::vector<Node> >& tfl : d_data->d_funcMap)
+   {
+     if (tfl.first != Kind::SINE)
+@@ -232,9 +231,10 @@ void SineSolver::checkInitialRefine()
+         Assert(d_data->isPurified(t));
+         {
+           // sine bounds: -1 <= sin(t) <= 1
+-          Node lem = nm->mkNode(Kind::AND,
+-                                nm->mkNode(Kind::LEQ, t, d_data->d_one),
+-                                nm->mkNode(Kind::GEQ, t, d_data->d_neg_one));
++          Node lem = NodeManager::mkNode(
++              Kind::AND,
++              NodeManager::mkNode(Kind::LEQ, t, d_data->d_one),
++              NodeManager::mkNode(Kind::GEQ, t, d_data->d_neg_one));
+           CDProof* proof = nullptr;
+           if (d_data->isProofEnabled())
+           {
+@@ -248,14 +248,16 @@ void SineSolver::checkInitialRefine()
+           // sine zero tangent:
+           //   t > 0  =>  sin(t) < t
+           //   t < 0  =>  sin(t) > t
+-          Node lem =
+-              nm->mkNode(Kind::AND,
+-                         nm->mkNode(Kind::IMPLIES,
+-                                    nm->mkNode(Kind::GT, t[0], d_data->d_zero),
+-                                    nm->mkNode(Kind::LT, t, t[0])),
+-                         nm->mkNode(Kind::IMPLIES,
+-                                    nm->mkNode(Kind::LT, t[0], d_data->d_zero),
+-                                    nm->mkNode(Kind::GT, t, t[0])));
++          Node lem = NodeManager::mkNode(
++              Kind::AND,
++              NodeManager::mkNode(
++                  Kind::IMPLIES,
++                  NodeManager::mkNode(Kind::GT, t[0], d_data->d_zero),
++                  NodeManager::mkNode(Kind::LT, t, t[0])),
++              NodeManager::mkNode(
++                  Kind::IMPLIES,
++                  NodeManager::mkNode(Kind::LT, t[0], d_data->d_zero),
++                  NodeManager::mkNode(Kind::GT, t, t[0])));
+           CDProof* proof = nullptr;
+           if (d_data->isProofEnabled())
+           {
+@@ -270,17 +272,22 @@ void SineSolver::checkInitialRefine()
+           // sine pi tangent:
+           //   t > -pi  =>  sin(t) > -pi-t
+           //   t <  pi  =>  sin(t) <  pi-t
+-          Node lem = nm->mkNode(
++          Node lem = NodeManager::mkNode(
+               Kind::AND,
+-              nm->mkNode(
++              NodeManager::mkNode(
+                   Kind::IMPLIES,
+-                  nm->mkNode(Kind::GT, t[0], d_neg_pi),
+-                  nm->mkNode(
+-                      Kind::GT, t, nm->mkNode(Kind::SUB, d_neg_pi, t[0]))),
+-              nm->mkNode(
++                  NodeManager::mkNode(Kind::GT, t[0], d_neg_pi),
++                  NodeManager::mkNode(
++                      Kind::GT,
++                      t,
++                      NodeManager::mkNode(Kind::SUB, d_neg_pi, t[0]))),
++              NodeManager::mkNode(
+                   Kind::IMPLIES,
+-                  nm->mkNode(Kind::LT, t[0], d_pi),
+-                  nm->mkNode(Kind::LT, t, nm->mkNode(Kind::SUB, d_pi, t[0]))));
++                  NodeManager::mkNode(Kind::LT, t[0], d_pi),
++                  NodeManager::mkNode(
++                      Kind::LT,
++                      t,
++                      NodeManager::mkNode(Kind::SUB, d_pi, t[0]))));
+           CDProof* proof = nullptr;
+           if (d_data->isProofEnabled())
+           {
+@@ -292,20 +299,24 @@ void SineSolver::checkInitialRefine()
+               lem, InferenceId::ARITH_NL_T_INIT_REFINE, proof);
+         }
+         {
+-          Node lem = nm->mkNode(
++          Node lem = NodeManager::mkNode(
+               Kind::AND,
+               // (-pi < t < 0) <=> (sin(t)<0)
+-              nm->mkNode(Kind::EQUAL,
+-                         nm->mkNode(Kind::AND,
+-                                    nm->mkNode(Kind::LT, d_neg_pi, t[0]),
+-                                    nm->mkNode(Kind::LT, t[0], d_data->d_zero)),
+-                         nm->mkNode(Kind::LT, t, d_data->d_zero)),
++              NodeManager::mkNode(
++                  Kind::EQUAL,
++                  NodeManager::mkNode(
++                      Kind::AND,
++                      NodeManager::mkNode(Kind::LT, d_neg_pi, t[0]),
++                      NodeManager::mkNode(Kind::LT, t[0], d_data->d_zero)),
++                  NodeManager::mkNode(Kind::LT, t, d_data->d_zero)),
+               // (0 < t < pi) <=> (sin(t)>0)
+-              nm->mkNode(Kind::EQUAL,
+-                         nm->mkNode(Kind::AND,
+-                                    nm->mkNode(Kind::GT, d_pi, t[0]),
+-                                    nm->mkNode(Kind::GT, t[0], d_data->d_zero)),
+-                         nm->mkNode(Kind::GT, t, d_data->d_zero)));
++              NodeManager::mkNode(
++                  Kind::EQUAL,
++                  NodeManager::mkNode(
++                      Kind::AND,
++                      NodeManager::mkNode(Kind::GT, d_pi, t[0]),
++                      NodeManager::mkNode(Kind::GT, t[0], d_data->d_zero)),
++                  NodeManager::mkNode(Kind::GT, t, d_data->d_zero)));
+           d_data->d_im.addPendingLemma(lem,
+                                        InferenceId::ARITH_NL_T_INIT_REFINE);
+         }
+@@ -447,32 +458,34 @@ void SineSolver::checkMonotonic()
+ 
+     if (!tval.isNull())
+     {
+-      NodeManager* nm = NodeManager::currentNM();
+       Node mono_lem;
+       if (monotonic_dir == 1
+           && sval.getConst<Rational>() > tval.getConst<Rational>())
+       {
+-        mono_lem = nm->mkNode(Kind::IMPLIES,
+-                              nm->mkNode(Kind::GEQ, targ, sarg),
+-                              nm->mkNode(Kind::GEQ, t, s));
++        mono_lem =
++            NodeManager::mkNode(Kind::IMPLIES,
++                                NodeManager::mkNode(Kind::GEQ, targ, sarg),
++                                NodeManager::mkNode(Kind::GEQ, t, s));
+       }
+       else if (monotonic_dir == -1
+                && sval.getConst<Rational>() < tval.getConst<Rational>())
+       {
+-        mono_lem = nm->mkNode(Kind::IMPLIES,
+-                              nm->mkNode(Kind::LEQ, targ, sarg),
+-                              nm->mkNode(Kind::LEQ, s, t));
++        mono_lem =
++            NodeManager::mkNode(Kind::IMPLIES,
++                                NodeManager::mkNode(Kind::LEQ, targ, sarg),
++                                NodeManager::mkNode(Kind::LEQ, s, t));
+       }
+       if (!mono_lem.isNull())
+       {
+         if (!mono_bounds[0].isNull())
+         {
+           Assert(!mono_bounds[1].isNull());
+-          mono_lem = nm->mkNode(
++          mono_lem = NodeManager::mkNode(
+               Kind::IMPLIES,
+-              nm->mkNode(Kind::AND,
+-                         mkBounded(mono_bounds[0], targ, mono_bounds[1]),
+-                         mkBounded(mono_bounds[0], sarg, mono_bounds[1])),
++              NodeManager::mkNode(
++                  Kind::AND,
++                  mkBounded(mono_bounds[0], targ, mono_bounds[1]),
++                  mkBounded(mono_bounds[0], sarg, mono_bounds[1])),
+               mono_lem);
+         }
+         Trace("nl-ext-tf-mono")
+diff --git a/src/theory/arith/rewriter/node_utils.cpp b/src/theory/arith/rewriter/node_utils.cpp
+index f29e50464..bbc38c980 100644
+--- a/src/theory/arith/rewriter/node_utils.cpp
++++ b/src/theory/arith/rewriter/node_utils.cpp
+@@ -33,8 +33,7 @@ Node mkMultTerm(const Rational& multiplicity, TNode monomial)
+   {
+     return monomial;
+   }
+-  return NodeManager::currentNM()->mkNode(
+-      Kind::MULT, mkConst(multiplicity), monomial);
++  return NodeManager::mkNode(Kind::MULT, mkConst(multiplicity), monomial);
+ }
+ 
+ Node mkMultTerm(const RealAlgebraicNumber& multiplicity, TNode monomial)
+@@ -105,7 +104,7 @@ Node ensureReal(TNode t)
+       return ret;
+     }
+     Trace("arith-rewriter-debug") << "maybeEnsureReal: " << t << std::endl;
+-    return NodeManager::currentNM()->mkNode(Kind::TO_REAL, t);
++    return NodeManager::mkNode(Kind::TO_REAL, t);
+   }
+   return t;
+ }
+diff --git a/src/theory/arith/rewriter/rewrite_atom.cpp b/src/theory/arith/rewriter/rewrite_atom.cpp
+index 246aa8fc3..b5af2dd06 100644
+--- a/src/theory/arith/rewriter/rewrite_atom.cpp
++++ b/src/theory/arith/rewriter/rewrite_atom.cpp
+@@ -254,9 +254,9 @@ Node buildRelation(Kind kind, Node left, Node right, bool negate)
+   }
+   if (negate)
+   {
+-    return NodeManager::currentNM()->mkNode(kind, left, right).notNode();
++    return NodeManager::mkNode(kind, left, right).notNode();
+   }
+-  return NodeManager::currentNM()->mkNode(kind, left, right);
++  return NodeManager::mkNode(kind, left, right);
+ }
+ 
+ Node buildIntegerEquality(Sum&& sum)
+diff --git a/src/theory/bags/bags_utils.cpp b/src/theory/bags/bags_utils.cpp
+index b782e4a90..39f8eeb03 100644
+--- a/src/theory/bags/bags_utils.cpp
++++ b/src/theory/bags/bags_utils.cpp
+@@ -705,7 +705,6 @@ Node BagsUtils::evaluateBagFold(TNode n)
+   std::map<Node, Rational> elements = BagsUtils::getBagElements(A);
+ 
+   std::map<Node, Rational>::iterator it = elements.begin();
+-  NodeManager* nm = NodeManager::currentNM();
+   while (it != elements.end())
+   {
+     // apply the combination function n times, where n is the multiplicity
+@@ -713,7 +712,7 @@ Node BagsUtils::evaluateBagFold(TNode n)
+     Assert(count.sgn() >= 0) << "negative multiplicity" << std::endl;
+     while (!count.isZero())
+     {
+-      ret = nm->mkNode(Kind::APPLY_UF, f, it->first, ret);
++      ret = NodeManager::mkNode(Kind::APPLY_UF, f, it->first, ret);
+       count = count - 1;
+     }
+     ++it;
+@@ -770,7 +769,8 @@ Node BagsUtils::evaluateBagPartition(Rewriter* rewriter, TNode n)
+     ++j;
+     while (j != elements.end())
+     {
+-      Node sameClass = nm->mkNode(Kind::APPLY_UF, r, i->first, j->first);
++      Node sameClass =
++          NodeManager::mkNode(Kind::APPLY_UF, r, i->first, j->first);
+       sameClass = rewriter->rewrite(sameClass);
+       if (!sameClass.isConst())
+       {
+diff --git a/src/theory/bv/bitblast/bitblast_utils.h b/src/theory/bv/bitblast/bitblast_utils.h
+index 614a1f749..ad65032f7 100644
+--- a/src/theory/bv/bitblast/bitblast_utils.h
++++ b/src/theory/bv/bitblast/bitblast_utils.h
+@@ -72,12 +72,12 @@ Node mkFalse<Node>() {
+ 
+ template <> inline
+ Node mkNot<Node>(Node a) {
+-  return NodeManager::currentNM()->mkNode(Kind::NOT, a);
++  return NodeManager::mkNode(Kind::NOT, a);
+ }
+ 
+ template <> inline
+ Node mkOr<Node>(Node a, Node b) {
+-  return NodeManager::currentNM()->mkNode(Kind::OR, a, b);
++  return NodeManager::mkNode(Kind::OR, a, b);
+ }
+ 
+ template <> inline
+@@ -90,7 +90,7 @@ Node mkOr<Node>(const std::vector<Node>& children) {
+ 
+ template <> inline
+ Node mkAnd<Node>(Node a, Node b) {
+-  return NodeManager::currentNM()->mkNode(Kind::AND, a, b);
++  return NodeManager::mkNode(Kind::AND, a, b);
+ }
+ 
+ template <> inline
+@@ -103,17 +103,17 @@ Node mkAnd<Node>(const std::vector<Node>& children) {
+ 
+ template <> inline
+ Node mkXor<Node>(Node a, Node b) {
+-  return NodeManager::currentNM()->mkNode(Kind::XOR, a, b);
++  return NodeManager::mkNode(Kind::XOR, a, b);
+ }
+ 
+ template <> inline
+ Node mkIff<Node>(Node a, Node b) {
+-  return NodeManager::currentNM()->mkNode(Kind::EQUAL, a, b);
++  return NodeManager::mkNode(Kind::EQUAL, a, b);
+ }
+ 
+ template <> inline
+ Node mkIte<Node>(Node cond, Node a, Node b) {
+-  return NodeManager::currentNM()->mkNode(Kind::ITE, cond, a, b);
++  return NodeManager::mkNode(Kind::ITE, cond, a, b);
+ }
+ 
+ /*
+diff --git a/src/theory/bv/theory_bv_rewrite_rules_normalization.h b/src/theory/bv/theory_bv_rewrite_rules_normalization.h
+index 0a03ea5d2..73d8e18bf 100644
+--- a/src/theory/bv/theory_bv_rewrite_rules_normalization.h
++++ b/src/theory/bv/theory_bv_rewrite_rules_normalization.h
+@@ -76,7 +76,7 @@ inline Node RewriteRule<ExtractNot>::apply(TNode node)
+   unsigned low = utils::getExtractLow(node);
+   unsigned high = utils::getExtractHigh(node);
+   Node a = utils::mkExtract(node[0][0], high, low);
+-  return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_NOT, a);
++  return NodeManager::mkNode(Kind::BITVECTOR_NOT, a);
+ }
+ 
+ /** 
+@@ -437,7 +437,6 @@ inline Node RewriteRule<MultSimplify>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<MultSimplify>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   unsigned size = utils::getSize(node);
+   BitVector constant(size, Integer(1));
+ 
+@@ -495,7 +494,7 @@ inline Node RewriteRule<MultSimplify>::apply(TNode node)
+   // if negative, negate entire node
+   if (isNeg && size > 1)
+   {
+-    ret = nm->mkNode(Kind::BITVECTOR_NEG, ret);
++    ret = NodeManager::mkNode(Kind::BITVECTOR_NEG, ret);
+   }
+   return ret;
+ }
+@@ -522,7 +521,6 @@ inline Node RewriteRule<MultDistribConst>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<MultDistribConst>(" << node << ")"
+                       << std::endl;
+ 
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode constant = node[1];
+   TNode factor = node[0];
+   Assert(constant.getKind() == Kind::CONST_BITVECTOR);
+@@ -531,14 +529,15 @@ inline Node RewriteRule<MultDistribConst>::apply(TNode node)
+   {
+     // push negation on the constant part
+     BitVector const_bv = constant.getConst<BitVector>();
+-    return nm->mkNode(
++    return NodeManager::mkNode(
+         Kind::BITVECTOR_MULT, factor[0], utils::mkConst(-const_bv));
+   }
+ 
+   std::vector<Node> children;
+   for (unsigned i = 0; i < factor.getNumChildren(); ++i)
+   {
+-    children.push_back(nm->mkNode(Kind::BITVECTOR_MULT, factor[i], constant));
++    children.push_back(
++        NodeManager::mkNode(Kind::BITVECTOR_MULT, factor[i], constant));
+   }
+ 
+   return utils::mkNaryNode(factor.getKind(), children);
+@@ -566,7 +565,6 @@ inline Node RewriteRule<MultDistrib>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<MultDistrib>(" << node << ")"
+                       << std::endl;
+ 
+-  NodeManager *nm = NodeManager::currentNM();
+   bool is_rhs_factor = node[0].getKind() == Kind::BITVECTOR_ADD
+                        || node[0].getKind() == Kind::BITVECTOR_SUB;
+   TNode factor = !is_rhs_factor ? node[0] : node[1];
+@@ -579,7 +577,8 @@ inline Node RewriteRule<MultDistrib>::apply(TNode node)
+   std::vector<Node> children;
+   for (unsigned i = 0; i < sum.getNumChildren(); ++i)
+   {
+-    children.push_back(nm->mkNode(Kind::BITVECTOR_MULT, sum[i], factor));
++    children.push_back(
++        NodeManager::mkNode(Kind::BITVECTOR_MULT, sum[i], factor));
+   }
+ 
+   return utils::mkNaryNode(sum.getKind(), children);
+@@ -615,7 +614,7 @@ inline Node RewriteRule<ConcatToMult>::apply(TNode node)
+   Assert(utils::getSize(factor) == utils::getSize(node));
+   BitVector amount = BitVector(size, utils::getSize(node[1]));
+   Node coef = utils::mkConst(BitVector(size, 1u).leftShift(amount));
+-  return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_MULT, factor, coef);
++  return NodeManager::mkNode(Kind::BITVECTOR_MULT, factor, coef);
+ }
+ 
+ template <>
+@@ -1013,8 +1012,7 @@ template <>
+ inline Node RewriteRule<NegSub>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<NegSub>(" << node << ")" << std::endl;
+-  return NodeManager::currentNM()->mkNode(
+-      Kind::BITVECTOR_SUB, node[0][1], node[0][0]);
++  return NodeManager::mkNode(Kind::BITVECTOR_SUB, node[0][1], node[0][0]);
+ }
+ 
+ template <>
+@@ -1028,11 +1026,10 @@ template <>
+ inline Node RewriteRule<NegAdd>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<NegAdd>(" << node << ")" << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   std::vector<Node> children;
+   for (unsigned i = 0; i < node[0].getNumChildren(); ++i)
+   {
+-    children.push_back(nm->mkNode(Kind::BITVECTOR_NEG, node[0][i]));
++    children.push_back(NodeManager::mkNode(Kind::BITVECTOR_NEG, node[0][i]));
+   }
+   return utils::mkNaryNode(Kind::BITVECTOR_ADD, children);
+ }
+@@ -1074,7 +1071,6 @@ inline Node RewriteRule<AndSimplify>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<AndSimplify>(" << node << ")"
+                       << std::endl;
+ 
+-  NodeManager *nm = NodeManager::currentNM();
+   // this will remove duplicates
+   std::unordered_map<TNode, Count> subterms;
+   unsigned size = utils::getSize(node);
+@@ -1128,7 +1124,7 @@ inline Node RewriteRule<AndSimplify>::apply(TNode node)
+       if (it->second.neg > 0)
+       {
+         // if it only occured negated
+-        children.push_back(nm->mkNode(Kind::BITVECTOR_NOT, it->first));
++        children.push_back(NodeManager::mkNode(Kind::BITVECTOR_NOT, it->first));
+       }
+       else
+       {
+@@ -1198,7 +1194,6 @@ inline Node RewriteRule<OrSimplify>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<OrSimplify>(" << node << ")" << std::endl;
+ 
+-  NodeManager *nm = NodeManager::currentNM();
+   // this will remove duplicates
+   std::unordered_map<TNode, Count> subterms;
+   unsigned size = utils::getSize(node);
+@@ -1253,7 +1248,7 @@ inline Node RewriteRule<OrSimplify>::apply(TNode node)
+       if (it->second.neg > 0)
+       {
+         // if it only occured negated
+-        children.push_back(nm->mkNode(Kind::BITVECTOR_NOT, it->first));
++        children.push_back(NodeManager::mkNode(Kind::BITVECTOR_NOT, it->first));
+       }
+       else
+       {
+@@ -1281,7 +1276,6 @@ inline Node RewriteRule<XorSimplify>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<XorSimplify>(" << node << ")"
+                       << std::endl;
+ 
+-  NodeManager *nm = NodeManager::currentNM();
+   std::unordered_map<TNode, Count> subterms;
+   unsigned size = utils::getSize(node);
+   BitVector constant;
+@@ -1346,7 +1340,7 @@ inline Node RewriteRule<XorSimplify>::apply(TNode node)
+     else if (neg % 2)
+     {
+       // we had a negative occurrence left
+-      children.push_back(nm->mkNode(Kind::BITVECTOR_NOT, it->first));
++      children.push_back(NodeManager::mkNode(Kind::BITVECTOR_NOT, it->first));
+     }
+     // otherwise both reduced to false
+   }
+@@ -1424,7 +1418,6 @@ inline Node RewriteRule<BitwiseSlicing>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<BitwiseSlicing>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   // get the constant
+   bool found_constant = false;
+   TNode constant;
+@@ -1456,7 +1449,7 @@ inline Node RewriteRule<BitwiseSlicing>::apply(TNode node)
+       Node other_extract = utils::mkExtract(other, end, start);
+       Node const_extract = utils::mkExtract(constant, end, start);
+       Node bitwise_op =
+-          nm->mkNode(node.getKind(), const_extract, other_extract);
++          NodeManager::mkNode(node.getKind(), const_extract, other_extract);
+       concat_children.push_back(bitwise_op);
+       start = end = i;
+     }
+@@ -1469,7 +1462,7 @@ inline Node RewriteRule<BitwiseSlicing>::apply(TNode node)
+       Node other_extract = utils::mkExtract(other, end, 0);
+       Node const_extract = utils::mkExtract(constant, end, 0);
+       Node bitwise_op =
+-          nm->mkNode(node.getKind(), const_extract, other_extract);
++          NodeManager::mkNode(node.getKind(), const_extract, other_extract);
+       concat_children.push_back(bitwise_op);
+     }
+   }
+@@ -1553,7 +1546,7 @@ inline Node RewriteRule<NormalizeEqAddNeg>::apply(TNode node)
+   {
+     rhs = nb_rhs.constructNode();
+   }
+-  return nm->mkNode(node.getKind(), lhs, rhs);
++  return NodeManager::mkNode(node.getKind(), lhs, rhs);
+ }
+ 
+ // template<> inline
+diff --git a/src/theory/bv/theory_bv_rewrite_rules_operator_elimination.h b/src/theory/bv/theory_bv_rewrite_rules_operator_elimination.h
+index f8233f901..da813e00f 100644
+--- a/src/theory/bv/theory_bv_rewrite_rules_operator_elimination.h
++++ b/src/theory/bv/theory_bv_rewrite_rules_operator_elimination.h
+@@ -59,7 +59,7 @@ inline Node RewriteRule<UgtEliminate>::apply(TNode node)
+                       << std::endl;
+   TNode a = node[0];
+   TNode b = node[1];
+-  Node result = NodeManager::currentNM()->mkNode(Kind::BITVECTOR_ULT, b, a);
++  Node result = NodeManager::mkNode(Kind::BITVECTOR_ULT, b, a);
+   return result;
+ }
+ 
+@@ -76,7 +76,7 @@ inline Node RewriteRule<UgeEliminate>::apply(TNode node)
+                       << std::endl;
+   TNode a = node[0];
+   TNode b = node[1];
+-  Node result = NodeManager::currentNM()->mkNode(Kind::BITVECTOR_ULE, b, a);
++  Node result = NodeManager::mkNode(Kind::BITVECTOR_ULE, b, a);
+   return result;
+ }
+ 
+@@ -93,7 +93,7 @@ inline Node RewriteRule<SgtEliminate>::apply(TNode node)
+                       << std::endl;
+   TNode a = node[0];
+   TNode b = node[1];
+-  Node result = NodeManager::currentNM()->mkNode(Kind::BITVECTOR_SLT, b, a);
++  Node result = NodeManager::mkNode(Kind::BITVECTOR_SLT, b, a);
+   return result;
+ }
+ 
+@@ -110,7 +110,7 @@ inline Node RewriteRule<SgeEliminate>::apply(TNode node)
+                       << std::endl;
+   TNode a = node[0];
+   TNode b = node[1];
+-  Node result = NodeManager::currentNM()->mkNode(Kind::BITVECTOR_SLE, b, a);
++  Node result = NodeManager::mkNode(Kind::BITVECTOR_SLE, b, a);
+   return result;
+ }
+ 
+@@ -125,14 +125,13 @@ inline Node RewriteRule<SltEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<SltEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   unsigned size = utils::getSize(node[0]);
+   Integer val = Integer(1).multiplyByPow2(size - 1);
+   Node pow_two = utils::mkConst(size, val);
+-  Node a = nm->mkNode(Kind::BITVECTOR_ADD, node[0], pow_two);
+-  Node b = nm->mkNode(Kind::BITVECTOR_ADD, node[1], pow_two);
++  Node a = NodeManager::mkNode(Kind::BITVECTOR_ADD, node[0], pow_two);
++  Node b = NodeManager::mkNode(Kind::BITVECTOR_ADD, node[1], pow_two);
+ 
+-  return nm->mkNode(Kind::BITVECTOR_ULT, a, b);
++  return NodeManager::mkNode(Kind::BITVECTOR_ULT, a, b);
+ }
+ 
+ template <>
+@@ -146,11 +145,10 @@ inline Node RewriteRule<SleEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<SleEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode a = node[0];
+   TNode b = node[1];
+-  Node b_slt_a = nm->mkNode(Kind::BITVECTOR_SLT, b, a);
+-  return nm->mkNode(Kind::NOT, b_slt_a);
++  Node b_slt_a = NodeManager::mkNode(Kind::BITVECTOR_SLT, b, a);
++  return NodeManager::mkNode(Kind::NOT, b_slt_a);
+ }
+ 
+ template <>
+@@ -164,11 +162,10 @@ inline Node RewriteRule<UleEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<UleEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode a = node[0];
+   TNode b = node[1];
+-  Node b_ult_a = nm->mkNode(Kind::BITVECTOR_ULT, b, a);
+-  return nm->mkNode(Kind::NOT, b_ult_a);
++  Node b_ult_a = NodeManager::mkNode(Kind::BITVECTOR_ULT, b, a);
++  return NodeManager::mkNode(Kind::NOT, b_ult_a);
+ }
+ 
+ template <>
+@@ -182,12 +179,11 @@ inline Node RewriteRule<CompEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<CompEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+-  Node comp = nm->mkNode(Kind::EQUAL, node[0], node[1]);
++  Node comp = NodeManager::mkNode(Kind::EQUAL, node[0], node[1]);
+   Node one = utils::mkConst(1, 1);
+   Node zero = utils::mkConst(1, 0);
+ 
+-  return nm->mkNode(Kind::ITE, comp, one, zero);
++  return NodeManager::mkNode(Kind::ITE, comp, one, zero);
+ }
+ 
+ template <>
+@@ -201,11 +197,10 @@ inline Node RewriteRule<SubEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<SubEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+-  Node negb = nm->mkNode(Kind::BITVECTOR_NEG, node[1]);
++  Node negb = NodeManager::mkNode(Kind::BITVECTOR_NEG, node[1]);
+   Node a = node[0];
+ 
+-  return nm->mkNode(Kind::BITVECTOR_ADD, a, negb);
++  return NodeManager::mkNode(Kind::BITVECTOR_ADD, a, negb);
+ }
+ 
+ template <>
+@@ -294,11 +289,10 @@ inline Node RewriteRule<NandEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<NandEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode a = node[0];
+   TNode b = node[1];
+-  Node andNode = nm->mkNode(Kind::BITVECTOR_AND, a, b);
+-  Node result = nm->mkNode(Kind::BITVECTOR_NOT, andNode);
++  Node andNode = NodeManager::mkNode(Kind::BITVECTOR_AND, a, b);
++  Node result = NodeManager::mkNode(Kind::BITVECTOR_NOT, andNode);
+   return result;
+ }
+ 
+@@ -313,11 +307,10 @@ inline Node RewriteRule<NorEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<NorEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode a = node[0];
+   TNode b = node[1];
+-  Node orNode = nm->mkNode(Kind::BITVECTOR_OR, a, b);
+-  Node result = nm->mkNode(Kind::BITVECTOR_NOT, orNode);
++  Node orNode = NodeManager::mkNode(Kind::BITVECTOR_OR, a, b);
++  Node result = NodeManager::mkNode(Kind::BITVECTOR_NOT, orNode);
+   return result;
+ }
+ 
+@@ -332,11 +325,10 @@ inline Node RewriteRule<XnorEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<XnorEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode a = node[0];
+   TNode b = node[1];
+-  Node xorNode = nm->mkNode(Kind::BITVECTOR_XOR, a, b);
+-  Node result = nm->mkNode(Kind::BITVECTOR_NOT, xorNode);
++  Node xorNode = NodeManager::mkNode(Kind::BITVECTOR_XOR, a, b);
++  Node result = NodeManager::mkNode(Kind::BITVECTOR_NOT, xorNode);
+   return result;
+ }
+ 
+@@ -352,26 +344,25 @@ inline Node RewriteRule<SdivEliminate>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<SdivEliminate>(" << node << ")"
+                       << std::endl;
+ 
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode a = node[0];
+   TNode b = node[1];
+   unsigned size = utils::getSize(a);
+ 
+   Node one = utils::mkConst(1, 1);
+-  Node a_lt_0 =
+-      nm->mkNode(Kind::EQUAL, utils::mkExtract(a, size - 1, size - 1), one);
+-  Node b_lt_0 =
+-      nm->mkNode(Kind::EQUAL, utils::mkExtract(b, size - 1, size - 1), one);
+-  Node abs_a =
+-      nm->mkNode(Kind::ITE, a_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, a), a);
+-  Node abs_b =
+-      nm->mkNode(Kind::ITE, b_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, b), b);
++  Node a_lt_0 = NodeManager::mkNode(
++      Kind::EQUAL, utils::mkExtract(a, size - 1, size - 1), one);
++  Node b_lt_0 = NodeManager::mkNode(
++      Kind::EQUAL, utils::mkExtract(b, size - 1, size - 1), one);
++  Node abs_a = NodeManager::mkNode(
++      Kind::ITE, a_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, a), a);
++  Node abs_b = NodeManager::mkNode(
++      Kind::ITE, b_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, b), b);
+ 
+-  Node a_udiv_b = nm->mkNode(Kind::BITVECTOR_UDIV, abs_a, abs_b);
+-  Node neg_result = nm->mkNode(Kind::BITVECTOR_NEG, a_udiv_b);
++  Node a_udiv_b = NodeManager::mkNode(Kind::BITVECTOR_UDIV, abs_a, abs_b);
++  Node neg_result = NodeManager::mkNode(Kind::BITVECTOR_NEG, a_udiv_b);
+ 
+-  Node condition = nm->mkNode(Kind::XOR, a_lt_0, b_lt_0);
+-  Node result = nm->mkNode(Kind::ITE, condition, neg_result, a_udiv_b);
++  Node condition = NodeManager::mkNode(Kind::XOR, a_lt_0, b_lt_0);
++  Node result = NodeManager::mkNode(Kind::ITE, condition, neg_result, a_udiv_b);
+ 
+   return result;
+ }
+@@ -394,22 +385,23 @@ inline Node RewriteRule<SdivEliminateFewerBitwiseOps>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<SdivEliminateFewerBitwiseOps>(" << node
+                       << ")" << std::endl;
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+   TNode a = node[0];
+   TNode b = node[1];
+   unsigned size = utils::getSize(a);
+-  Node a_lt_0 = nm->mkNode(Kind::BITVECTOR_UGE, a, utils::mkMinSigned(size));
+-  Node b_lt_0 = nm->mkNode(Kind::BITVECTOR_UGE, b, utils::mkMinSigned(size));
+-  Node abs_a =
+-      nm->mkNode(Kind::ITE, a_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, a), a);
+-  Node abs_b =
+-      nm->mkNode(Kind::ITE, b_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, b), b);
++  Node a_lt_0 =
++      NodeManager::mkNode(Kind::BITVECTOR_UGE, a, utils::mkMinSigned(size));
++  Node b_lt_0 =
++      NodeManager::mkNode(Kind::BITVECTOR_UGE, b, utils::mkMinSigned(size));
++  Node abs_a = NodeManager::mkNode(
++      Kind::ITE, a_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, a), a);
++  Node abs_b = NodeManager::mkNode(
++      Kind::ITE, b_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, b), b);
+ 
+-  Node a_udiv_b = nm->mkNode(Kind::BITVECTOR_UDIV, abs_a, abs_b);
+-  Node neg_result = nm->mkNode(Kind::BITVECTOR_NEG, a_udiv_b);
++  Node a_udiv_b = NodeManager::mkNode(Kind::BITVECTOR_UDIV, abs_a, abs_b);
++  Node neg_result = NodeManager::mkNode(Kind::BITVECTOR_NEG, a_udiv_b);
+ 
+-  Node result =
+-      nm->mkNode(Kind::ITE, a_lt_0.xorNode(b_lt_0), neg_result, a_udiv_b);
++  Node result = NodeManager::mkNode(
++      Kind::ITE, a_lt_0.xorNode(b_lt_0), neg_result, a_udiv_b);
+ 
+   return result;
+ }
+@@ -425,25 +417,24 @@ inline Node RewriteRule<SremEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<SremEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode a = node[0];
+   TNode b = node[1];
+   unsigned size = utils::getSize(a);
+ 
+   Node one = utils::mkConst(1, 1);
+-  Node a_lt_0 =
+-      nm->mkNode(Kind::EQUAL, utils::mkExtract(a, size - 1, size - 1), one);
+-  Node b_lt_0 =
+-      nm->mkNode(Kind::EQUAL, utils::mkExtract(b, size - 1, size - 1), one);
+-  Node abs_a =
+-      nm->mkNode(Kind::ITE, a_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, a), a);
+-  Node abs_b =
+-      nm->mkNode(Kind::ITE, b_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, b), b);
++  Node a_lt_0 = NodeManager::mkNode(
++      Kind::EQUAL, utils::mkExtract(a, size - 1, size - 1), one);
++  Node b_lt_0 = NodeManager::mkNode(
++      Kind::EQUAL, utils::mkExtract(b, size - 1, size - 1), one);
++  Node abs_a = NodeManager::mkNode(
++      Kind::ITE, a_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, a), a);
++  Node abs_b = NodeManager::mkNode(
++      Kind::ITE, b_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, b), b);
+ 
+-  Node a_urem_b = nm->mkNode(Kind::BITVECTOR_UREM, abs_a, abs_b);
+-  Node neg_result = nm->mkNode(Kind::BITVECTOR_NEG, a_urem_b);
++  Node a_urem_b = NodeManager::mkNode(Kind::BITVECTOR_UREM, abs_a, abs_b);
++  Node neg_result = NodeManager::mkNode(Kind::BITVECTOR_NEG, a_urem_b);
+ 
+-  Node result = nm->mkNode(Kind::ITE, a_lt_0, neg_result, a_urem_b);
++  Node result = NodeManager::mkNode(Kind::ITE, a_lt_0, neg_result, a_urem_b);
+ 
+   return result;
+ }
+@@ -465,20 +456,21 @@ inline Node RewriteRule<SremEliminateFewerBitwiseOps>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<SremEliminateFewerBitwiseOps>(" << node
+                       << ")" << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+   TNode a = node[0];
+   TNode b = node[1];
+   unsigned size = utils::getSize(a);
+-  Node a_lt_0 = nm->mkNode(Kind::BITVECTOR_UGE, a, utils::mkMinSigned(size));
+-  Node b_lt_0 = nm->mkNode(Kind::BITVECTOR_UGE, b, utils::mkMinSigned(size));
+-  Node abs_a =
+-      nm->mkNode(Kind::ITE, a_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, a), a);
+-  Node abs_b =
+-      nm->mkNode(Kind::ITE, b_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, b), b);
+-  Node a_urem_b = nm->mkNode(Kind::BITVECTOR_UREM, abs_a, abs_b);
+-  Node neg_result = nm->mkNode(Kind::BITVECTOR_NEG, a_urem_b);
++  Node a_lt_0 =
++      NodeManager::mkNode(Kind::BITVECTOR_UGE, a, utils::mkMinSigned(size));
++  Node b_lt_0 =
++      NodeManager::mkNode(Kind::BITVECTOR_UGE, b, utils::mkMinSigned(size));
++  Node abs_a = NodeManager::mkNode(
++      Kind::ITE, a_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, a), a);
++  Node abs_b = NodeManager::mkNode(
++      Kind::ITE, b_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, b), b);
++  Node a_urem_b = NodeManager::mkNode(Kind::BITVECTOR_UREM, abs_a, abs_b);
++  Node neg_result = NodeManager::mkNode(Kind::BITVECTOR_NEG, a_urem_b);
+ 
+-  Node result = nm->mkNode(Kind::ITE, a_lt_0, neg_result, a_urem_b);
++  Node result = NodeManager::mkNode(Kind::ITE, a_lt_0, neg_result, a_urem_b);
+ 
+   return result;
+ }
+@@ -494,7 +486,6 @@ inline Node RewriteRule<SmodEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<SmodEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode s = node[0];
+   TNode t = node[1];
+   unsigned size = utils::getSize(s);
+@@ -521,13 +512,13 @@ inline Node RewriteRule<SmodEliminate>::apply(TNode node)
+   Node bit1 = utils::mkConst(1, 1);
+   Node bit0 = utils::mkConst(1, 0);
+ 
+-  Node abs_s =
+-      msb_s.eqNode(bit0).iteNode(s, nm->mkNode(Kind::BITVECTOR_NEG, s));
+-  Node abs_t =
+-      msb_t.eqNode(bit0).iteNode(t, nm->mkNode(Kind::BITVECTOR_NEG, t));
++  Node abs_s = msb_s.eqNode(bit0).iteNode(
++      s, NodeManager::mkNode(Kind::BITVECTOR_NEG, s));
++  Node abs_t = msb_t.eqNode(bit0).iteNode(
++      t, NodeManager::mkNode(Kind::BITVECTOR_NEG, t));
+ 
+-  Node u = nm->mkNode(Kind::BITVECTOR_UREM, abs_s, abs_t);
+-  Node neg_u = nm->mkNode(Kind::BITVECTOR_NEG, u);
++  Node u = NodeManager::mkNode(Kind::BITVECTOR_UREM, abs_s, abs_t);
++  Node neg_u = NodeManager::mkNode(Kind::BITVECTOR_NEG, u);
+ 
+   Node cond0 = u.eqNode(utils::mkConst(size, 0));
+   Node cond1 = msb_s.eqNode(bit0).andNode(msb_t.eqNode(bit0));
+@@ -539,8 +530,9 @@ inline Node RewriteRule<SmodEliminate>::apply(TNode node)
+       cond1.iteNode(
+           u,
+           cond2.iteNode(
+-              nm->mkNode(Kind::BITVECTOR_ADD, neg_u, t),
+-              cond3.iteNode(nm->mkNode(Kind::BITVECTOR_ADD, u, t), neg_u))));
++              NodeManager::mkNode(Kind::BITVECTOR_ADD, neg_u, t),
++              cond3.iteNode(NodeManager::mkNode(Kind::BITVECTOR_ADD, u, t),
++                            neg_u))));
+ 
+   return result;
+ }
+@@ -562,7 +554,6 @@ inline Node RewriteRule<SmodEliminateFewerBitwiseOps>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<SmodEliminate>(" << node << ")"
+                       << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+   TNode s = node[0];
+   TNode t = node[1];
+   unsigned size = utils::getSize(s);
+@@ -585,29 +576,32 @@ inline Node RewriteRule<SmodEliminateFewerBitwiseOps>::apply(TNode node)
+    *               (bvneg u))))))))
+    */
+ 
+-  Node s_lt_0 = nm->mkNode(Kind::BITVECTOR_UGE, s, utils::mkMinSigned(size));
+-  Node t_lt_0 = nm->mkNode(Kind::BITVECTOR_UGE, t, utils::mkMinSigned(size));
+-  Node abs_s =
+-      nm->mkNode(Kind::ITE, s_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, s), s);
+-  Node abs_t =
+-      nm->mkNode(Kind::ITE, t_lt_0, nm->mkNode(Kind::BITVECTOR_NEG, t), t);
++  Node s_lt_0 =
++      NodeManager::mkNode(Kind::BITVECTOR_UGE, s, utils::mkMinSigned(size));
++  Node t_lt_0 =
++      NodeManager::mkNode(Kind::BITVECTOR_UGE, t, utils::mkMinSigned(size));
++  Node abs_s = NodeManager::mkNode(
++      Kind::ITE, s_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, s), s);
++  Node abs_t = NodeManager::mkNode(
++      Kind::ITE, t_lt_0, NodeManager::mkNode(Kind::BITVECTOR_NEG, t), t);
+ 
+-  Node u = nm->mkNode(Kind::BITVECTOR_UREM, abs_s, abs_t);
+-  Node neg_u = nm->mkNode(Kind::BITVECTOR_NEG, u);
++  Node u = NodeManager::mkNode(Kind::BITVECTOR_UREM, abs_s, abs_t);
++  Node neg_u = NodeManager::mkNode(Kind::BITVECTOR_NEG, u);
+ 
+   Node cond0 = u.eqNode(utils::mkConst(size, 0));
+-  Node cond1 =
+-      nm->mkNode(Kind::NOT, s_lt_0).andNode(nm->mkNode(Kind::NOT, t_lt_0));
+-  Node cond2 = s_lt_0.andNode(nm->mkNode(Kind::NOT, t_lt_0));
+-  Node cond3 = nm->mkNode(Kind::NOT, s_lt_0).andNode(t_lt_0);
++  Node cond1 = NodeManager::mkNode(Kind::NOT, s_lt_0)
++                   .andNode(NodeManager::mkNode(Kind::NOT, t_lt_0));
++  Node cond2 = s_lt_0.andNode(NodeManager::mkNode(Kind::NOT, t_lt_0));
++  Node cond3 = NodeManager::mkNode(Kind::NOT, s_lt_0).andNode(t_lt_0);
+ 
+   Node result = cond0.iteNode(
+       u,
+       cond1.iteNode(
+           u,
+           cond2.iteNode(
+-              nm->mkNode(Kind::BITVECTOR_ADD, neg_u, t),
+-              cond3.iteNode(nm->mkNode(Kind::BITVECTOR_ADD, u, t), neg_u))));
++              NodeManager::mkNode(Kind::BITVECTOR_ADD, neg_u, t),
++              cond3.iteNode(NodeManager::mkNode(Kind::BITVECTOR_ADD, u, t),
++                            neg_u))));
+ 
+   return result;
+ }
+@@ -671,10 +665,9 @@ inline Node RewriteRule<RedorEliminate>::apply(TNode node)
+                       << std::endl;
+   TNode a = node[0];
+   unsigned size = utils::getSize(node[0]);
+-  NodeManager* nm = NodeManager::currentNM();
+-  return nm->mkNode(
++  return NodeManager::mkNode(
+       Kind::BITVECTOR_NOT,
+-      nm->mkNode(Kind::BITVECTOR_COMP, a, utils::mkConst(size, 0)));
++      NodeManager::mkNode(Kind::BITVECTOR_COMP, a, utils::mkConst(size, 0)));
+ }
+ 
+ template <>
+@@ -690,8 +683,8 @@ inline Node RewriteRule<RedandEliminate>::apply(TNode node)
+                       << std::endl;
+   TNode a = node[0];
+   unsigned size = utils::getSize(node[0]);
+-  Node result = NodeManager::currentNM()->mkNode(
+-      Kind::BITVECTOR_COMP, a, utils::mkOnes(size));
++  Node result =
++      NodeManager::mkNode(Kind::BITVECTOR_COMP, a, utils::mkOnes(size));
+   return result;
+ }
+ 
+@@ -706,7 +699,7 @@ inline Node RewriteRule<NegoEliminate>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<NegoEliminate>(" << node << ")"
+                       << std::endl;
+-  return NodeManager::currentNM()->mkNode(
++  return NodeManager::mkNode(
+       Kind::EQUAL,
+       node[0],
+       utils::mkMinSigned(node[0].getType().getBitVectorSize()));
+@@ -724,17 +717,15 @@ inline Node RewriteRule<UaddoEliminate>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<UaddoEliminate>(" << node << ")"
+                       << std::endl;
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+-
+   Node bvZero = utils::mkZero(1);
+   Node bvOne = utils::mkOne(1);
+ 
+-  Node add = nm->mkNode(Kind::BITVECTOR_ADD,
+-                        utils::mkConcat(bvZero, node[0]),
+-                        utils::mkConcat(bvZero, node[1]));
++  Node add = NodeManager::mkNode(Kind::BITVECTOR_ADD,
++                                 utils::mkConcat(bvZero, node[0]),
++                                 utils::mkConcat(bvZero, node[1]));
+ 
+   uint32_t size = add.getType().getBitVectorSize();
+-  return nm->mkNode(
++  return NodeManager::mkNode(
+       Kind::EQUAL, utils::mkExtract(add, size - 1, size - 1), bvOne);
+ }
+ 
+@@ -762,22 +753,25 @@ inline Node RewriteRule<SaddoEliminate>::apply(TNode node)
+       nm->mkConst<BitVectorExtract>(BitVectorExtract(size - 1, size - 1));
+   Node sign0 = nm->mkNode(extOp, node[0]);
+   Node sign1 = nm->mkNode(extOp, node[1]);
+-  Node add = nm->mkNode(Kind::BITVECTOR_ADD, node[0], node[1]);
++  Node add = NodeManager::mkNode(Kind::BITVECTOR_ADD, node[0], node[1]);
+   Node signa = nm->mkNode(extOp, add);
+ 
+-  Node both_neg = nm->mkNode(Kind::AND,
+-                             nm->mkNode(Kind::EQUAL, sign0, one),
+-                             nm->mkNode(Kind::EQUAL, sign1, one));
+-  Node both_pos = nm->mkNode(Kind::AND,
+-                             nm->mkNode(Kind::EQUAL, sign0, zero),
+-                             nm->mkNode(Kind::EQUAL, sign1, zero));
++  Node both_neg =
++      NodeManager::mkNode(Kind::AND,
++                          NodeManager::mkNode(Kind::EQUAL, sign0, one),
++                          NodeManager::mkNode(Kind::EQUAL, sign1, one));
++  Node both_pos =
++      NodeManager::mkNode(Kind::AND,
++                          NodeManager::mkNode(Kind::EQUAL, sign0, zero),
++                          NodeManager::mkNode(Kind::EQUAL, sign1, zero));
+ 
+-  Node result_neg = nm->mkNode(Kind::EQUAL, signa, one);
+-  Node result_pos = nm->mkNode(Kind::EQUAL, signa, zero);
++  Node result_neg = NodeManager::mkNode(Kind::EQUAL, signa, one);
++  Node result_pos = NodeManager::mkNode(Kind::EQUAL, signa, zero);
+ 
+-  return nm->mkNode(Kind::OR,
+-                    nm->mkNode(Kind::AND, both_neg, result_pos),
+-                    nm->mkNode(Kind::AND, both_pos, result_neg));
++  return NodeManager::mkNode(
++      Kind::OR,
++      NodeManager::mkNode(Kind::AND, both_neg, result_pos),
++      NodeManager::mkNode(Kind::AND, both_pos, result_neg));
+ }
+ 
+ template <>
+@@ -981,11 +975,11 @@ inline Node RewriteRule<SdivoEliminate>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<SdivoEliminate>(" << node << ")"
+                       << std::endl;
+   // Overflow if node[0] = min_signed and node[1] = -1
+-  NodeManager* nm = NodeManager::currentNM();
+   uint64_t size = node[0].getType().getBitVectorSize();
+-  return nm->mkNode(Kind::AND,
+-                    nm->mkNode(Kind::EQUAL, node[0], utils::mkMinSigned(size)),
+-                    nm->mkNode(Kind::EQUAL, node[1], utils::mkOnes(size)));
++  return NodeManager::mkNode(
++      Kind::AND,
++      NodeManager::mkNode(Kind::EQUAL, node[0], utils::mkMinSigned(size)),
++      NodeManager::mkNode(Kind::EQUAL, node[1], utils::mkOnes(size)));
+ }
+ 
+ }  // namespace bv
+diff --git a/src/theory/bv/theory_bv_rewrite_rules_simplification.h b/src/theory/bv/theory_bv_rewrite_rules_simplification.h
+index 231463b4e..fc72a95a6 100644
+--- a/src/theory/bv/theory_bv_rewrite_rules_simplification.h
++++ b/src/theory/bv/theory_bv_rewrite_rules_simplification.h
+@@ -112,7 +112,7 @@ inline Node RewriteRule<BvIteConstChildren>::apply(TNode node)
+     return node[0];
+   }
+   Assert(utils::isZero(node[1]) && utils::isOne(node[2]));
+-  return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_NOT, node[0]);
++  return NodeManager::mkNode(Kind::BITVECTOR_NOT, node[0]);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -147,7 +147,7 @@ inline Node RewriteRule<BvIteEqualCond>::apply(TNode node)
+   Node e1 = node[2].getKind() == Kind::BITVECTOR_ITE && node[0] == node[2][0]
+                 ? node[2][2]
+                 : node[2];
+-  return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_ITE, node[0], t0, e1);
++  return NodeManager::mkNode(Kind::BITVECTOR_ITE, node[0], t0, e1);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -170,12 +170,12 @@ inline Node RewriteRule<BvIteMergeThenIf>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<BvIteMergeThenIf>(" << node << ")"
+                       << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+   Assert(node[1].getKind() == Kind::BITVECTOR_ITE);
+-  Node cond = nm->mkNode(Kind::BITVECTOR_AND,
+-                         node[0],
+-                         nm->mkNode(Kind::BITVECTOR_NOT, node[1][0]));
+-  return nm->mkNode(Kind::BITVECTOR_ITE, cond, node[1][2], node[2]);
++  Node cond =
++      NodeManager::mkNode(Kind::BITVECTOR_AND,
++                          node[0],
++                          NodeManager::mkNode(Kind::BITVECTOR_NOT, node[1][0]));
++  return NodeManager::mkNode(Kind::BITVECTOR_ITE, cond, node[1][2], node[2]);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -198,10 +198,9 @@ inline Node RewriteRule<BvIteMergeElseIf>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<BvIteMergeElseIf>(" << node << ")"
+                       << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+   Assert(node[1].getKind() == Kind::BITVECTOR_ITE);
+-  Node cond = nm->mkNode(Kind::BITVECTOR_AND, node[0], node[1][0]);
+-  return nm->mkNode(Kind::BITVECTOR_ITE, cond, node[1][1], node[2]);
++  Node cond = NodeManager::mkNode(Kind::BITVECTOR_AND, node[0], node[1][0]);
++  return NodeManager::mkNode(Kind::BITVECTOR_ITE, cond, node[1][1], node[2]);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -224,12 +223,12 @@ inline Node RewriteRule<BvIteMergeThenElse>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<BvIteMergeThenElse>(" << node << ")"
+                       << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+   Assert(node[2].getKind() == Kind::BITVECTOR_ITE);
+-  Node cond = nm->mkNode(Kind::BITVECTOR_AND,
+-                         nm->mkNode(Kind::BITVECTOR_NOT, node[0]),
+-                         nm->mkNode(Kind::BITVECTOR_NOT, node[2][0]));
+-  return nm->mkNode(Kind::BITVECTOR_ITE, cond, node[2][2], node[1]);
++  Node cond =
++      NodeManager::mkNode(Kind::BITVECTOR_AND,
++                          NodeManager::mkNode(Kind::BITVECTOR_NOT, node[0]),
++                          NodeManager::mkNode(Kind::BITVECTOR_NOT, node[2][0]));
++  return NodeManager::mkNode(Kind::BITVECTOR_ITE, cond, node[2][2], node[1]);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -252,12 +251,12 @@ inline Node RewriteRule<BvIteMergeElseElse>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<BvIteMergeElseElse>(" << node << ")"
+                       << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+   Assert(node[2].getKind() == Kind::BITVECTOR_ITE);
+-  Node cond = nm->mkNode(Kind::BITVECTOR_AND,
+-                         nm->mkNode(Kind::BITVECTOR_NOT, node[0]),
+-                         node[2][0]);
+-  return nm->mkNode(Kind::BITVECTOR_ITE, cond, node[2][1], node[1]);
++  Node cond =
++      NodeManager::mkNode(Kind::BITVECTOR_AND,
++                          NodeManager::mkNode(Kind::BITVECTOR_NOT, node[0]),
++                          node[2][0]);
++  return NodeManager::mkNode(Kind::BITVECTOR_ITE, cond, node[2][1], node[1]);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -278,14 +277,15 @@ template <>
+ inline Node RewriteRule<BvComp>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<BvComp>(" << node << ")" << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+   if (node[0].isConst())
+   {
+-    return utils::isZero(node[0]) ? nm->mkNode(Kind::BITVECTOR_NOT, node[1])
+-                                  : Node(node[1]);
++    return utils::isZero(node[0])
++               ? NodeManager::mkNode(Kind::BITVECTOR_NOT, node[1])
++               : Node(node[1]);
+   }
+-  return utils::isZero(node[1]) ? nm->mkNode(Kind::BITVECTOR_NOT, node[0])
+-                                : Node(node[0]);
++  return utils::isZero(node[1])
++             ? NodeManager::mkNode(Kind::BITVECTOR_NOT, node[0])
++             : Node(node[0]);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -725,7 +725,6 @@ template <>
+ inline Node RewriteRule<XorOnes>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<XorOnes>(" << node << ")" << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   Node ones = utils::mkOnes(utils::getSize(node));
+   std::vector<Node> children;
+   bool found_ones = false;
+@@ -746,7 +745,7 @@ inline Node RewriteRule<XorOnes>::apply(TNode node)
+   Node result = utils::mkNaryNode(Kind::BITVECTOR_XOR, children);
+   if (found_ones)
+   {
+-    result = nm->mkNode(Kind::BITVECTOR_NOT, result);
++    result = NodeManager::mkNode(Kind::BITVECTOR_NOT, result);
+   }
+   return result;
+ }
+@@ -864,7 +863,7 @@ inline Node RewriteRule<XorNot>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<XorNot>(" << node << ")" << std::endl;
+   Node a = node[0][0];
+   Node b = node[1][0];
+-  return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_XOR, a, b);
++  return NodeManager::mkNode(Kind::BITVECTOR_XOR, a, b);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -887,8 +886,7 @@ inline Node RewriteRule<NotXor>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<NotXor>(" << node << ")" << std::endl;
+   std::vector<Node> children;
+   TNode::iterator child_it = node[0].begin();
+-  children.push_back(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_NOT, *child_it));
++  children.push_back(NodeManager::mkNode(Kind::BITVECTOR_NOT, *child_it));
+   for (++child_it; child_it != node[0].end(); ++child_it)
+   {
+     children.push_back(*child_it);
+@@ -983,8 +981,8 @@ template <>
+ inline Node RewriteRule<ZeroUlt>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<ZeroUlt>(" << node << ")" << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+-  return nm->mkNode(Kind::NOT, nm->mkNode(Kind::EQUAL, node[0], node[1]));
++  return NodeManager::mkNode(
++      Kind::NOT, NodeManager::mkNode(Kind::EQUAL, node[0], node[1]));
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -1012,7 +1010,7 @@ Node RewriteRule<UltZero>::apply(TNode node) {
+   {
+     return utils::mkFalse();
+   }
+-  return NodeManager::currentNM()->mkNode(
++  return NodeManager::mkNode(
+       Kind::DISTINCT, utils::mkZero(utils::getSize(node[0])), node[1]);
+ }
+ 
+@@ -1035,7 +1033,7 @@ template <>
+ inline Node RewriteRule<UltOne>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<UltOne>(" << node << ")" << std::endl;
+-  return NodeManager::currentNM()->mkNode(
++  return NodeManager::mkNode(
+       Kind::EQUAL, node[0], utils::mkZero(utils::getSize(node[0])));
+ }
+ 
+@@ -1063,7 +1061,7 @@ inline Node RewriteRule<UltOnes>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<UltOnes>(" << node << ")" << std::endl;
+   if (utils::isOnes(node[1]))
+   {
+-    return NodeManager::currentNM()->mkNode(
++    return NodeManager::mkNode(
+         Kind::DISTINCT, node[0], utils::mkOnes(utils::getSize(node[1])));
+   }
+   return NodeManager::currentNM()->mkConst(false);
+@@ -1086,7 +1084,7 @@ inline Node RewriteRule<SltZero>::apply(TNode node)
+   Trace("bv-rewrite") << "RewriteRule<SltZero>(" << node << ")" << std::endl;
+   unsigned size = utils::getSize(node[0]);
+   Node most_significant_bit = utils::mkExtract(node[0], size - 1, size - 1);
+-  return NodeManager::currentNM()->mkNode(
++  return NodeManager::mkNode(
+       Kind::EQUAL, most_significant_bit, utils::mkOne(1));
+ }
+ 
+@@ -1128,7 +1126,7 @@ template <>
+ inline Node RewriteRule<UleZero>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<UleZero>(" << node << ")" << std::endl;
+-  return NodeManager::currentNM()->mkNode(Kind::EQUAL, node[0], node[1]);
++  return NodeManager::mkNode(Kind::EQUAL, node[0], node[1]);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -1216,7 +1214,7 @@ inline Node RewriteRule<NotUlt>::apply(TNode node)
+   Node ult = node[0];
+   Node a = ult[0];
+   Node b = ult[1];
+-  return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_ULE, b, a);
++  return NodeManager::mkNode(Kind::BITVECTOR_ULE, b, a);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -1240,7 +1238,7 @@ inline Node RewriteRule<NotUle>::apply(TNode node)
+   Node ult = node[0];
+   Node a = ult[0];
+   Node b = ult[1];
+-  return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_ULT, b, a);
++  return NodeManager::mkNode(Kind::BITVECTOR_ULT, b, a);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -1271,7 +1269,6 @@ template <>
+ inline Node RewriteRule<MultPow2>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<MultPow2>(" << node << ")" << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   unsigned size = utils::getSize(node);
+   std::vector<Node>  children;
+   unsigned exponent = 0;
+@@ -1308,7 +1305,7 @@ inline Node RewriteRule<MultPow2>::apply(TNode node)
+ 
+   if (isNeg && size > 1)
+   {
+-    a = nm->mkNode(Kind::BITVECTOR_NEG, a);
++    a = NodeManager::mkNode(Kind::BITVECTOR_NEG, a);
+   }
+   if (exponent == 0)
+   {
+@@ -1440,7 +1437,6 @@ template <>
+ inline Node RewriteRule<UdivPow2>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<UdivPow2>(" << node << ")" << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   unsigned size = utils::getSize(node);
+   Node a = node[0];
+   bool isNeg = false;
+@@ -1455,11 +1451,11 @@ inline Node RewriteRule<UdivPow2>::apply(TNode node)
+     Node extract = utils::mkExtract(a, size - 1, power);
+     Node zeros = utils::mkConst(power, 0);
+ 
+-    ret = nm->mkNode(Kind::BITVECTOR_CONCAT, zeros, extract);
++    ret = NodeManager::mkNode(Kind::BITVECTOR_CONCAT, zeros, extract);
+   }
+   if (isNeg && size > 1)
+   {
+-    ret = nm->mkNode(Kind::BITVECTOR_NEG, ret);
++    ret = NodeManager::mkNode(Kind::BITVECTOR_NEG, ret);
+   }
+   return ret;
+ }
+@@ -1540,8 +1536,7 @@ inline Node RewriteRule<UremPow2>::apply(TNode node)
+   {
+     Node extract = utils::mkExtract(a, power - 1, 0);
+     Node zeros = utils::mkZero(utils::getSize(node) - power);
+-    ret = NodeManager::currentNM()->mkNode(
+-        Kind::BITVECTOR_CONCAT, zeros, extract);
++    ret = NodeManager::mkNode(Kind::BITVECTOR_CONCAT, zeros, extract);
+   }
+   return ret;
+ }
+@@ -1635,10 +1630,9 @@ inline Node RewriteRule<UgtUrem>::apply(TNode node)
+   const Node& T = node[0][0];
+   const Node& x = node[1];
+   Node zero = utils::mkConst(utils::getSize(x), 0);
+-  NodeManager* nm = NodeManager::currentNM();
+-  return nm->mkNode(Kind::AND,
+-                    nm->mkNode(Kind::EQUAL, x, zero),
+-                    nm->mkNode(Kind::BITVECTOR_UGT, T, zero));
++  return NodeManager::mkNode(Kind::AND,
++                             NodeManager::mkNode(Kind::EQUAL, x, zero),
++                             NodeManager::mkNode(Kind::BITVECTOR_UGT, T, zero));
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -1672,7 +1666,6 @@ template <>
+ inline Node RewriteRule<BBAddNeg>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<BBAddNeg>(" << node << ")" << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   std::vector<Node> children;
+   unsigned neg_count = 0;
+   for (unsigned i = 0; i < node.getNumChildren(); ++i)
+@@ -1680,7 +1673,7 @@ inline Node RewriteRule<BBAddNeg>::apply(TNode node)
+     if (node[i].getKind() == Kind::BITVECTOR_NEG)
+     {
+       ++neg_count;
+-      children.push_back(nm->mkNode(Kind::BITVECTOR_NOT, node[i][0]));
++      children.push_back(NodeManager::mkNode(Kind::BITVECTOR_NOT, node[i][0]));
+     }
+     else
+     {
+@@ -1776,8 +1769,7 @@ inline Node RewriteRule<ZeroExtendEqConst>::apply(TNode node) {
+   BitVector zero = BitVector(c_hi.getSize(), Integer(0));
+ 
+   if (c_hi == zero) {
+-    return NodeManager::currentNM()->mkNode(
+-        Kind::EQUAL, t, utils::mkConst(c_lo));
++    return NodeManager::mkNode(Kind::EQUAL, t, utils::mkConst(c_lo));
+   }
+   return utils::mkFalse();
+ }
+@@ -1822,8 +1814,7 @@ inline Node RewriteRule<SignExtendEqConst>::apply(TNode node) {
+   BitVector zero = BitVector(c_hi.getSize(), Integer(0));
+ 
+   if (c_hi == zero || c_hi == ~zero) {
+-    return NodeManager::currentNM()->mkNode(
+-        Kind::EQUAL, t, utils::mkConst(c_lo));
++    return NodeManager::mkNode(Kind::EQUAL, t, utils::mkConst(c_lo));
+   }
+   return utils::mkFalse();
+ }
+@@ -1889,9 +1880,9 @@ inline Node RewriteRule<ZeroExtendUltConst>::apply(TNode node) {
+       utils::mkConst(c.getConst<BitVector>().extract(utils::getSize(t) - 1, 0));
+ 
+   if (is_lhs) {
+-    return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_ULT, t, c_lo);
++    return NodeManager::mkNode(Kind::BITVECTOR_ULT, t, c_lo);
+   }
+-  return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_ULT, c_lo, t);
++  return NodeManager::mkNode(Kind::BITVECTOR_ULT, c_lo, t);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -1980,29 +1971,28 @@ inline Node RewriteRule<SignExtendUltConst>::apply(TNode node)
+   BitVector bv_upper_bits =
+       (~BitVector(size_c)).leftShift(BitVector(size_c, msb_x_pos));
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+   if (is_lhs)
+   {
+     // x[n-1:n-1] = 0
+     if (bv_msb_x < bv_c && bv_c <= bv_upper_bits)
+     {
+       Node msb_x = utils::mkExtract(x, msb_x_pos, msb_x_pos);
+-      return nm->mkNode(Kind::EQUAL, msb_x, utils::mkZero(1));
++      return NodeManager::mkNode(Kind::EQUAL, msb_x, utils::mkZero(1));
+     }
+     // x < c[n-1:0]
+     Assert(bv_c <= bv_msb_x || bv_c >= bv_upper_bits);
+-    return nm->mkNode(Kind::BITVECTOR_ULT, x, c_lo);
++    return NodeManager::mkNode(Kind::BITVECTOR_ULT, x, c_lo);
+   }
+ 
+   // x[n-1:n-1] = 1
+   if (~bv_upper_bits <= bv_c && bv_c <= ~bv_msb_x)
+   {
+     Node msb_x = utils::mkExtract(x, msb_x_pos, msb_x_pos);
+-    return nm->mkNode(Kind::EQUAL, msb_x, utils::mkOne(1));
++    return NodeManager::mkNode(Kind::EQUAL, msb_x, utils::mkOne(1));
+   }
+   // c[n-1:0] < x
+   Assert(bv_c < bv_msb_x || bv_c >= ~bv_msb_x);
+-  return nm->mkNode(Kind::BITVECTOR_ULT, c_lo, x);
++  return NodeManager::mkNode(Kind::BITVECTOR_ULT, c_lo, x);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -2090,7 +2080,6 @@ template <>
+ inline Node RewriteRule<MultSlice>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<MultSlice>(" << node << ")" << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   unsigned bitwidth = utils::getSize(node[0]);
+   Node zeros = utils::mkConst(bitwidth / 2, 0);
+   TNode a = node[0];
+@@ -2100,17 +2089,20 @@ inline Node RewriteRule<MultSlice>::apply(TNode node)
+   Node bottom_b = utils::mkExtract(b, bitwidth / 2 - 1, 0);
+   Node top_b = utils::mkExtract(b, bitwidth - 1, bitwidth / 2);
+ 
+-  Node term1 = nm->mkNode(Kind::BITVECTOR_MULT,
+-                          nm->mkNode(Kind::BITVECTOR_CONCAT, zeros, bottom_a),
+-                          nm->mkNode(Kind::BITVECTOR_CONCAT, zeros, bottom_b));
++  Node term1 = NodeManager::mkNode(
++      Kind::BITVECTOR_MULT,
++      NodeManager::mkNode(Kind::BITVECTOR_CONCAT, zeros, bottom_a),
++      NodeManager::mkNode(Kind::BITVECTOR_CONCAT, zeros, bottom_b));
+ 
+-  Node term2 = nm->mkNode(Kind::BITVECTOR_CONCAT,
+-                          nm->mkNode(Kind::BITVECTOR_MULT, top_b, bottom_a),
+-                          zeros);
+-  Node term3 = nm->mkNode(Kind::BITVECTOR_CONCAT,
+-                          nm->mkNode(Kind::BITVECTOR_MULT, top_a, bottom_b),
+-                          zeros);
+-  return nm->mkNode(Kind::BITVECTOR_ADD, term1, term2, term3);
++  Node term2 = NodeManager::mkNode(
++      Kind::BITVECTOR_CONCAT,
++      NodeManager::mkNode(Kind::BITVECTOR_MULT, top_b, bottom_a),
++      zeros);
++  Node term3 = NodeManager::mkNode(
++      Kind::BITVECTOR_CONCAT,
++      NodeManager::mkNode(Kind::BITVECTOR_MULT, top_a, bottom_b),
++      zeros);
++  return NodeManager::mkNode(Kind::BITVECTOR_ADD, term1, term2, term3);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -2148,16 +2140,15 @@ template <>
+ inline Node RewriteRule<UltAddOne>::apply(TNode node)
+ {
+   Trace("bv-rewrite") << "RewriteRule<UltAddOne>(" << node << ")" << std::endl;
+-  NodeManager *nm = NodeManager::currentNM();
+   TNode x = node[0];
+   TNode y1 = node[1];
+   TNode y = y1[0].getKind() != Kind::CONST_BITVECTOR ? y1[0] : y1[1];
+   unsigned size = utils::getSize(x);
+-  Node not_y_eq_1 =
+-      nm->mkNode(Kind::NOT, nm->mkNode(Kind::EQUAL, y, utils::mkOnes(size)));
+-  Node not_y_lt_x =
+-      nm->mkNode(Kind::NOT, nm->mkNode(Kind::BITVECTOR_ULT, y, x));
+-  return nm->mkNode(Kind::AND, not_y_eq_1, not_y_lt_x);
++  Node not_y_eq_1 = NodeManager::mkNode(
++      Kind::NOT, NodeManager::mkNode(Kind::EQUAL, y, utils::mkOnes(size)));
++  Node not_y_lt_x = NodeManager::mkNode(
++      Kind::NOT, NodeManager::mkNode(Kind::BITVECTOR_ULT, y, x));
++  return NodeManager::mkNode(Kind::AND, not_y_eq_1, not_y_lt_x);
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+diff --git a/src/theory/bv/theory_bv_utils.cpp b/src/theory/bv/theory_bv_utils.cpp
+index 815b3e3ea..b7dd12ff7 100644
+--- a/src/theory/bv/theory_bv_utils.cpp
++++ b/src/theory/bv/theory_bv_utils.cpp
+@@ -291,11 +291,11 @@ Node mkSortedNode(Kind kind, TNode child1, TNode child2)
+ 
+   if (child1 < child2)
+   {
+-    return NodeManager::currentNM()->mkNode(kind, child1, child2);
++    return NodeManager::mkNode(kind, child1, child2);
+   }
+   else
+   {
+-    return NodeManager::currentNM()->mkNode(kind, child2, child1);
++    return NodeManager::mkNode(kind, child2, child1);
+   }
+ }
+ 
+@@ -314,24 +314,21 @@ Node mkSortedNode(Kind kind, std::vector<Node>& children)
+ 
+ /* ------------------------------------------------------------------------- */
+ 
+-Node mkNot(Node child)
+-{
+-  return NodeManager::currentNM()->mkNode(Kind::NOT, child);
+-}
++Node mkNot(Node child) { return NodeManager::mkNode(Kind::NOT, child); }
+ 
+ Node mkAnd(TNode node1, TNode node2)
+ {
+-  return NodeManager::currentNM()->mkNode(Kind::AND, node1, node2);
++  return NodeManager::mkNode(Kind::AND, node1, node2);
+ }
+ 
+ Node mkOr(TNode node1, TNode node2)
+ {
+-  return NodeManager::currentNM()->mkNode(Kind::OR, node1, node2);
++  return NodeManager::mkNode(Kind::OR, node1, node2);
+ }
+ 
+ Node mkXor(TNode node1, TNode node2)
+ {
+-  return NodeManager::currentNM()->mkNode(Kind::XOR, node1, node2);
++  return NodeManager::mkNode(Kind::XOR, node1, node2);
+ }
+ 
+ /* ------------------------------------------------------------------------- */
+@@ -364,7 +361,7 @@ Node mkBit(TNode node, unsigned index)
+ 
+ Node mkConcat(TNode t1, TNode t2)
+ {
+-  return NodeManager::currentNM()->mkNode(Kind::BITVECTOR_CONCAT, t1, t2);
++  return NodeManager::mkNode(Kind::BITVECTOR_CONCAT, t1, t2);
+ }
+ 
+ Node mkConcat(std::vector<Node>& children)
+@@ -395,14 +392,12 @@ Node mkConcat(TNode node, unsigned repeat)
+ 
+ Node mkInc(TNode t)
+ {
+-  return NodeManager::currentNM()->mkNode(
+-      Kind::BITVECTOR_ADD, t, mkOne(getSize(t)));
++  return NodeManager::mkNode(Kind::BITVECTOR_ADD, t, mkOne(getSize(t)));
+ }
+ 
+ Node mkDec(TNode t)
+ {
+-  return NodeManager::currentNM()->mkNode(
+-      Kind::BITVECTOR_SUB, t, mkOne(getSize(t)));
++  return NodeManager::mkNode(Kind::BITVECTOR_SUB, t, mkOne(getSize(t)));
+ }
+ 
+ /* ------------------------------------------------------------------------- */
+diff --git a/src/theory/datatypes/theory_datatypes_utils.cpp b/src/theory/datatypes/theory_datatypes_utils.cpp
+index 96e5d666a..9f953fc38 100644
+--- a/src/theory/datatypes/theory_datatypes_utils.cpp
++++ b/src/theory/datatypes/theory_datatypes_utils.cpp
+@@ -40,7 +40,7 @@ Node applySelector(const DTypeConstructor& dc,
+                    const Node& n)
+ {
+   Node s = getSelector(n.getType(), dc, index, shareSel);
+-  return NodeManager::currentNM()->mkNode(Kind::APPLY_SELECTOR, s, n);
++  return NodeManager::mkNode(Kind::APPLY_SELECTOR, s, n);
+ }
+ 
+ Node getInstCons(Node n, const DType& dt, size_t index, bool shareSel)
+@@ -121,8 +121,7 @@ const DType& datatypeOf(Node n)
+ 
+ Node mkTester(Node n, int i, const DType& dt)
+ {
+-  return NodeManager::currentNM()->mkNode(
+-      Kind::APPLY_TESTER, dt[i].getTester(), n);
++  return NodeManager::mkNode(Kind::APPLY_TESTER, dt[i].getTester(), n);
+ }
+ 
+ Node mkSplit(Node n, const DType& dt)
+@@ -195,7 +194,7 @@ bool checkClash(Node n1, Node n2, std::vector<Node>& rew)
+     }
+     else
+     {
+-      Node eq = NodeManager::currentNM()->mkNode(Kind::EQUAL, n1, n2);
++      Node eq = NodeManager::mkNode(Kind::EQUAL, n1, n2);
+       rew.push_back(eq);
+     }
+   }
+diff --git a/src/theory/fp/fp_word_blaster.cpp b/src/theory/fp/fp_word_blaster.cpp
+index 2559cdb7a..3eb94618a 100644
+--- a/src/theory/fp/fp_word_blaster.cpp
++++ b/src/theory/fp/fp_word_blaster.cpp
+@@ -48,8 +48,7 @@ using namespace cvc5::internal::theory::fp::symfpuSymbolic;
+                          const T& _l,                                        \
+                          const T& _r)                                        \
+     {                                                                        \
+-      cvc5::internal::NodeManager* nm =                                      \
+-          cvc5::internal::NodeManager::currentNM();                          \
++      cvc5::internal::NodeManager* nm = _cond.getNodeManager();              \
+                                                                              \
+       cvc5::internal::Node cond = _cond;                                     \
+       cvc5::internal::Node l = _l;                                           \
+@@ -204,36 +203,35 @@ symbolicProposition::symbolicProposition(const symbolicProposition& old)
+ 
+ symbolicProposition symbolicProposition::operator!(void) const
+ {
+-  return symbolicProposition(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_NOT, *this));
++  return symbolicProposition(NodeManager::mkNode(Kind::BITVECTOR_NOT, *this));
+ }
+ 
+ symbolicProposition symbolicProposition::operator&&(
+     const symbolicProposition& op) const
+ {
+   return symbolicProposition(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_AND, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_AND, *this, op));
+ }
+ 
+ symbolicProposition symbolicProposition::operator||(
+     const symbolicProposition& op) const
+ {
+   return symbolicProposition(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_OR, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_OR, *this, op));
+ }
+ 
+ symbolicProposition symbolicProposition::operator==(
+     const symbolicProposition& op) const
+ {
+   return symbolicProposition(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_COMP, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_COMP, *this, op));
+ }
+ 
+ symbolicProposition symbolicProposition::operator^(
+     const symbolicProposition& op) const
+ {
+   return symbolicProposition(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_XOR, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_XOR, *this, op));
+ }
+ 
+ bool symbolicRoundingMode::checkNodeType(const TNode n)
+@@ -285,7 +283,7 @@ symbolicProposition symbolicRoundingMode::operator==(
+     const symbolicRoundingMode& op) const
+ {
+   return symbolicProposition(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_COMP, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_COMP, *this, op));
+ }
+ 
+ template <bool isSigned>
+@@ -396,9 +394,8 @@ symbolicBitVector<true> symbolicBitVector<true>::maxValue(const bwt& w)
+   symbolicBitVector<true> leadingZero(symbolicBitVector<true>::zero(1));
+   symbolicBitVector<true> base(symbolicBitVector<true>::allOnes(w - 1));
+ 
+-  return symbolicBitVector<true>(
+-      cvc5::internal::NodeManager::currentNM()->mkNode(
+-          cvc5::internal::Kind::BITVECTOR_CONCAT, leadingZero, base));
++  return symbolicBitVector<true>(cvc5::internal::NodeManager::mkNode(
++      cvc5::internal::Kind::BITVECTOR_CONCAT, leadingZero, base));
+ }
+ 
+ template <>
+@@ -413,9 +410,8 @@ symbolicBitVector<true> symbolicBitVector<true>::minValue(const bwt& w)
+   symbolicBitVector<true> leadingOne(symbolicBitVector<true>::one(1));
+   symbolicBitVector<true> base(symbolicBitVector<true>::zero(w - 1));
+ 
+-  return symbolicBitVector<true>(
+-      cvc5::internal::NodeManager::currentNM()->mkNode(
+-          cvc5::internal::Kind::BITVECTOR_CONCAT, leadingOne, base));
++  return symbolicBitVector<true>(cvc5::internal::NodeManager::mkNode(
++      cvc5::internal::Kind::BITVECTOR_CONCAT, leadingOne, base));
+ }
+ 
+ template <>
+@@ -430,14 +426,14 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator<<(
+     const symbolicBitVector<isSigned>& op) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_SHL, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_SHL, *this, op));
+ }
+ 
+ template <bool isSigned>
+ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator>>(
+     const symbolicBitVector<isSigned>& op) const
+ {
+-  return symbolicBitVector<isSigned>(NodeManager::currentNM()->mkNode(
++  return symbolicBitVector<isSigned>(NodeManager::mkNode(
+       (isSigned) ? Kind::BITVECTOR_ASHR : Kind::BITVECTOR_LSHR, *this, op));
+ }
+ 
+@@ -446,7 +442,7 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator|(
+     const symbolicBitVector<isSigned>& op) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_OR, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_OR, *this, op));
+ }
+ 
+ template <bool isSigned>
+@@ -454,7 +450,7 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator&(
+     const symbolicBitVector<isSigned>& op) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_AND, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_AND, *this, op));
+ }
+ 
+ template <bool isSigned>
+@@ -462,7 +458,7 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator+(
+     const symbolicBitVector<isSigned>& op) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_ADD, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_ADD, *this, op));
+ }
+ 
+ template <bool isSigned>
+@@ -470,7 +466,7 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator-(
+     const symbolicBitVector<isSigned>& op) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_SUB, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_SUB, *this, op));
+ }
+ 
+ template <bool isSigned>
+@@ -478,14 +474,14 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator*(
+     const symbolicBitVector<isSigned>& op) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_MULT, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_MULT, *this, op));
+ }
+ 
+ template <bool isSigned>
+ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator/(
+     const symbolicBitVector<isSigned>& op) const
+ {
+-  return symbolicBitVector<isSigned>(NodeManager::currentNM()->mkNode(
++  return symbolicBitVector<isSigned>(NodeManager::mkNode(
+       (isSigned) ? Kind::BITVECTOR_SDIV : Kind::BITVECTOR_UDIV, *this, op));
+ }
+ 
+@@ -493,7 +489,7 @@ template <bool isSigned>
+ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator%(
+     const symbolicBitVector<isSigned>& op) const
+ {
+-  return symbolicBitVector<isSigned>(NodeManager::currentNM()->mkNode(
++  return symbolicBitVector<isSigned>(NodeManager::mkNode(
+       (isSigned) ? Kind::BITVECTOR_SREM : Kind::BITVECTOR_UREM, *this, op));
+ }
+ 
+@@ -501,28 +497,28 @@ template <bool isSigned>
+ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator-(void) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_NEG, *this));
++      NodeManager::mkNode(Kind::BITVECTOR_NEG, *this));
+ }
+ 
+ template <bool isSigned>
+ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::operator~(void) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_NOT, *this));
++      NodeManager::mkNode(Kind::BITVECTOR_NOT, *this));
+ }
+ 
+ template <bool isSigned>
+ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::increment() const
+ {
+-  return symbolicBitVector<isSigned>(NodeManager::currentNM()->mkNode(
+-      Kind::BITVECTOR_ADD, *this, one(this->getWidth())));
++  return symbolicBitVector<isSigned>(
++      NodeManager::mkNode(Kind::BITVECTOR_ADD, *this, one(this->getWidth())));
+ }
+ 
+ template <bool isSigned>
+ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::decrement() const
+ {
+-  return symbolicBitVector<isSigned>(NodeManager::currentNM()->mkNode(
+-      Kind::BITVECTOR_SUB, *this, one(this->getWidth())));
++  return symbolicBitVector<isSigned>(
++      NodeManager::mkNode(Kind::BITVECTOR_SUB, *this, one(this->getWidth())));
+ }
+ 
+ template <bool isSigned>
+@@ -530,7 +526,7 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::signExtendRightShift(
+     const symbolicBitVector<isSigned>& op) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_ASHR, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_ASHR, *this, op));
+ }
+ 
+ /*** Modular operations ***/
+@@ -583,7 +579,7 @@ symbolicProposition symbolicBitVector<isSigned>::operator==(
+     const symbolicBitVector<isSigned>& op) const
+ {
+   return symbolicProposition(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_COMP, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_COMP, *this, op));
+ }
+ 
+ template <bool isSigned>
+@@ -605,7 +601,7 @@ template <bool isSigned>
+ symbolicProposition symbolicBitVector<isSigned>::operator<(
+     const symbolicBitVector<isSigned>& op) const
+ {
+-  return symbolicProposition(NodeManager::currentNM()->mkNode(
++  return symbolicProposition(NodeManager::mkNode(
+       (isSigned) ? Kind::BITVECTOR_SLTBV : Kind::BITVECTOR_ULTBV, *this, op));
+ }
+ 
+@@ -613,7 +609,7 @@ template <bool isSigned>
+ symbolicProposition symbolicBitVector<isSigned>::operator>(
+     const symbolicBitVector<isSigned>& op) const
+ {
+-  return symbolicProposition(NodeManager::currentNM()->mkNode(
++  return symbolicProposition(NodeManager::mkNode(
+       (isSigned) ? Kind::BITVECTOR_SLTBV : Kind::BITVECTOR_ULTBV, op, *this));
+ }
+ 
+@@ -700,7 +696,7 @@ symbolicBitVector<isSigned> symbolicBitVector<isSigned>::append(
+     const symbolicBitVector<isSigned>& op) const
+ {
+   return symbolicBitVector<isSigned>(
+-      NodeManager::currentNM()->mkNode(Kind::BITVECTOR_CONCAT, *this, op));
++      NodeManager::mkNode(Kind::BITVECTOR_CONCAT, *this, op));
+ }
+ 
+ // Inclusive of end points, thus if the same, extracts just one bit
+@@ -812,13 +808,13 @@ FpWordBlaster::uf FpWordBlaster::buildComponents(TNode current)
+   Assert(Theory::isLeafOf(current, THEORY_FP)
+          || current.getKind() == Kind::FLOATINGPOINT_TO_FP_FROM_REAL);
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+-  uf tmp(nm->mkNode(Kind::FLOATINGPOINT_COMPONENT_NAN, current),
+-         nm->mkNode(Kind::FLOATINGPOINT_COMPONENT_INF, current),
+-         nm->mkNode(Kind::FLOATINGPOINT_COMPONENT_ZERO, current),
+-         nm->mkNode(Kind::FLOATINGPOINT_COMPONENT_SIGN, current),
+-         nm->mkNode(Kind::FLOATINGPOINT_COMPONENT_EXPONENT, current),
+-         nm->mkNode(Kind::FLOATINGPOINT_COMPONENT_SIGNIFICAND, current));
++  uf tmp(
++      NodeManager::mkNode(Kind::FLOATINGPOINT_COMPONENT_NAN, current),
++      NodeManager::mkNode(Kind::FLOATINGPOINT_COMPONENT_INF, current),
++      NodeManager::mkNode(Kind::FLOATINGPOINT_COMPONENT_ZERO, current),
++      NodeManager::mkNode(Kind::FLOATINGPOINT_COMPONENT_SIGN, current),
++      NodeManager::mkNode(Kind::FLOATINGPOINT_COMPONENT_EXPONENT, current),
++      NodeManager::mkNode(Kind::FLOATINGPOINT_COMPONENT_SIGNIFICAND, current));
+ 
+   d_additionalAssertions.push_back(tmp.valid(fpt(current.getType())));
+ 
+@@ -829,7 +825,6 @@ Node FpWordBlaster::wordBlast(TNode node)
+ {
+   std::vector<TNode> visit;
+   std::unordered_map<TNode, bool> visited;
+-  NodeManager* nm = NodeManager::currentNM();
+ 
+   visit.push_back(node);
+ 
+@@ -914,7 +909,7 @@ Node FpWordBlaster::wordBlast(TNode node)
+         }
+         else
+         {
+-          rm tmp(nm->mkNode(Kind::ROUNDINGMODE_BITBLAST, cur));
++          rm tmp(NodeManager::mkNode(Kind::ROUNDINGMODE_BITBLAST, cur));
+           d_rmMap.insert(cur, tmp);
+           d_additionalAssertions.push_back(tmp.valid());
+         }
+@@ -1080,8 +1075,8 @@ Node FpWordBlaster::wordBlast(TNode node)
+               Assert(cur[1].getType().isBitVector());
+               Assert(cur[2].getType().isBitVector());
+ 
+-              Node IEEEBV(
+-                  nm->mkNode(Kind::BITVECTOR_CONCAT, cur[0], cur[1], cur[2]));
++              Node IEEEBV(NodeManager::mkNode(
++                  Kind::BITVECTOR_CONCAT, cur[0], cur[1], cur[2]));
+               d_fpMap.insert(cur, symfpu::unpack<traits>(fpt(t), IEEEBV));
+             }
+             break;
+diff --git a/src/theory/quantifiers/bv_inverter.cpp b/src/theory/quantifiers/bv_inverter.cpp
+index 560e6e6d2..4b2aa4d23 100644
+--- a/src/theory/quantifiers/bv_inverter.cpp
++++ b/src/theory/quantifiers/bv_inverter.cpp
+@@ -90,12 +90,12 @@ Node BvInverter::getInversionNode(Node cond, TypeNode tn, BvInverterQuery* m)
+ 
+   if (c.isNull())
+   {
+-    NodeManager* nm = NodeManager::currentNM();
+     if (m)
+     {
+       Node x = m->getBoundVariable(tn);
+       Node ccond = new_cond.substitute(solve_var, x);
+-      c = nm->mkNode(Kind::WITNESS, nm->mkNode(Kind::BOUND_VAR_LIST, x), ccond);
++      c = NodeManager::mkNode(
++          Kind::WITNESS, NodeManager::mkNode(Kind::BOUND_VAR_LIST, x), ccond);
+       Trace("cegqi-bv-skvinv")
+           << "SKVINV : Make " << c << " for " << new_cond << std::endl;
+     }
+@@ -232,7 +232,6 @@ Node BvInverter::solveBvLit(Node sv,
+ 
+   bool pol = true;
+   unsigned index;
+-  NodeManager* nm = NodeManager::currentNM();
+   Kind k, litk;
+ 
+   Assert(!path.empty());
+@@ -296,15 +295,15 @@ Node BvInverter::solveBvLit(Node sv,
+     if (litk == Kind::EQUAL
+         && (k == Kind::BITVECTOR_NOT || k == Kind::BITVECTOR_NEG))
+     {
+-      t = nm->mkNode(k, t);
++      t = NodeManager::mkNode(k, t);
+     }
+     else if (litk == Kind::EQUAL && k == Kind::BITVECTOR_ADD)
+     {
+-      t = nm->mkNode(Kind::BITVECTOR_SUB, t, s);
++      t = NodeManager::mkNode(Kind::BITVECTOR_SUB, t, s);
+     }
+     else if (litk == Kind::EQUAL && k == Kind::BITVECTOR_XOR)
+     {
+-      t = nm->mkNode(Kind::BITVECTOR_XOR, t, s);
++      t = NodeManager::mkNode(Kind::BITVECTOR_XOR, t, s);
+     }
+     else if (litk == Kind::EQUAL && k == Kind::BITVECTOR_MULT && s.isConst()
+              && bv::utils::getBit(s, 0))
+@@ -317,7 +316,7 @@ Node BvInverter::solveBvLit(Node sv,
+       Integer inv_val = s_val.modInverse(mod_val);
+       Trace("bv-invert-debug") << "Inverse : " << inv_val << std::endl;
+       Node inv = bv::utils::mkConst(w, inv_val);
+-      t = nm->mkNode(Kind::BITVECTOR_MULT, inv, t);
++      t = NodeManager::mkNode(Kind::BITVECTOR_MULT, inv, t);
+     }
+     else if (k == Kind::BITVECTOR_MULT)
+     {
+@@ -397,7 +396,7 @@ Node BvInverter::solveBvLit(Node sv,
+     else if (pol == false)
+     {
+       Assert(litk == Kind::EQUAL);
+-      ic = nm->mkNode(Kind::DISTINCT, x, t);
++      ic = NodeManager::mkNode(Kind::DISTINCT, x, t);
+       Trace("bv-invert") << "Add SC_" << litk << "(" << x << "): " << ic
+                          << std::endl;
+     }
+@@ -443,7 +442,7 @@ Node BvInverter::solveBvLit(Node sv,
+   else if (pol == false)
+   {
+     Assert(litk == Kind::EQUAL);
+-    ic = nm->mkNode(Kind::DISTINCT, x, t);
++    ic = NodeManager::mkNode(Kind::DISTINCT, x, t);
+     Trace("bv-invert") << "Add SC_" << litk << "(" << x << "): " << ic
+                        << std::endl;
+   }
+diff --git a/src/theory/quantifiers/bv_inverter_utils.cpp b/src/theory/quantifiers/bv_inverter_utils.cpp
+index c060ed00d..e073984fb 100644
+--- a/src/theory/quantifiers/bv_inverter_utils.cpp
++++ b/src/theory/quantifiers/bv_inverter_utils.cpp
+@@ -27,7 +27,6 @@ Node getICBvUltUgt(bool pol, Kind k, Node x, Node t)
+ {
+   Assert(k == Kind::BITVECTOR_ULT || k == Kind::BITVECTOR_UGT);
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+   unsigned w = bv::utils::getSize(t);
+   Node ic;
+ 
+@@ -40,16 +39,16 @@ Node getICBvUltUgt(bool pol, Kind k, Node x, Node t)
+        * (distinct t z)
+        * where
+        * z = 0 with getSize(z) = w  */
+-      Node scl = nm->mkNode(Kind::DISTINCT, t, bv::utils::mkZero(w));
+-      Node scr = nm->mkNode(k, x, t);
+-      ic = nm->mkNode(Kind::IMPLIES, scl, scr);
++      Node scl = NodeManager::mkNode(Kind::DISTINCT, t, bv::utils::mkZero(w));
++      Node scr = NodeManager::mkNode(k, x, t);
++      ic = NodeManager::mkNode(Kind::IMPLIES, scl, scr);
+     }
+     else
+     {
+       /* x >= t
+        * with invertibility condition:
+        * true (no invertibility condition)  */
+-      ic = nm->mkNode(Kind::NOT, nm->mkNode(k, x, t));
++      ic = NodeManager::mkNode(Kind::NOT, NodeManager::mkNode(k, x, t));
+     }
+   }
+   else
+@@ -62,16 +61,16 @@ Node getICBvUltUgt(bool pol, Kind k, Node x, Node t)
+        * (distinct t ones)
+        * where
+        * ones = ~0 with getSize(ones) = w  */
+-      Node scl = nm->mkNode(Kind::DISTINCT, t, bv::utils::mkOnes(w));
+-      Node scr = nm->mkNode(k, x, t);
+-      ic = nm->mkNode(Kind::IMPLIES, scl, scr);
++      Node scl = NodeManager::mkNode(Kind::DISTINCT, t, bv::utils::mkOnes(w));
++      Node scr = NodeManager::mkNode(k, x, t);
++      ic = NodeManager::mkNode(Kind::IMPLIES, scl, scr);
+     }
+     else
+     {
+       /* x <= t
+        * with invertibility condition:
+        * true (no invertibility condition)  */
+-      ic = nm->mkNode(Kind::NOT, nm->mkNode(k, x, t));
++      ic = NodeManager::mkNode(Kind::NOT, NodeManager::mkNode(k, x, t));
+     }
+   }
+   Trace("bv-invert") << "Add SC_" << k << "(" << x << "): " << ic << std::endl;
+@@ -82,7 +81,6 @@ Node getICBvSltSgt(bool pol, Kind k, Node x, Node t)
+ {
+   Assert(k == Kind::BITVECTOR_SLT || k == Kind::BITVECTOR_SGT);
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+   unsigned w = bv::utils::getSize(t);
+   Node ic;
+ 
+@@ -96,16 +94,16 @@ Node getICBvSltSgt(bool pol, Kind k, Node x, Node t)
+        * where
+        * min is the minimum signed value with getSize(min) = w  */
+       Node min = bv::utils::mkMinSigned(w);
+-      Node scl = nm->mkNode(Kind::DISTINCT, min, t);
+-      Node scr = nm->mkNode(k, x, t);
+-      ic = nm->mkNode(Kind::IMPLIES, scl, scr);
++      Node scl = NodeManager::mkNode(Kind::DISTINCT, min, t);
++      Node scr = NodeManager::mkNode(k, x, t);
++      ic = NodeManager::mkNode(Kind::IMPLIES, scl, scr);
+     }
+     else
+     {
+       /* x >= t
+        * with invertibility condition:
+        * true (no invertibility condition)  */
+-      ic = nm->mkNode(Kind::NOT, nm->mkNode(k, x, t));
++      ic = NodeManager::mkNode(Kind::NOT, NodeManager::mkNode(k, x, t));
+     }
+   }
+   else
+@@ -119,16 +117,16 @@ Node getICBvSltSgt(bool pol, Kind k, Node x, Node t)
+        * where
+        * max is the signed maximum value with getSize(max) = w  */
+       Node max = bv::utils::mkMaxSigned(w);
+-      Node scl = nm->mkNode(Kind::DISTINCT, t, max);
+-      Node scr = nm->mkNode(k, x, t);
+-      ic = nm->mkNode(Kind::IMPLIES, scl, scr);
++      Node scl = NodeManager::mkNode(Kind::DISTINCT, t, max);
++      Node scr = NodeManager::mkNode(k, x, t);
++      ic = NodeManager::mkNode(Kind::IMPLIES, scl, scr);
+     }
+     else
+     {
+       /* x <= t
+        * with invertibility condition:
+        * true (no invertibility condition)  */
+-      ic = nm->mkNode(Kind::NOT, nm->mkNode(k, x, t));
++      ic = NodeManager::mkNode(Kind::NOT, NodeManager::mkNode(k, x, t));
+     }
+   }
+   Trace("bv-invert") << "Add SC_" << k << "(" << x << "): " << ic << std::endl;
+diff --git a/src/theory/quantifiers/cegqi/ceg_bv_instantiator.cpp b/src/theory/quantifiers/cegqi/ceg_bv_instantiator.cpp
+index c219793d8..4a577745b 100644
+--- a/src/theory/quantifiers/cegqi/ceg_bv_instantiator.cpp
++++ b/src/theory/quantifiers/cegqi/ceg_bv_instantiator.cpp
+@@ -159,7 +159,6 @@ Node BvInstantiator::hasProcessAssertion(CegInstantiator* ci,
+   {
+     return lit;
+   }
+-  NodeManager* nm = NodeManager::currentNM();
+   Node s = atom[0];
+   Node t = atom[1];
+ 
+@@ -181,12 +180,12 @@ Node BvInstantiator::hasProcessAssertion(CegInstantiator* ci,
+     //   (not) s ~ t  --->  s = t + ( s^M - t^M )
+     if (sm != tm)
+     {
+-      Node slack = rewrite(nm->mkNode(Kind::BITVECTOR_SUB, sm, tm));
++      Node slack = rewrite(NodeManager::mkNode(Kind::BITVECTOR_SUB, sm, tm));
+       Assert(slack.isConst());
+       // remember the slack value for the asserted literal
+       d_alit_to_model_slack[lit] = slack;
+-      ret =
+-          nm->mkNode(Kind::EQUAL, s, nm->mkNode(Kind::BITVECTOR_ADD, t, slack));
++      ret = NodeManager::mkNode(
++          Kind::EQUAL, s, NodeManager::mkNode(Kind::BITVECTOR_ADD, t, slack));
+       Trace("cegqi-bv") << "Slack is " << slack << std::endl;
+     }
+     else
+@@ -220,7 +219,7 @@ Node BvInstantiator::hasProcessAssertion(CegInstantiator* ci,
+     else
+     {
+       Node bv_one = bv::utils::mkOne(bv::utils::getSize(s));
+-      ret = nm->mkNode(Kind::BITVECTOR_ADD, s, bv_one).eqNode(t);
++      ret = NodeManager::mkNode(Kind::BITVECTOR_ADD, s, bv_one).eqNode(t);
+     }
+   }
+   Trace("cegqi-bv") << "Process " << lit << " as " << ret << std::endl;
+@@ -539,8 +538,6 @@ Node BvInstantiator::rewriteTermForSolvePv(
+     std::vector<Node>& children,
+     std::unordered_map<Node, bool>& contains_pv)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+-
+   // [1] rewrite cases of non-invertible operators
+ 
+   if (n.getKind() == Kind::EQUAL)
+@@ -554,7 +551,7 @@ Node BvInstantiator::rewriteTermForSolvePv(
+         || (rhs == pv && lhs.getKind() == Kind::BITVECTOR_MULT && lhs[0] == pv
+             && lhs[1] == pv))
+     {
+-      return nm->mkNode(
++      return NodeManager::mkNode(
+           Kind::BITVECTOR_ULT,
+           pv,
+           bv::utils::mkConst(BitVector(bv::utils::getSize(pv), Integer(2))));
+diff --git a/src/theory/quantifiers/cegqi/ceg_utils.h b/src/theory/quantifiers/cegqi/ceg_utils.h
+index b45583524..3c7eaedbe 100644
+--- a/src/theory/quantifiers/cegqi/ceg_utils.h
++++ b/src/theory/quantifiers/cegqi/ceg_utils.h
+@@ -88,7 +88,7 @@ class TermProperties {
+   Node getModifiedTerm(Node pv) const
+   {
+     if( !d_coeff.isNull() ){
+-      return NodeManager::currentNM()->mkNode(Kind::MULT, d_coeff, pv);
++      return NodeManager::mkNode(Kind::MULT, d_coeff, pv);
+     }else{
+       return pv;
+     }
+diff --git a/src/theory/quantifiers/cegqi/nested_qe.cpp b/src/theory/quantifiers/cegqi/nested_qe.cpp
+index e9554130c..fa1931f72 100644
+--- a/src/theory/quantifiers/cegqi/nested_qe.cpp
++++ b/src/theory/quantifiers/cegqi/nested_qe.cpp
+@@ -138,8 +138,7 @@ Node NestedQe::doQe(Env& env, Node q)
+ {
+   Assert(q.getKind() == Kind::FORALL);
+   Trace("cegqi-nested-qe") << "  Apply qe to " << q << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+-  q = nm->mkNode(Kind::EXISTS, q[0], q[1].negate());
++  q = NodeManager::mkNode(Kind::EXISTS, q[0], q[1].negate());
+   std::unique_ptr<SolverEngine> smt_qe;
+   Options subOptions;
+   subOptions.copyValues(env.getOptions());
+diff --git a/src/theory/quantifiers/conjecture_generator.cpp b/src/theory/quantifiers/conjecture_generator.cpp
+index 9a79d64aa..697412066 100644
+--- a/src/theory/quantifiers/conjecture_generator.cpp
++++ b/src/theory/quantifiers/conjecture_generator.cpp
+@@ -939,8 +939,7 @@ unsigned ConjectureGenerator::flushWaitingConjectures( unsigned& addedLemmas, in
+               if( !bvs.empty() ){
+                 Node bvl =
+                     NodeManager::currentNM()->mkNode(Kind::BOUND_VAR_LIST, bvs);
+-                rsg = NodeManager::currentNM()->mkNode(
+-                    Kind::FORALL, bvl, lhs.eqNode(rhs));
++                rsg = NodeManager::mkNode(Kind::FORALL, bvl, lhs.eqNode(rhs));
+               }else{
+                 rsg = lhs.eqNode( rhs );
+               }
+@@ -949,8 +948,7 @@ unsigned ConjectureGenerator::flushWaitingConjectures( unsigned& addedLemmas, in
+               d_eq_conjectures[lhs].push_back( rhs );
+               d_eq_conjectures[rhs].push_back( lhs );
+ 
+-              Node lem =
+-                  NodeManager::currentNM()->mkNode(Kind::OR, rsg.negate(), rsg);
++              Node lem = NodeManager::mkNode(Kind::OR, rsg.negate(), rsg);
+               d_qim.addPendingLemma(lem,
+                                     InferenceId::QUANTIFIERS_CONJ_GEN_SPLIT);
+               d_qim.addPendingPhaseRequirement(rsg, false);
+@@ -1243,8 +1241,7 @@ void ConjectureGenerator::getEnumeratePredUfTerm( Node n, unsigned num, std::vec
+   getEnumerateUfTerm( n, num, uf_terms );
+   Node p = getPredicateForType( n.getType() );
+   for( unsigned i=0; i<uf_terms.size(); i++ ){
+-    terms.push_back(
+-        NodeManager::currentNM()->mkNode(Kind::APPLY_UF, p, uf_terms[i]));
++    terms.push_back(NodeManager::mkNode(Kind::APPLY_UF, p, uf_terms[i]));
+   }
+ }
+ 
+diff --git a/src/theory/quantifiers/ematching/ho_trigger.cpp b/src/theory/quantifiers/ematching/ho_trigger.cpp
+index dff206211..b225de6f2 100644
+--- a/src/theory/quantifiers/ematching/ho_trigger.cpp
++++ b/src/theory/quantifiers/ematching/ho_trigger.cpp
+@@ -430,7 +430,7 @@ bool HigherOrderTrigger::sendInstantiationArg(std::vector<Node>& m,
+       Node body =
+           NodeManager::currentNM()->mkNode(Kind::APPLY_UF, d_lchildren[vnum]);
+       Trace("ho-unif-debug2") << "  got " << body << std::endl;
+-      Node lam = NodeManager::currentNM()->mkNode(Kind::LAMBDA, lbvl, body);
++      Node lam = NodeManager::mkNode(Kind::LAMBDA, lbvl, body);
+       m[vnum] = lam;
+       Trace("ho-unif-debug2") << "  try " << vnum << " -> " << lam << std::endl;
+     }
+diff --git a/src/theory/quantifiers/ematching/pattern_term_selector.cpp b/src/theory/quantifiers/ematching/pattern_term_selector.cpp
+index e3e777a28..b92710dc6 100644
+--- a/src/theory/quantifiers/ematching/pattern_term_selector.cpp
++++ b/src/theory/quantifiers/ematching/pattern_term_selector.cpp
+@@ -117,7 +117,7 @@ Node PatternTermSelector::getIsUsableEq(Node q, Node n) const
+       if (i == 1 && n.getKind() == Kind::EQUAL
+           && !quantifiers::TermUtil::hasInstConstAttr(n[0]))
+       {
+-        return NodeManager::currentNM()->mkNode(Kind::EQUAL, n[1], n[0]);
++        return NodeManager::mkNode(Kind::EQUAL, n[1], n[0]);
+       }
+       else
+       {
+diff --git a/src/theory/quantifiers/instantiate.cpp b/src/theory/quantifiers/instantiate.cpp
+index 9265a6e82..c7dbff78f 100644
+--- a/src/theory/quantifiers/instantiate.cpp
++++ b/src/theory/quantifiers/instantiate.cpp
+@@ -293,7 +293,7 @@ bool Instantiate::addInstantiationInternal(
+   Trace("inst-assert") << "(assert " << body << ")" << std::endl;
+ 
+   // construct the instantiation, and rewrite the lemma
+-  Node lem = NodeManager::currentNM()->mkNode(Kind::IMPLIES, q, body);
++  Node lem = NodeManager::mkNode(Kind::IMPLIES, q, body);
+ 
+   // If proofs are enabled, construct the proof, which is of the form:
+   // ... free assumption q ...
+diff --git a/src/theory/quantifiers/term_util.cpp b/src/theory/quantifiers/term_util.cpp
+index bd059fedf..f8c805817 100644
+--- a/src/theory/quantifiers/term_util.cpp
++++ b/src/theory/quantifiers/term_util.cpp
+@@ -312,7 +312,7 @@ Node TermUtil::mkNegate(Kind notk, Node n)
+   {
+     return n[0];
+   }
+-  return NodeManager::currentNM()->mkNode(notk, n);
++  return NodeManager::mkNode(notk, n);
+ }
+ 
+ bool TermUtil::isNegate(Kind k)
+@@ -657,11 +657,11 @@ Node TermUtil::ensureType(Node n, TypeNode tn)
+   }
+   if (tn.isInteger())
+   {
+-    return NodeManager::currentNM()->mkNode(Kind::TO_INTEGER, n);
++    return NodeManager::mkNode(Kind::TO_INTEGER, n);
+   }
+   else if (tn.isReal())
+   {
+-    return NodeManager::currentNM()->mkNode(Kind::TO_REAL, n);
++    return NodeManager::mkNode(Kind::TO_REAL, n);
+   }
+   return Node::null();
+ }
+diff --git a/src/theory/sets/normal_form.h b/src/theory/sets/normal_form.h
+index f62bd3935..5b18465fe 100644
+--- a/src/theory/sets/normal_form.h
++++ b/src/theory/sets/normal_form.h
+@@ -158,7 +158,7 @@ class NormalForm {
+     }else if( index==els.size()-1 ){
+       return els[index];
+     }else{
+-      return NodeManager::currentNM()->mkNode( k, els[index], mkBop( k, els, tn, index+1 ) );
++      return NodeManager::mkNode(k, els[index], mkBop(k, els, tn, index + 1));
+     }
+   }
+ 
+diff --git a/src/theory/sets/rels_utils.cpp b/src/theory/sets/rels_utils.cpp
+index 56637d1d3..69e07350b 100644
+--- a/src/theory/sets/rels_utils.cpp
++++ b/src/theory/sets/rels_utils.cpp
+@@ -77,7 +77,7 @@ void RelsUtils::computeTC(Node rel,
+ Node RelsUtils::constructPair(Node rel, Node a, Node b)
+ {
+   const DType& dt = rel.getType().getSetElementType().getDType();
+-  return NodeManager::currentNM()->mkNode(
++  return NodeManager::mkNode(
+       Kind::APPLY_CONSTRUCTOR, dt[0].getConstructor(), a, b);
+ }
+ 
+@@ -85,8 +85,6 @@ Node RelsUtils::evaluateGroup(TNode n)
+ {
+   Assert(n.getKind() == Kind::RELATION_GROUP);
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+-
+   Node A = n[0];
+   TypeNode setType = A.getType();
+   TypeNode partitionType = n.getType();
+@@ -94,7 +92,7 @@ Node RelsUtils::evaluateGroup(TNode n)
+   if (A.getKind() == Kind::SET_EMPTY)
+   {
+     // return a nonempty partition
+-    return nm->mkNode(Kind::SET_SINGLETON, A);
++    return NodeManager::mkNode(Kind::SET_SINGLETON, A);
+   }
+ 
+   std::vector<uint32_t> indices =
+diff --git a/src/theory/strings/arith_entail.cpp b/src/theory/strings/arith_entail.cpp
+index 10fa355c3..062ce95ba 100644
+--- a/src/theory/strings/arith_entail.cpp
++++ b/src/theory/strings/arith_entail.cpp
+@@ -228,7 +228,7 @@ bool ArithEntail::check(Node a, Node b, bool strict, bool isSimple)
+   {
+     return !strict;
+   }
+-  Node diff = NodeManager::currentNM()->mkNode(Kind::SUB, a, b);
++  Node diff = NodeManager::mkNode(Kind::SUB, a, b);
+   return check(diff, strict, isSimple);
+ }
+ 
+@@ -238,7 +238,7 @@ bool ArithEntail::check(Node a, bool strict, bool isSimple)
+   {
+     return a.getConst<Rational>().sgn() >= (strict ? 1 : 0);
+   }
+-  Node ar = strict ? NodeManager::currentNM()->mkNode(Kind::SUB, a, d_one) : a;
++  Node ar = strict ? NodeManager::mkNode(Kind::SUB, a, d_one) : a;
+   ar = rewriteArith(ar);
+   // if simple, just call the checkSimple routine.
+   if (isSimple)
+diff --git a/src/theory/strings/strings_entail.cpp b/src/theory/strings/strings_entail.cpp
+index b4827993a..2b62aac6e 100644
+--- a/src/theory/strings/strings_entail.cpp
++++ b/src/theory/strings/strings_entail.cpp
+@@ -192,11 +192,10 @@ bool StringsEntail::stripSymbolicLength(std::vector<Node>& n1,
+     }
+     else
+     {
+-      Node next_s = NodeManager::currentNM()->mkNode(
++      Node next_s = NodeManager::mkNode(
+           Kind::SUB,
+           curr,
+-          NodeManager::currentNM()->mkNode(Kind::STRING_LENGTH,
+-                                           n1[sindex_use]));
++          NodeManager::mkNode(Kind::STRING_LENGTH, n1[sindex_use]));
+       next_s = d_arithEntail.rewriteArith(next_s);
+       if (d_arithEntail.check(next_s))
+       {
+@@ -263,8 +262,7 @@ int StringsEntail::componentContains(std::vector<Node>& n1,
+           }
+           else if (!n1re.isNull())
+           {
+-            n1[i] = NodeManager::currentNM()->mkNode(
+-                Kind::STRING_CONCAT, n1[i], n1re);
++            n1[i] = NodeManager::mkNode(Kind::STRING_CONCAT, n1[i], n1re);
+           }
+           if (remainderDir != 1)
+           {
+@@ -277,8 +275,7 @@ int StringsEntail::componentContains(std::vector<Node>& n1,
+           }
+           else if (!n1rb.isNull())
+           {
+-            n1[i] = NodeManager::currentNM()->mkNode(
+-                Kind::STRING_CONCAT, n1rb, n1[i]);
++            n1[i] = NodeManager::mkNode(Kind::STRING_CONCAT, n1rb, n1[i]);
+           }
+         }
+         return i;
+@@ -371,8 +368,6 @@ bool StringsEntail::componentContainsBase(
+   Assert(n1rb.isNull());
+   Assert(n1re.isNull());
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+-
+   if (n1 == n2)
+   {
+     return true;
+@@ -445,8 +440,8 @@ bool StringsEntail::componentContainsBase(
+         {
+           bool success = true;
+           Node start_pos = n2[1];
+-          Node end_pos = nm->mkNode(Kind::ADD, n2[1], n2[2]);
+-          Node len_n2s = nm->mkNode(Kind::STRING_LENGTH, n2[0]);
++          Node end_pos = NodeManager::mkNode(Kind::ADD, n2[1], n2[2]);
++          Node len_n2s = NodeManager::mkNode(Kind::STRING_LENGTH, n2[0]);
+           if (dir == 1)
+           {
+             // To be a suffix, start + length must be greater than
+@@ -674,8 +669,7 @@ bool StringsEntail::stripConstantEndpoints(std::vector<Node>& n1,
+ 
+ Node StringsEntail::checkContains(Node a, Node b, bool fullRewriter)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node ctn = nm->mkNode(Kind::STRING_CONTAINS, a, b);
++  Node ctn = NodeManager::mkNode(Kind::STRING_CONTAINS, a, b);
+ 
+   if (fullRewriter)
+   {
+@@ -709,7 +703,7 @@ Node StringsEntail::checkContains(Node a, Node b, bool fullRewriter)
+ 
+ bool StringsEntail::checkNonEmpty(Node a)
+ {
+-  Node len = NodeManager::currentNM()->mkNode(Kind::STRING_LENGTH, a);
++  Node len = NodeManager::mkNode(Kind::STRING_LENGTH, a);
+   len = d_rr->rewrite(len);
+   return d_arithEntail.check(len, true);
+ }
+diff --git a/src/theory/strings/term_registry.cpp b/src/theory/strings/term_registry.cpp
+index 88e89bf3b..219ba9790 100644
+--- a/src/theory/strings/term_registry.cpp
++++ b/src/theory/strings/term_registry.cpp
+@@ -700,13 +700,12 @@ const std::set<Node>& TermRegistry::getRelevantTermSet() const
+ 
+ Node TermRegistry::mkNConcat(Node n1, Node n2) const
+ {
+-  return rewrite(NodeManager::currentNM()->mkNode(Kind::STRING_CONCAT, n1, n2));
++  return rewrite(NodeManager::mkNode(Kind::STRING_CONCAT, n1, n2));
+ }
+ 
+ Node TermRegistry::mkNConcat(Node n1, Node n2, Node n3) const
+ {
+-  return rewrite(
+-      NodeManager::currentNM()->mkNode(Kind::STRING_CONCAT, n1, n2, n3));
++  return rewrite(NodeManager::mkNode(Kind::STRING_CONCAT, n1, n2, n3));
+ }
+ 
+ Node TermRegistry::mkNConcat(const std::vector<Node>& c, TypeNode tn) const
+diff --git a/src/theory/strings/theory_strings_preprocess.cpp b/src/theory/strings/theory_strings_preprocess.cpp
+index 8a7ebb912..4a3245c3e 100644
+--- a/src/theory/strings/theory_strings_preprocess.cpp
++++ b/src/theory/strings/theory_strings_preprocess.cpp
+@@ -979,20 +979,18 @@ Node StringsPreprocess::reduce(Node t,
+     Node x = t[0];
+     Node s = t[1];
+     //negative contains reduces to existential
+-    Node lenx = NodeManager::currentNM()->mkNode(Kind::STRING_LENGTH, x);
+-    Node lens = NodeManager::currentNM()->mkNode(Kind::STRING_LENGTH, s);
++    Node lenx = NodeManager::mkNode(Kind::STRING_LENGTH, x);
++    Node lens = NodeManager::mkNode(Kind::STRING_LENGTH, s);
+     Node b1 = SkolemCache::mkIndexVar(nm, t);
+-    Node b1v = NodeManager::currentNM()->mkNode(Kind::BOUND_VAR_LIST, b1);
+-    Node body = NodeManager::currentNM()->mkNode(
++    Node b1v = NodeManager::mkNode(Kind::BOUND_VAR_LIST, b1);
++    Node body = NodeManager::mkNode(
+         Kind::AND,
+-        NodeManager::currentNM()->mkNode(Kind::LEQ, zero, b1),
+-        NodeManager::currentNM()->mkNode(
+-            Kind::LEQ,
+-            b1,
+-            NodeManager::currentNM()->mkNode(Kind::SUB, lenx, lens)),
+-        NodeManager::currentNM()->mkNode(
++        NodeManager::mkNode(Kind::LEQ, zero, b1),
++        NodeManager::mkNode(
++            Kind::LEQ, b1, NodeManager::mkNode(Kind::SUB, lenx, lens)),
++        NodeManager::mkNode(
+             Kind::EQUAL,
+-            NodeManager::currentNM()->mkNode(Kind::STRING_SUBSTR, x, b1, lens),
++            NodeManager::mkNode(Kind::STRING_SUBSTR, x, b1, lens),
+             s));
+     retNode = utils::mkForallInternal(nm, b1v, body.negate()).negate();
+   }
+diff --git a/src/theory/strings/theory_strings_utils.cpp b/src/theory/strings/theory_strings_utils.cpp
+index dccd784f7..fac9c5e31 100644
+--- a/src/theory/strings/theory_strings_utils.cpp
++++ b/src/theory/strings/theory_strings_utils.cpp
+@@ -156,12 +156,12 @@ Node mkPrefix(Node t, Node n)
+ 
+ Node mkSuffix(Node t, Node n)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+-  return nm->mkNode(
++  return NodeManager::mkNode(
+       Kind::STRING_SUBSTR,
+       t,
+       n,
+-      nm->mkNode(Kind::SUB, nm->mkNode(Kind::STRING_LENGTH, t), n));
++      NodeManager::mkNode(
++          Kind::SUB, NodeManager::mkNode(Kind::STRING_LENGTH, t), n));
+ }
+ 
+ Node mkPrefixExceptLen(Node t, Node n)
+@@ -176,20 +176,19 @@ Node mkPrefixExceptLen(Node t, Node n)
+ 
+ Node mkSuffixOfLen(Node t, Node n)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node lent = nm->mkNode(Kind::STRING_LENGTH, t);
+-  return nm->mkNode(Kind::STRING_SUBSTR, t, nm->mkNode(Kind::SUB, lent, n), n);
++  Node lent = NodeManager::mkNode(Kind::STRING_LENGTH, t);
++  return NodeManager::mkNode(
++      Kind::STRING_SUBSTR, t, NodeManager::mkNode(Kind::SUB, lent, n), n);
+ }
+ 
+ Node mkUnit(TypeNode tn, Node n)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   if (tn.isString())
+   {
+-    return nm->mkNode(Kind::STRING_UNIT, n);
++    return NodeManager::mkNode(Kind::STRING_UNIT, n);
+   }
+   Assert(tn.isSequence());
+-  return nm->mkNode(Kind::SEQ_UNIT, n);
++  return NodeManager::mkNode(Kind::SEQ_UNIT, n);
+ }
+ 
+ Node getConstantComponent(Node t)
+@@ -235,10 +234,9 @@ Node mkSubstrChain(Node base,
+                    const std::vector<Node>& ss,
+                    const std::vector<Node>& ls)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   for (unsigned i = 0, size = ss.size(); i < size; i++)
+   {
+-    base = nm->mkNode(Kind::STRING_SUBSTR, base, ss[i], ls[i]);
++    base = NodeManager::mkNode(Kind::STRING_SUBSTR, base, ss[i], ls[i]);
+   }
+   return base;
+ }
+@@ -248,10 +246,9 @@ Node mkConcatForConstSequence(const Node& c)
+   Assert(c.getKind() == Kind::CONST_SEQUENCE);
+   const std::vector<Node>& charVec = c.getConst<Sequence>().getVec();
+   std::vector<Node> vec;
+-  NodeManager* nm = NodeManager::currentNM();
+   for (const Node& cc : charVec)
+   {
+-    vec.push_back(nm->mkNode(Kind::SEQ_UNIT, cc));
++    vec.push_back(NodeManager::mkNode(Kind::SEQ_UNIT, cc));
+   }
+   return mkConcat(vec, c.getType());
+ }
+@@ -375,7 +372,6 @@ void getRegexpComponents(Node r, std::vector<Node>& result)
+ {
+   Assert(r.getType().isRegExp());
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+   if (r.getKind() == Kind::REGEXP_CONCAT)
+   {
+     for (const Node& n : r)
+@@ -388,8 +384,8 @@ void getRegexpComponents(Node r, std::vector<Node>& result)
+     size_t rlen = Word::getLength(r[0]);
+     for (size_t i = 0; i < rlen; i++)
+     {
+-      result.push_back(
+-          nm->mkNode(Kind::STRING_TO_REGEXP, Word::substr(r[0], i, 1)));
++      result.push_back(NodeManager::mkNode(Kind::STRING_TO_REGEXP,
++                                           Word::substr(r[0], i, 1)));
+     }
+   }
+   else
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index ce42c6cd5..77b9fcd65 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -2200,8 +2200,7 @@ std::pair<bool, Node> TheoryEngine::entailmentCheck(options::TheoryOfMode mode,
+         if( chres2.first ){
+           return std::pair<bool, Node>(
+               true,
+-              NodeManager::currentNM()->mkNode(
+-                  Kind::AND, chres.second, chres2.second));
++              NodeManager::mkNode(Kind::AND, chres.second, chres2.second));
+         }else{
+           break;
+         }
+-- 
+2.47.1
+

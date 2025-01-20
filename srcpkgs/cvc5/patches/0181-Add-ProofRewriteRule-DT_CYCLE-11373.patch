@@ -1,0 +1,163 @@
+From 449e9af0433ec6feced5783e9a3323f5d06f3a98 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 19 Nov 2024 10:05:39 -0600
+Subject: [PATCH 181/312] Add ProofRewriteRule::DT_CYCLE (#11373)
+
+This is the last remaining rule for the core datatypes theory.
+
+Eunoia definition will follow when datatypes are stable in Eunoia.
+
+---------
+
+Co-authored-by: Haniel Barbosa <hanielbbarbosa@gmail.com>
+---
+ include/cvc5/cvc5_proof_rule.h              | 13 ++++++
+ src/api/cpp/cvc5_proof_rule_template.cpp    |  1 +
+ src/theory/datatypes/datatypes_rewriter.cpp | 30 ++++++++++++++
+ src/theory/datatypes/infer_proof_cons.cpp   | 44 ++++++++++++++++++++-
+ 4 files changed, 87 insertions(+), 1 deletion(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 0fc353115..cec7c58ca 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2677,6 +2677,19 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(DT_CONS_EQ),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Datatypes -- cycle**
++   *
++   * .. math::
++   *   (x = t[x]) = \bot
++   *
++   * where all terms on the path to :math:`x` in :math:`t[x]` are applications
++   * of constructors, and this path is non-empty.
++   *
++   * \endverbatim
++   */
++  EVALUE(DT_CYCLE),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Datatypes -- collapse tester**
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index 441b186e2..359077bf1 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -257,6 +257,7 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::DT_COLLAPSE_TESTER_SINGLETON:
+       return "dt-collapse-tester-singleton";
+     case ProofRewriteRule::DT_CONS_EQ: return "dt-cons-eq";
++    case ProofRewriteRule::DT_CYCLE: return "dt-cycle";
+     case ProofRewriteRule::DT_COLLAPSE_UPDATER: return "dt-collapse-updater";
+     case ProofRewriteRule::DT_UPDATER_ELIM: return "dt-updater-elim";
+     case ProofRewriteRule::DT_MATCH_ELIM: return "dt-match-elim";
+diff --git a/src/theory/datatypes/datatypes_rewriter.cpp b/src/theory/datatypes/datatypes_rewriter.cpp
+index 2c500b85a..b76c70888 100644
+--- a/src/theory/datatypes/datatypes_rewriter.cpp
++++ b/src/theory/datatypes/datatypes_rewriter.cpp
+@@ -57,6 +57,8 @@ DatatypesRewriter::DatatypesRewriter(NodeManager* nm,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::DT_MATCH_ELIM,
+                            TheoryRewriteCtx::PRE_DSL);
++  registerProofRewriteRule(ProofRewriteRule::DT_CYCLE,
++                           TheoryRewriteCtx::PRE_DSL);
+ }
+ 
+ Node DatatypesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+@@ -184,6 +186,34 @@ Node DatatypesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
++    case ProofRewriteRule::DT_CYCLE:
++    {
++      if (n.getKind() == Kind::EQUAL && n[0] != n[1])
++      {
++        std::unordered_set<TNode> visited;
++        std::vector<TNode> visit;
++        TNode cur;
++        visit.push_back(n[1]);
++        do
++        {
++          cur = visit.back();
++          visit.pop_back();
++          if (visited.find(cur) == visited.end())
++          {
++            visited.insert(cur);
++            if (cur == n[0])
++            {
++              return d_nm->mkConst(false);
++            }
++            if (cur.getKind() == Kind::APPLY_CONSTRUCTOR)
++            {
++              visit.insert(visit.end(), cur.begin(), cur.end());
++            }
++          }
++        } while (!visit.empty());
++      }
++    }
++    break;
+     default: break;
+   }
+   return Node::null();
+diff --git a/src/theory/datatypes/infer_proof_cons.cpp b/src/theory/datatypes/infer_proof_cons.cpp
+index 16bc45bc2..0bcd4ef62 100644
+--- a/src/theory/datatypes/infer_proof_cons.cpp
++++ b/src/theory/datatypes/infer_proof_cons.cpp
+@@ -317,9 +317,51 @@ void InferProofCons::convert(InferenceId infer, TNode conc, TNode exp, CDProof*
+       }
+     }
+     break;
++    case InferenceId::DATATYPES_CYCLE:
++    {
++      // the conflict is of the form
++      // (and (= x (C1 ... x1 ...))
++      //      (= x1 (C2 ... x2 ...)) ....
++      //      (= x{n-1} (Cn ... xn ...))
++      //      (= xn (C{n+1} ... x ...)))
++      // We take the first n-1 equalities as a substitution and apply it to
++      // the right hand side of the last equality, and use DT_CYCLE to derive
++      // a conflict.
++      Assert(!expv.empty());
++      Node lastEq = expv[expv.size() - 1];
++      Assert(lastEq.getKind() == Kind::EQUAL);
++      std::vector<Node> subs(expv.begin(), expv.begin() + expv.size() - 1);
++      ProofChecker* pc = d_env.getProofNodeManager()->getChecker();
++      Node eq;
++      if (!subs.empty())
++      {
++        eq = pc->checkDebug(ProofRule::SUBS, subs, {lastEq[1]});
++        Assert(!eq.isNull());
++        cdp->addStep(eq, ProofRule::SUBS, subs, {lastEq[1]});
++      }
++      else
++      {
++        eq = lastEq[1].eqNode(lastEq[1]);
++      }
++      Node eq1 = lastEq[0].eqNode(eq[1]);
++      Trace("dt-ipc-cycle") << "Cycle eq? " << eq1 << std::endl;
++      Node falsen =
++          d_env.getRewriter()->rewriteViaRule(ProofRewriteRule::DT_CYCLE, eq1);
++      if (!falsen.isNull())
++      {
++        Node eqq = eq1.eqNode(falsen);
++        cdp->addTheoryRewriteStep(eqq, ProofRewriteRule::DT_CYCLE);
++        cdp->addStep(falsen, ProofRule::EQ_RESOLVE, {eq1, eqq}, {});
++        if (eq1 != lastEq)
++        {
++          cdp->addStep(eq1, ProofRule::TRANS, {lastEq, eq}, {});
++        }
++        success = true;
++      }
++    }
++    break;
+     // inferences currently not supported
+     case InferenceId::DATATYPES_BISIMILAR:
+-    case InferenceId::DATATYPES_CYCLE:
+     default:
+       Trace("dt-ipc") << "...no conversion for inference " << infer
+                       << std::endl;
+-- 
+2.47.1
+

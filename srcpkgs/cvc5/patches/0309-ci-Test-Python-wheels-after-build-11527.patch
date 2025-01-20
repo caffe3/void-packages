@@ -1,0 +1,26 @@
+From 7da71b911f02a1023a70c938fbf0da12f86bfd8e Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Wed, 15 Jan 2025 14:21:13 -0600
+Subject: [PATCH 309/312] ci: Test Python wheels after build (#11527)
+
+This will help to detect issues like the one addressed in PR #11516.
+---
+ .github/workflows/package_pypi.yml | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/.github/workflows/package_pypi.yml b/.github/workflows/package_pypi.yml
+index 8d142f4be..2564d032c 100644
+--- a/.github/workflows/package_pypi.yml
++++ b/.github/workflows/package_pypi.yml
+@@ -124,6 +124,8 @@ jobs:
+         CIBW_ENVIRONMENT_MACOS: >
+           DYLD_LIBRARY_PATH="$(pwd)/install/lib:$DYLD_LIBRARY_PATH"
+           MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos-target }}
++        CIBW_TEST_COMMAND: python {project}/examples/api/python/quickstart.py
++        CIBW_TEST_SKIP: "*-*linux_aarch64"
+ 
+     # - uses: actions/upload-artifact@v4
+     #   with:
+-- 
+2.47.1
+

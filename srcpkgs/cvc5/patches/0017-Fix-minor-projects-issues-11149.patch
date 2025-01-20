@@ -1,0 +1,104 @@
+From 97dc2723df92ed8f45c0b49a8257e079bb7b5019 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 12 Aug 2024 12:27:42 -0500
+Subject: [PATCH 017/312] Fix minor projects issues (#11149)
+
+Fixes https://github.com/cvc5/cvc5-projects/issues/737.
+Fixes https://github.com/cvc5/cvc5-projects/issues/738.
+Fixes https://github.com/cvc5/cvc5-projects/issues/739.
+---
+ src/smt/process_assertions.cpp                      |  7 +++++++
+ src/theory/arith/linear/congruence_manager.cpp      | 13 +++++--------
+ src/theory/theory_engine.cpp                        |  2 --
+ .../regress0/quantifiers/proj-issue738-qpre-sk.smt2 |  7 +++++++
+ test/regress/cli/regress0/strings/issue2958.smt2    |  1 +
+ 5 files changed, 20 insertions(+), 10 deletions(-)
+ create mode 100644 test/regress/cli/regress0/quantifiers/proj-issue738-qpre-sk.smt2
+
+diff --git a/src/smt/process_assertions.cpp b/src/smt/process_assertions.cpp
+index 0d8df75de..890b4dddd 100644
+--- a/src/smt/process_assertions.cpp
++++ b/src/smt/process_assertions.cpp
+@@ -223,6 +223,13 @@ bool ProcessAssertions::apply(AssertionPipeline& ap)
+     {
+       applyPass("fun-def-fmf", ap);
+     }
++    if (options().quantifiers.preSkolemQuant
++        != options::PreSkolemQuantMode::OFF)
++    {
++      // needed since quantifier preprocessing may introduce skolems that were
++      // solved for already
++      applyPass("apply-substs", ap);
++    }
+   }
+   if (!options().strings.stringLazyPreproc)
+   {
+diff --git a/src/theory/arith/linear/congruence_manager.cpp b/src/theory/arith/linear/congruence_manager.cpp
+index 6d551c84c..061b7e579 100644
+--- a/src/theory/arith/linear/congruence_manager.cpp
++++ b/src/theory/arith/linear/congruence_manager.cpp
+@@ -395,20 +395,17 @@ bool ArithCongruenceManager::propagate(TNode x){
+         // neg is the (negation of) a relation involving t.
+         Node peq = proven[1][0].isConst() ? proven[1][1].eqNode(proven[1][0])
+                                           : proven[1];
+-        if (peq[1].isConst())
++        ProofChecker* pc = d_env.getProofNodeManager()->getChecker();
++        Node res = pc->checkDebug(
++            ProofRule::MACRO_SR_PRED_TRANSFORM, {neg, peq}, {falsen}, falsen);
++        Assert(!res.isNull());
++        if (!res.isNull())
+         {
+-          ProofChecker* pc = d_env.getProofNodeManager()->getChecker();
+-          Node res = pc->checkDebug(
+-              ProofRule::MACRO_SR_PRED_TRANSFORM, {neg, peq}, {falsen}, falsen);
+-          Assert(!res.isNull());
+-          if (!res.isNull())
+-          {
+             cdp.addStep(falsen,
+                         ProofRule::MACRO_SR_PRED_TRANSFORM,
+                         {neg, peq},
+                         {falsen});
+             success = true;
+-          }
+         }
+       }
+       if (success)
+diff --git a/src/theory/theory_engine.cpp b/src/theory/theory_engine.cpp
+index 33b9e1d4a..186b55609 100644
+--- a/src/theory/theory_engine.cpp
++++ b/src/theory/theory_engine.cpp
+@@ -1525,8 +1525,6 @@ void TheoryEngine::lemma(TrustNode tlemma,
+     // ensure proof: set THEORY_LEMMA if no generator is provided
+     if (tlemma.getGenerator() == nullptr)
+     {
+-      // internal lemmas should have generators
+-      Assert(from != THEORY_LAST);
+       // add theory lemma step to proof
+       Node tidn = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(from);
+       d_lazyProof->addTrustedStep(lemma, TrustId::THEORY_LEMMA, {}, {tidn});
+diff --git a/test/regress/cli/regress0/quantifiers/proj-issue738-qpre-sk.smt2 b/test/regress/cli/regress0/quantifiers/proj-issue738-qpre-sk.smt2
+new file mode 100644
+index 000000000..214e9a94d
+--- /dev/null
++++ b/test/regress/cli/regress0/quantifiers/proj-issue738-qpre-sk.smt2
+@@ -0,0 +1,7 @@
++; EXPECT: sat
++(set-logic ALL)
++(set-option :incremental true)
++(set-option :pre-skolem-quant agg)
++(set-option :var-elim-quant false)
++(assert (exists ((x String)) (distinct (str.< "" x) (seq.prefixof (seq.unit x) (seq.unit x)))))
++(check-sat-assuming ((exists ((x String)) (distinct (str.< "" x) (seq.prefixof (seq.unit x) (seq.unit x))))))
+diff --git a/test/regress/cli/regress0/strings/issue2958.smt2 b/test/regress/cli/regress0/strings/issue2958.smt2
+index bb7166b65..f5e9e1cb1 100644
+--- a/test/regress/cli/regress0/strings/issue2958.smt2
++++ b/test/regress/cli/regress0/strings/issue2958.smt2
+@@ -1,4 +1,5 @@
+ ; COMMAND-LINE: --strings-exp
++; COMMAND-LINE: --conflict-process=min
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+ (set-info :status unsat)
+-- 
+2.47.1
+

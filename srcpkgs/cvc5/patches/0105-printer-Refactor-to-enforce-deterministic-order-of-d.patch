@@ -1,0 +1,176 @@
+From 907c17ccb024a08c883158b17783d038ad24c09c Mon Sep 17 00:00:00 2001
+From: Aina Niemetz <aina.niemetz@gmail.com>
+Date: Fri, 4 Oct 2024 06:14:59 -0700
+Subject: [PATCH 105/312] printer: Refactor to enforce deterministic order of
+ declarations. (#11259)
+
+---
+ src/proof/alf/alf_printer.cpp |  3 +-
+ src/smt/print_benchmark.cpp   | 60 +++++++++++++++++++++++++++++------
+ src/smt/print_benchmark.h     | 16 ++++++++--
+ 3 files changed, 66 insertions(+), 13 deletions(-)
+
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index c5b947fcc..4321052c7 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -643,7 +643,8 @@ void AlfPrinter::print(AlfPrintChannelOut& aout,
+       {
+         // [1] print the declarations
+         printer::smt2::Smt2Printer alfp(printer::smt2::Variant::alf_variant);
+-        smt::PrintBenchmark pb(&alfp, &d_tproc);
++        // we do not print declarations in a sorted manner to reduce overhead
++        smt::PrintBenchmark pb(&alfp, false, &d_tproc);
+         std::stringstream outDecl;
+         std::stringstream outDef;
+         pb.printDeclarationsFrom(outDecl, outDef, definitions, assertions);
+diff --git a/src/smt/print_benchmark.cpp b/src/smt/print_benchmark.cpp
+index 687f6e01f..463c2b26b 100644
+--- a/src/smt/print_benchmark.cpp
++++ b/src/smt/print_benchmark.cpp
+@@ -41,15 +41,25 @@ void PrintBenchmark::printDeclarationsFrom(std::ostream& outDecl,
+                                            const std::vector<Node>& defs,
+                                            const std::vector<Node>& terms)
+ {
+-  std::unordered_set<TypeNode> types;
++  std::unordered_set<TypeNode> unorderedTypes;
+   std::unordered_set<TNode> typeVisited;
+   for (const Node& a : defs)
+   {
+-    expr::getTypes(a, types, typeVisited);
++    expr::getTypes(a, unorderedTypes, typeVisited);
+   }
+   for (const Node& a : terms)
+   {
+-    expr::getTypes(a, types, typeVisited);
++    expr::getTypes(a, unorderedTypes, typeVisited);
++  }
++  std::vector<TypeNode> types{unorderedTypes.begin(), unorderedTypes.end()};
++  if (d_sorted)
++  {
++    // We want to print declarations in a deterministic order, independent of
++    // the implementation of data structures. Hence, we insert into a vector
++    // and reorder. Note that collecting the types in an std::unordered_map,
++    // then inserting them into a vector and sorting the vector is faster than
++    // immediately using an std::set instead.
++    std::sort(types.begin(), types.end());
+   }
+   // print the declared types first
+   std::unordered_set<TypeNode> alreadyPrintedDeclSorts;
+@@ -120,12 +130,33 @@ void PrintBenchmark::printDeclarationsFrom(std::ostream& outDecl,
+   {
+     std::vector<Node> recDefs;
+     std::vector<Node> ordinaryDefs;
+-    std::unordered_set<Node> syms;
+-    getConnectedDefinitions(
+-        s, recDefs, ordinaryDefs, syms, defMap, alreadyPrintedDef, visited);
++    std::unordered_set<Node> unorderedSyms;
++    getConnectedDefinitions(s,
++                            recDefs,
++                            ordinaryDefs,
++                            unorderedSyms,
++                            defMap,
++                            alreadyPrintedDef,
++                            visited);
++    std::vector<Node> syms{unorderedSyms.begin(), unorderedSyms.end()};
++    if (d_sorted)
++    {
++      // We want to print declarations in a deterministic order, independent of
++      // the implementation of data structures. Hence, we insert into a vector
++      // and reorder. Note that collecting `syms` in an std::unordered_map,
++      // then inserting them into a vector and sorting the vector is faster than
++      // immediately using an std::set instead.
++      std::sort(syms.begin(), syms.end());
++    }
+     // print the declarations that are encountered for the first time in this
+     // block
+     printDeclaredFuns(outDecl, syms, alreadyPrintedDecl);
++    if (d_sorted)
++    {
++      // Sort ordinary and recursive definitions for deterministic order.
++      std::sort(recDefs.begin(), recDefs.end());
++      std::sort(ordinaryDefs.begin(), ordinaryDefs.end());
++    }
+     // print the ordinary definitions
+     for (const Node& f : ordinaryDefs)
+     {
+@@ -163,13 +194,24 @@ void PrintBenchmark::printDeclarationsFrom(std::ostream& outDecl,
+   }
+ 
+   // print the remaining declared symbols
+-  std::unordered_set<Node> syms;
++  std::unordered_set<Node> unorderedSyms;
+   for (const Node& a : terms)
+   {
+-    expr::getSymbols(a, syms, visited);
++    expr::getSymbols(a, unorderedSyms, visited);
++  }
++  std::vector<Node> syms{unorderedSyms.begin(), unorderedSyms.end()};
++  if (d_sorted)
++  {
++    // We want to print declarations in a deterministic order, independent of
++    // the implementation of data structures. Hence, we insert into a vector
++    // and reorder. Note that collecting `syms` in an std::unordered_map,
++    // then inserting them into a vector and sorting the vector is faster than
++    // immediately using an std::set instead.
++    std::sort(syms.begin(), syms.end());
+   }
+   printDeclaredFuns(outDecl, syms, alreadyPrintedDecl);
+ }
++
+ void PrintBenchmark::printAssertions(std::ostream& out,
+                                      const std::vector<Node>& defs,
+                                      const std::vector<Node>& assertions)
+@@ -196,7 +238,7 @@ void PrintBenchmark::printAssertions(std::ostream& out,
+ }
+ 
+ void PrintBenchmark::printDeclaredFuns(std::ostream& out,
+-                                       const std::unordered_set<Node>& funs,
++                                       const std::vector<Node>& funs,
+                                        std::unordered_set<Node>& alreadyPrinted)
+ {
+   BenchmarkNoPrintAttribute bnpa;
+diff --git a/src/smt/print_benchmark.h b/src/smt/print_benchmark.h
+index d1ffe439f..095507143 100644
+--- a/src/smt/print_benchmark.h
++++ b/src/smt/print_benchmark.h
+@@ -39,8 +39,16 @@ namespace smt {
+ class PrintBenchmark
+ {
+  public:
+-  PrintBenchmark(const Printer* p, NodeConverter* c = nullptr)
+-      : d_printer(p), d_converter(c)
++  /**
++   * Constructor.
++   * @param p      The associated printer.
++   * @param sorted True if declarations should be sorted wrt node id.
++   * @param c      The associated node converter.
++   */
++  PrintBenchmark(const Printer* p,
++                 bool sorted = true,
++                 NodeConverter* c = nullptr)
++      : d_printer(p), d_sorted(sorted), d_converter(c)
+   {
+   }
+   /**
+@@ -98,7 +106,7 @@ class PrintBenchmark
+    * include what was printed
+    */
+   void printDeclaredFuns(std::ostream& out,
+-                         const std::unordered_set<Node>& funs,
++                         const std::vector<Node>& funs,
+                          std::unordered_set<Node>& processed);
+   /**
+    * Get the connected types. This traverses subfield types of datatypes and
+@@ -150,6 +158,8 @@ class PrintBenchmark
+    * individual commands.
+    */
+   const Printer* d_printer;
++  /* True if declarations should be sorted wrt node id. */
++  bool d_sorted;
+   /** (Optional) node converter */
+   NodeConverter* d_converter;
+ };
+-- 
+2.47.1
+

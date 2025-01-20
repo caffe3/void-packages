@@ -1,0 +1,90 @@
+From 010093749b081452655fd822d27376e29cf9e7e4 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 11 Dec 2024 10:12:16 -0600
+Subject: [PATCH 237/312] Use standard ground term skolem in quant term
+ database (#11438)
+
+This updates quantifiers term database to use a standard skolem instead
+of a dummy one. This is used when there are no available ground terms of
+a given sort.
+
+A regression is added which relies on this, this PR ensures we don't
+export a proof with dummy skolems.
+---
+ src/theory/quantifiers/term_database.cpp      | 11 +++++-----
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../quantifiers/inst-ground-term.smt2         | 21 +++++++++++++++++++
+ 3 files changed, 28 insertions(+), 5 deletions(-)
+ create mode 100644 test/regress/cli/regress1/quantifiers/inst-ground-term.smt2
+
+diff --git a/src/theory/quantifiers/term_database.cpp b/src/theory/quantifiers/term_database.cpp
+index e68886890..915d46b03 100644
+--- a/src/theory/quantifiers/term_database.cpp
++++ b/src/theory/quantifiers/term_database.cpp
+@@ -16,6 +16,7 @@
+ #include "theory/quantifiers/term_database.h"
+ 
+ #include "expr/skolem_manager.h"
++#include "expr/sort_to_term.h"
+ #include "options/base_options.h"
+ #include "options/printer_options.h"
+ #include "options/quantifiers_options.h"
+@@ -160,11 +161,11 @@ Node TermDb::getOrMakeTypeFreshVariable(TypeNode tn)
+   std::unordered_map<TypeNode, Node>::iterator it = d_type_fv.find(tn);
+   if (it == d_type_fv.end())
+   {
+-    SkolemManager* sm = nodeManager()->getSkolemManager();
+-    std::stringstream ss;
+-    options::ioutils::applyOutputLanguage(ss, options().printer.outputLanguage);
+-    ss << "e_" << tn;
+-    Node k = sm->mkDummySkolem(ss.str(), tn, "is a termDb fresh variable");
++    NodeManager* nm = nodeManager();
++    SkolemManager* sm = nm->getSkolemManager();
++    std::vector<Node> cacheVals;
++    cacheVals.push_back(nm->mkConst(SortToTerm(tn)));
++    Node k = sm->mkSkolemFunction(SkolemId::GROUND_TERM, cacheVals);
+     Trace("mkVar") << "TermDb:: Make variable " << k << " : " << tn
+                    << std::endl;
+     if (options().quantifiers.instMaxLevel != -1)
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index e789a6f09..4c05243db 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -2784,6 +2784,7 @@ set(regress_1_tests
+   regress1/quantifiers/ho-grammar.smt2
+   regress1/quantifiers/ho-seu-sygus-inst.smt2
+   regress1/quantifiers/horn-simple.smt2
++  regress1/quantifiers/inst-ground-term.smt2
+   regress1/quantifiers/inst-max-level-segf.smt2
+   regress1/quantifiers/inst-prop-simp.smt2
+   regress1/quantifiers/intersection-example-onelane.proof-node22337.smt2
+diff --git a/test/regress/cli/regress1/quantifiers/inst-ground-term.smt2 b/test/regress/cli/regress1/quantifiers/inst-ground-term.smt2
+new file mode 100644
+index 000000000..9a4675172
+--- /dev/null
++++ b/test/regress/cli/regress1/quantifiers/inst-ground-term.smt2
+@@ -0,0 +1,21 @@
++; COMMAND-LINE: --enum-inst
++; EXPECT: unsat
++(set-logic AUFLIA)
++(declare-sort A$ 0)
++(declare-sort A_set$ 0)
++(declare-sort A_set_set$ 0)
++(declare-sort A_bool_fun$ 0)
++(declare-sort A_set_bool_fun$ 0)
++(declare-fun uu$ () A_set_bool_fun$)
++(declare-fun eqv$ (A$) A_bool_fun$)
++(declare-fun member$ (A_set$ A_set_set$) Bool)
++(declare-fun collect$ (A_bool_fun$) A_set$)
++(declare-fun fun_app$ (A_set_bool_fun$ A_set$) Bool)
++(declare-fun member$a (A$) A_set_bool_fun$)
++(declare-fun collect$a (A_set_bool_fun$) A_set_set$)
++(declare-fun fun_app$a (A_bool_fun$ A$) Bool)
++(assert (! (forall ((?v0 A_set$)) (! (= (fun_app$ uu$ ?v0) (exists ((?v1 A$)) (and (= ?v0 (collect$ (eqv$ ?v1))) true))) :pattern ((fun_app$ uu$ ?v0)))) :named a0))
++(assert (! (not (exists ((?v0 A_set$)) (member$ ?v0 (collect$a uu$)))) :named a1))
++(assert (! (forall ((?v0 A_set_bool_fun$) (?v1 A_set$)) (=> (fun_app$ ?v0 ?v1) (member$ ?v1 (collect$a ?v0)))) :named a2))
++(assert (! (forall ((?v0 A_bool_fun$) (?v1 A$)) (=> (fun_app$a ?v0 ?v1) (fun_app$ (member$a ?v1) (collect$ ?v0)))) :named a3))
++(check-sat)
+-- 
+2.47.1
+

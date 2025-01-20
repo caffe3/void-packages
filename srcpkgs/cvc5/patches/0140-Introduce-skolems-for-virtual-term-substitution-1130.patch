@@ -1,0 +1,205 @@
+From 9e934de70d45857d0ecf8ad25b735357567b63c7 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 24 Oct 2024 10:17:43 -0500
+Subject: [PATCH 140/312] Introduce skolems for virtual term substitution
+ (#11306)
+
+This is work towards proof support for virtual term substitution.
+
+---------
+
+Co-authored-by: Abdalrhman Mohamed <abdoo8080@outlook.com>
+---
+ include/cvc5/cvc5_skolem_id.h                 | 38 +++++++++++++++++++
+ proofs/eo/cpc/theories/Arith.eo               |  6 +++
+ src/expr/skolem_manager.cpp                   |  6 ++-
+ src/printer/enum_to_string.cpp                |  5 +++
+ src/proof/alf/alf_node_converter.cpp          |  3 ++
+ .../quantifiers/cegqi/vts_term_cache.cpp      | 18 ++++-----
+ 6 files changed, 65 insertions(+), 11 deletions(-)
+
+diff --git a/include/cvc5/cvc5_skolem_id.h b/include/cvc5/cvc5_skolem_id.h
+index 33390727c..e7af96c9d 100644
+--- a/include/cvc5/cvc5_skolem_id.h
++++ b/include/cvc5/cvc5_skolem_id.h
+@@ -171,6 +171,44 @@ enum ENUM(SkolemId)
+    * - Sort: ``Real``
+    */
+   EVALUE(TRANSCENDENTAL_SINE_PHASE_SHIFT),
++  /**
++   * Used to reason about virtual term substitution. This term represents
++   * an infinitesimal. This skolem is expected to appear in instantiations
++   * and immediately be rewritten via virtual term substitution.
++   *
++   * - Number of skolem indices: ``0``
++   * - Sort: ``Real``
++   */
++  EVALUE(ARITH_VTS_DELTA),
++  /**
++   * Used to reason about virtual term substitution. This term represents
++   * an infinitesimal. Unlike ARITH_VTS_DELTA, this skolem may appear in
++   * lemmas.
++   *
++   * - Number of skolem indices: ``0``
++   * - Sort: ``Real``
++   */
++  EVALUE(ARITH_VTS_DELTA_FREE),
++  /**
++   * Used to reason about virtual term substitution. This term represents
++   * infinity.  This skolem is expected to appear in instantiations
++   * and immediately be rewritten via virtual term substitution.
++   *
++   * - Number of skolem indices: ``0``
++   *   - ``1:`` A term that represents an arithmetic sort (Int or Real).
++   * - Sort: The sort given by the index.
++   */
++  EVALUE(ARITH_VTS_INFINITY),
++  /**
++   * Used to reason about virtual term substitution. This term represents
++   * infinity. Unlike ARITH_VTS_INFINITY, this skolem may appear in
++   * lemmas.
++   *
++   * - Number of skolem indices: ``0``
++   *   - ``1:`` A term that represents an arithmetic sort (Int or Real).
++   * - Sort: The sort given by the index.
++   */
++  EVALUE(ARITH_VTS_INFINITY_FREE),
+   /** 
+    * A shared datatype selector, see Reynolds et. al. "Datatypes with Shared
+    * Selectors", IJCAR 2018. Represents a selector that can extract fields
+diff --git a/proofs/eo/cpc/theories/Arith.eo b/proofs/eo/cpc/theories/Arith.eo
+index b25a27c4c..2c2fa8b30 100644
+--- a/proofs/eo/cpc/theories/Arith.eo
++++ b/proofs/eo/cpc/theories/Arith.eo
+@@ -118,3 +118,9 @@
+ (declare-const - (-> (! Type :var T :implicit)
+                      (! T :requires (($is_arith_type T) true))
+                      T))
++
++; skolems for virtual term substitution
++(declare-const @arith_vts_delta Real)
++(declare-const @arith_vts_delta_free Real)
++(declare-const @arith_vts_infinity (-> (! Type :var T) T))
++(declare-const @arith_vts_infinity_free (-> (! Type :var T) T))
+diff --git a/src/expr/skolem_manager.cpp b/src/expr/skolem_manager.cpp
+index 65b2ce6e5..97a5f4760 100644
+--- a/src/expr/skolem_manager.cpp
++++ b/src/expr/skolem_manager.cpp
+@@ -384,6 +384,8 @@ TypeNode SkolemManager::getTypeFor(SkolemId id,
+       return cacheVals[0].getType();
+       break;
+     case SkolemId::GROUND_TERM:
++    case SkolemId::ARITH_VTS_INFINITY:
++    case SkolemId::ARITH_VTS_INFINITY_FREE:
+     {
+       Assert(cacheVals[0].getKind() == Kind::SORT_TO_TERM);
+       return cacheVals[0].getConst<SortToTerm>().getType();
+@@ -396,7 +398,9 @@ TypeNode SkolemManager::getTypeFor(SkolemId id,
+     }
+     // real skolems
+     case SkolemId::TRANSCENDENTAL_PURIFY_ARG:
+-    case SkolemId::TRANSCENDENTAL_SINE_PHASE_SHIFT: return nm->realType();
++    case SkolemId::TRANSCENDENTAL_SINE_PHASE_SHIFT:
++    case SkolemId::ARITH_VTS_DELTA:
++    case SkolemId::ARITH_VTS_DELTA_FREE: return nm->realType();
+     // int -> int function
+     case SkolemId::INT_DIV_BY_ZERO:
+     case SkolemId::MOD_BY_ZERO:
+diff --git a/src/printer/enum_to_string.cpp b/src/printer/enum_to_string.cpp
+index c6ed82c90..07faf0b44 100644
+--- a/src/printer/enum_to_string.cpp
++++ b/src/printer/enum_to_string.cpp
+@@ -40,6 +40,11 @@ const char* toString(cvc5::SkolemId id)
+       return "transcendental_purify_arg";
+     case cvc5::SkolemId::TRANSCENDENTAL_SINE_PHASE_SHIFT:
+       return "transcendental_sine_phase_shift";
++    case cvc5::SkolemId::ARITH_VTS_DELTA: return "arith_vts_delta";
++    case cvc5::SkolemId::ARITH_VTS_DELTA_FREE: return "arith_vts_delta_free";
++    case cvc5::SkolemId::ARITH_VTS_INFINITY: return "arith_vts_infinity";
++    case cvc5::SkolemId::ARITH_VTS_INFINITY_FREE:
++      return "arith_vts_infinity_free";
+     case cvc5::SkolemId::SHARED_SELECTOR: return "shared_selector";
+     case cvc5::SkolemId::HO_DEQ_DIFF: return "ho_deq_diff";
+     case cvc5::SkolemId::QUANTIFIERS_SKOLEMIZE:
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index eb6f0a0e8..650641e6f 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -662,6 +662,7 @@ size_t AlfNodeConverter::getOrAssignIndexForConst(Node v)
+ 
+ bool AlfNodeConverter::isHandledSkolemId(SkolemId id)
+ {
++  // Note we don't handle skolems that take types as arguments yet.
+   switch (id)
+   {
+     case SkolemId::PURIFY:
+@@ -672,6 +673,8 @@ bool AlfNodeConverter::isHandledSkolemId(SkolemId id)
+     case SkolemId::MOD_BY_ZERO:
+     case SkolemId::TRANSCENDENTAL_PURIFY:
+     case SkolemId::TRANSCENDENTAL_PURIFY_ARG:
++    case SkolemId::ARITH_VTS_DELTA:
++    case SkolemId::ARITH_VTS_DELTA_FREE:
+     case SkolemId::QUANTIFIERS_SKOLEMIZE:
+     case SkolemId::SETS_DEQ_DIFF:
+     case SkolemId::STRINGS_NUM_OCCUR:
+diff --git a/src/theory/quantifiers/cegqi/vts_term_cache.cpp b/src/theory/quantifiers/cegqi/vts_term_cache.cpp
+index 12b9a2123..2652dde38 100644
+--- a/src/theory/quantifiers/cegqi/vts_term_cache.cpp
++++ b/src/theory/quantifiers/cegqi/vts_term_cache.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "expr/node_algorithm.h"
+ #include "expr/skolem_manager.h"
++#include "expr/sort_to_term.h"
+ #include "theory/arith/arith_msum.h"
+ #include "theory/quantifiers/quantifiers_inference_manager.h"
+ #include "theory/rewriter.h"
+@@ -66,16 +67,12 @@ Node VtsTermCache::getVtsDelta(bool isFree, bool create)
+     if (d_vts_delta_free.isNull())
+     {
+       d_hasAllocated = true;
+-      d_vts_delta_free =
+-          sm->mkDummySkolem("delta_free",
+-                            nm->realType(),
+-                            "free delta for virtual term substitution");
++      d_vts_delta_free = sm->mkSkolemFunction(SkolemId::ARITH_VTS_DELTA_FREE);
+     }
+     if (d_vts_delta.isNull())
+     {
+       d_hasAllocated = true;
+-      d_vts_delta = sm->mkDummySkolem(
+-          "delta", nm->realType(), "delta for virtual term substitution");
++      d_vts_delta = sm->mkSkolemFunction(SkolemId::ARITH_VTS_DELTA);
+       // mark as a virtual term
+       VirtualTermSkolemAttribute vtsa;
+       d_vts_delta.setAttribute(vtsa, true);
+@@ -86,21 +83,22 @@ Node VtsTermCache::getVtsDelta(bool isFree, bool create)
+ 
+ Node VtsTermCache::getVtsInfinity(TypeNode tn, bool isFree, bool create)
+ {
++  Assert(tn.isRealOrInt());
+   if (create)
+   {
+     NodeManager* nm = nodeManager();
+     SkolemManager* sm = nm->getSkolemManager();
++    Node stt = nm->mkConst(SortToTerm(tn));
+     if (d_vts_inf_free[tn].isNull())
+     {
+       d_hasAllocated = true;
+-      d_vts_inf_free[tn] = sm->mkDummySkolem(
+-          "inf_free", tn, "free infinity for virtual term substitution");
++      d_vts_inf_free[tn] =
++          sm->mkSkolemFunction(SkolemId::ARITH_VTS_INFINITY_FREE, stt);
+     }
+     if (d_vts_inf[tn].isNull())
+     {
+       d_hasAllocated = true;
+-      d_vts_inf[tn] = sm->mkDummySkolem(
+-          "inf", tn, "infinity for virtual term substitution");
++      d_vts_inf[tn] = sm->mkSkolemFunction(SkolemId::ARITH_VTS_INFINITY, stt);
+       // mark as a virtual term
+       VirtualTermSkolemAttribute vtsa;
+       d_vts_inf[tn].setAttribute(vtsa, true);
+-- 
+2.47.1
+

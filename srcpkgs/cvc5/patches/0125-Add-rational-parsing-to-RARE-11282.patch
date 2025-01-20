@@ -1,0 +1,450 @@
+From ad7ce61def3478b5c584c0a6c99e41e561ac550a Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 16 Oct 2024 08:06:54 -0500
+Subject: [PATCH 125/312] Add rational parsing to RARE (#11282)
+
+Also adds a several initial rewrites that are possible now, and some
+basic support for transcendental elimination rules.
+
+Note this PR also makes it so that `cvc5_proof_rule.h` is *not*
+automatically clang-formatted, since it breaks the documentation in that
+include file.
+
+This PR also fixes our printer for RARE rules in Eunoia and removes
+several rules that are subsumed by ARITH_POLY_NORM and had usages of `(-
+1)` which were not being translated to Eunoia properly.
+
+This furthermore fixes an inconsistency with `printArithLitToken` which
+would print decimals for integral rationals whereas non-integral
+rationals would be printed as rationals; now both are printed as
+rationals.
+
+This fills in 29 trusted proof steps in our regressions.
+---
+ include/cvc5/cvc5_proof_rule.h    | 31 ++++++++++-------
+ proofs/eo/cpc/rules/Rewrites.eo   | 58 ++++++++++++++++++++-----------
+ src/printer/smt2/smt2_printer.cpp |  2 +-
+ src/proof/alf/alf_printer.cpp     |  2 ++
+ src/rewriter/mkrewrites.py        | 32 +++++++++++++----
+ src/rewriter/node.py              | 22 ++++++++++++
+ src/rewriter/rw_parser.py         | 17 +++++++--
+ src/theory/arith/rewrites         | 21 +++++++----
+ 8 files changed, 134 insertions(+), 51 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index a6cf5ca7f..236e9e08c 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2728,6 +2728,8 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(ARITH_MUL_ZERO),
+   /** Auto-generated from RARE rule arith-div-total */
+   EVALUE(ARITH_DIV_TOTAL),
++  /** Auto-generated from RARE rule arith-div-total-zero */
++  EVALUE(ARITH_DIV_TOTAL_ZERO),
+   /** Auto-generated from RARE rule arith-int-div-total */
+   EVALUE(ARITH_INT_DIV_TOTAL),
+   /** Auto-generated from RARE rule arith-int-div-total-one */
+@@ -2740,12 +2742,6 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(ARITH_INT_MOD_TOTAL_ONE),
+   /** Auto-generated from RARE rule arith-int-mod-total-zero */
+   EVALUE(ARITH_INT_MOD_TOTAL_ZERO),
+-  /** Auto-generated from RARE rule arith-neg-neg-one */
+-  EVALUE(ARITH_NEG_NEG_ONE),
+-  /** Auto-generated from RARE rule arith-elim-uminus */
+-  EVALUE(ARITH_ELIM_UMINUS),
+-  /** Auto-generated from RARE rule arith-elim-minus */
+-  EVALUE(ARITH_ELIM_MINUS),
+   /** Auto-generated from RARE rule arith-elim-gt */
+   EVALUE(ARITH_ELIM_GT),
+   /** Auto-generated from RARE rule arith-elim-lt */
+@@ -2782,10 +2778,6 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(ARITH_MULT_FLATTEN),
+   /** Auto-generated from RARE rule arith-mult-dist */
+   EVALUE(ARITH_MULT_DIST),
+-  /** Auto-generated from RARE rule arith-plus-cancel1 */
+-  EVALUE(ARITH_PLUS_CANCEL1),
+-  /** Auto-generated from RARE rule arith-plus-cancel2 */
+-  EVALUE(ARITH_PLUS_CANCEL2),
+   /** Auto-generated from RARE rule arith-abs-elim */
+   EVALUE(ARITH_ABS_ELIM),
+   /** Auto-generated from RARE rule arith-to-real-elim */
+@@ -2796,6 +2788,22 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(ARITH_DIV_ELIM_TO_REAL1),
+   /** Auto-generated from RARE rule arith-div-elim-to-real2 */
+   EVALUE(ARITH_DIV_ELIM_TO_REAL2),
++  /** Auto-generated from RARE rule arith-sine-zero */
++  EVALUE(ARITH_SINE_ZERO),
++  /** Auto-generated from RARE rule arith-sine-pi2 */
++  EVALUE(ARITH_SINE_PI2),
++  /** Auto-generated from RARE rule arith-cosine-elim */
++  EVALUE(ARITH_COSINE_ELIM),
++  /** Auto-generated from RARE rule arith-tangent-elim */
++  EVALUE(ARITH_TANGENT_ELIM),
++  /** Auto-generated from RARE rule arith-secent-elim */
++  EVALUE(ARITH_SECENT_ELIM),
++  /** Auto-generated from RARE rule arith-cosecent-elim */
++  EVALUE(ARITH_COSECENT_ELIM),
++  /** Auto-generated from RARE rule arith-cotangent-elim */
++  EVALUE(ARITH_COTANGENT_ELIM),
++  /** Auto-generated from RARE rule arith-pi-not-int */
++  EVALUE(ARITH_PI_NOT_INT),
+   /** Auto-generated from RARE rule array-read-over-write */
+   EVALUE(ARRAY_READ_OVER_WRITE),
+   /** Auto-generated from RARE rule array-read-over-write2 */
+@@ -3500,8 +3508,7 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(STR_IN_RE_STRIP_PREFIX_BASE_NEG_REV),
+   /** Auto-generated from RARE rule str-in-re-strip-prefix-base-s-single-rev */
+   EVALUE(STR_IN_RE_STRIP_PREFIX_BASE_S_SINGLE_REV),
+-  /** Auto-generated from RARE rule str-in-re-strip-prefix-base-s-single-neg-rev
+-   */
++  /** Auto-generated from RARE rule str-in-re-strip-prefix-base-s-single-neg-rev */
+   EVALUE(STR_IN_RE_STRIP_PREFIX_BASE_S_SINGLE_NEG_REV),
+   /** Auto-generated from RARE rule str-in-re-strip-char-rev */
+   EVALUE(STR_IN_RE_STRIP_CHAR_REV),
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index a51ffbc39..80609d474 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -24,6 +24,10 @@
+   :args (t1 s1)
+   :conclusion (= (/ t1 s1) (/_total t1 s1))
+ )
++(declare-rule arith-div-total-zero ((x1 Real))
++  :args (x1)
++  :conclusion (= (/_total x1 0/1) 0/1)
++)
+ (declare-rule arith-int-div-total ((t1 Int) (s1 Int))
+   :premises ((= (= s1 0) false))
+   :args (t1 s1)
+@@ -50,18 +54,6 @@
+   :args (t1)
+   :conclusion (= (mod_total t1 0) t1)
+ )
+-(declare-rule arith-neg-neg-one ((@T0 Type) (t1 @T0))
+-  :args (t1)
+-  :conclusion (= (* (- 1) (* (- 1) t1)) t1)
+-)
+-(declare-rule arith-elim-uminus ((@T0 Type) (t1 @T0))
+-  :args (t1)
+-  :conclusion (= (- t1) (* (- 1) t1))
+-)
+-(declare-rule arith-elim-minus ((@T0 Type) (@T1 Type) (t1 @T0) (s1 @T1))
+-  :args (t1 s1)
+-  :conclusion (= (- t1 s1) (+ t1 (* (- 1) s1)))
+-)
+ (declare-rule arith-elim-gt ((@T0 Type) (@T1 Type) (t1 @T0) (s1 @T1))
+   :args (t1 s1)
+   :conclusion (= (> t1 s1) (not (<= t1 s1)))
+@@ -134,14 +126,6 @@
+   :args (x1 y1 z1 w1)
+   :conclusion (= (* x1 (+ y1 z1 w1)) (+ (* x1 y1) (* x1 ($singleton_elim (+ z1 w1)))))
+ )
+-(declare-rule arith-plus-cancel1 ((@T0 Type) (@T1 Type) (@T2 Type) (@T3 Type) (t1 @T0 :list) (x1 @T1) (s1 @T2 :list) (r1 @T3 :list))
+-  :args (t1 x1 s1 r1)
+-  :conclusion (= (+ t1 x1 s1 (* (- 1) x1) r1) ($singleton_elim (+ t1 s1 r1)))
+-)
+-(declare-rule arith-plus-cancel2 ((@T0 Type) (@T1 Type) (@T2 Type) (@T3 Type) (t1 @T0 :list) (x1 @T1) (s1 @T2 :list) (r1 @T3 :list))
+-  :args (t1 x1 s1 r1)
+-  :conclusion (= (+ t1 (* (- 1) x1) s1 x1 r1) ($singleton_elim (+ t1 s1 r1)))
+-)
+ (declare-rule arith-abs-elim ((@T0 Type) (x1 @T0))
+   :args (x1)
+   :conclusion (= (abs x1) (ite (< x1 0) (- x1) x1))
+@@ -162,6 +146,38 @@
+   :args (x1 y1)
+   :conclusion (= (/ x1 (to_real y1)) (/ x1 y1))
+ )
++(declare-rule arith-sine-zero ()
++  :args ()
++  :conclusion (= (sin 0/1) 0/1)
++)
++(declare-rule arith-sine-pi2 ()
++  :args ()
++  :conclusion (= (sin (* 1/2 real.pi)) 1/1)
++)
++(declare-rule arith-cosine-elim ((x1 Real))
++  :args (x1)
++  :conclusion (= (cos x1) (sin (- (* 1/2 real.pi) x1)))
++)
++(declare-rule arith-tangent-elim ((x1 Real))
++  :args (x1)
++  :conclusion (= (tan x1) (/ (sin x1) (cos x1)))
++)
++(declare-rule arith-secent-elim ((x1 Real))
++  :args (x1)
++  :conclusion (= (sec x1) (/ 1/1 (sin x1)))
++)
++(declare-rule arith-cosecent-elim ((x1 Real))
++  :args (x1)
++  :conclusion (= (csc x1) (/ 1/1 (cos x1)))
++)
++(declare-rule arith-cotangent-elim ((x1 Real))
++  :args (x1)
++  :conclusion (= (cot x1) (/ (cos x1) (sin x1)))
++)
++(declare-rule arith-pi-not-int ()
++  :args ()
++  :conclusion (= (is_int real.pi) false)
++)
+ (declare-rule array-read-over-write ((@T0 Type) (@T1 Type) (@T2 Type) (@T3 Type) (t1 (Array @T0 @T1)) (i1 @T2) (e1 @T3))
+   :args (t1 i1 e1)
+   :conclusion (= (select (store t1 i1 e1) i1) e1)
+@@ -1406,7 +1422,7 @@
+ (declare-rule str-indexof-no-contains ((t1 String) (s1 String) (n1 Int))
+   :premises ((= (str.contains (str.substr t1 n1 (str.len t1)) s1) false))
+   :args (t1 s1 n1)
+-  :conclusion (= (str.indexof t1 s1 n1) (- 1))
++  :conclusion (= (str.indexof t1 s1 n1) -1)
+ )
+ (declare-rule str-to-lower-concat ((s1 String) (s2 String) (s3 String :list))
+   :args (s1 s2 s3)
+diff --git a/src/printer/smt2/smt2_printer.cpp b/src/printer/smt2/smt2_printer.cpp
+index f6ff7e29a..4f8776146 100644
+--- a/src/printer/smt2/smt2_printer.cpp
++++ b/src/printer/smt2/smt2_printer.cpp
+@@ -91,7 +91,7 @@ static void toStreamRational(std::ostream& out,
+       }
+       if (isReal)
+       {
+-        out << ".0";
++        out << "/1";
+       }
+     }
+     else
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index bd1417bc0..5337cece5 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -459,6 +459,8 @@ std::string AlfPrinter::getRuleName(const ProofNode* pfn) const
+ 
+ void AlfPrinter::printDslRule(std::ostream& out, ProofRewriteRule r)
+ {
++  options::ioutils::applyPrintArithLitToken(out, true);
++  options::ioutils::applyPrintSkolemDefinitions(out, true);
+   const rewriter::RewriteProofRule& rpr = d_rdb->getRule(r);
+   const std::vector<Node>& varList = rpr.getVarList();
+   const std::vector<Node>& uvarList = rpr.getUserVarList();
+diff --git a/src/rewriter/mkrewrites.py b/src/rewriter/mkrewrites.py
+index 1b0f7a2f1..cb448667e 100644
+--- a/src/rewriter/mkrewrites.py
++++ b/src/rewriter/mkrewrites.py
+@@ -72,6 +72,8 @@ def gen_mk_const(expr):
+         return f'String("{expr.val}")'
+     elif isinstance(expr, CInt):
+         return f'Rational({expr.val})'
++    elif isinstance(expr, CRational):
++        return f'internal::Rational("{expr.val}")'
+     elif isinstance(expr, App):
+         args = [gen_mk_const(child) for child in expr.children]
+         if expr.op == Op.NEG:
+@@ -83,9 +85,15 @@ def gen_mk_node(defns, expr):
+     if defns is not None and expr in defns:
+         return defns[expr]
+     elif expr.sort and expr.sort.is_const:
+-        if isinstance(expr, CInt) or \
+-           (isinstance(expr, App) and expr.op == Op.NEG):
+-          return f'nm->mkConstRealOrInt({gen_mk_const(expr)})'
++        if isinstance(expr, CInt):
++          return f'nm->mkConstInt({gen_mk_const(expr)})'
++        elif isinstance(expr, CRational):
++          return f'nm->mkConstReal({gen_mk_const(expr)})'
++        elif isinstance(expr, App) and expr.op == Op.NEG:
++          if isinstance(expr.children[0], CInt):
++            return f'nm->mkConstInt({gen_mk_const(expr)})'
++          else:
++            return f'nm->mkConstReal({gen_mk_const(expr)})'
+         else:
+           return f'nm->mkConst({gen_mk_const(expr)})'
+     elif isinstance(expr, Var):
+@@ -96,6 +104,8 @@ def gen_mk_node(defns, expr):
+                        Op.ROTATE_LEFT, Op.ROTATE_RIGHT, Op.INT_TO_BV, Op.REGEXP_LOOP}:
+           args = f'nm->mkConst(GenericOp(Kind::{gen_kind(expr.op)})),' + args
+           return f'nm->mkNode(Kind::APPLY_INDEXED_SYMBOLIC, {{ {args} }})'
++        elif expr.op in {Op.REAL_PI}:
++          return f'nm->mkNullaryOperator(nm->realType(), Kind::PI)'
+         return f'nm->mkNode(Kind::{gen_kind(expr.op)}, {{ {args} }})'
+     else:
+         die(f'Cannot generate code for {expr}')
+@@ -137,13 +147,15 @@ def type_check(expr) -> bool:
+     elif isinstance(expr, CInt):
+         expr.sort = Sort(BaseSort.Int, is_const=True)
+         hasConst = True
++    elif isinstance(expr, CRational):
++        expr.sort = Sort(BaseSort.Real, is_const=True)
++        hasConst = True
+     elif isinstance(expr, App):
+         sort = None
+         if expr.op == Op.NEG:
+             sort = Sort(BaseSort.Int)
+         elif expr.op == Op.STRING_LENGTH:
+             sort = Sort(BaseSort.Int)
+-
+         if sort:
+             sort.is_const = all(child.sort and child.sort.is_const
+                                 for child in expr.children)
+@@ -353,14 +365,20 @@ def gen_rewrite_db(args):
+         decl_individual_rewrites.append(f"void {db.function_name}(RewriteDb&);")
+         call_individual_rewrites.append(f"{db.function_name}(db);")
+ 
++    # Note that we manually indent by two spaces, since we do not clang-format
++    # the include file automatically.
+     def doc(rule: str):
+         rule = rule.lower().replace('_', '-')
+-        return f'/** Auto-generated from RARE rule {rule} */'
++        return f'  /** Auto-generated from RARE rule {rule} */'
+ 
++    # Note that we do not automatically clang-format the API include file,
++    # since this breaks the documentation for latex formulas which require
++    # being more than 80 lines currently.
++    # The indendentation on EVALUE lines is manually set to two spaces below.
+     cvc5_proof_rule_h = read_tpl_enclosed(src_include_dir, 'cvc5_proof_rule.h')
+     with open(os.path.join(bin_include_dir, 'cvc5_proof_rule.h'), 'w') as f:
+-        f.write(format_cpp(cvc5_proof_rule_h.format(
+-            rules='\n'.join([f'{doc(id)}\nEVALUE({id}),' for id in ids]))))
++        f.write(cvc5_proof_rule_h.format(
++            rules='\n'.join([f'{doc(id)}\n  EVALUE({id}),' for id in ids])))
+ 
+     cvc5_proof_rule_cpp = read_tpl(src_api_dir, 'cvc5_proof_rule_template.cpp')
+     os.makedirs(bin_api_dir, exist_ok=True)
+diff --git a/src/rewriter/node.py b/src/rewriter/node.py
+index e76d72454..6ecaf4291 100644
+--- a/src/rewriter/node.py
++++ b/src/rewriter/node.py
+@@ -129,6 +129,15 @@ class Op(Enum):
+     POW2 = ('int.pow2', 'POW2')
+     TO_INT = ('to_int', 'TO_INTEGER')
+     TO_REAL = ('to_real', 'TO_REAL')
++    IS_INT = ('is_int', 'IS_INTEGER')
++    
++    SINE = ('sin', 'SINE')
++    COSINE = ('cos', 'COSINE')
++    TANGENT = ('tan', 'TANGENT')
++    SECANT = ('sec', 'SECANT')
++    COSECANT = ('csc', 'COSECANT')
++    COTANGENT = ('cot', 'COTANGENT')
++    REAL_PI = (None, 'PI')  # Handled as constant
+ 
+     INT_ISPOW2 = ('int.ispow2', 'INTS_ISPOW2')  # Backdoor for some bv rewrites
+     INT_LENGTH = ('int.log2', 'INTS_LOG2')  # Backdoor for some bv rewrites
+@@ -337,6 +346,19 @@ class CInt(Node):
+     def __repr__(self):
+         return str(self.val)
+ 
++class CRational(Node):
++    def __init__(self, val):
++        super().__init__([])
++        self.val = val
++
++    def __eq__(self, other):
++        return isinstance(other, CRational) and self.val == other.val
++
++    def __hash__(self):
++        return hash(self.val)
++
++    def __repr__(self):
++        return str(self.val)
+ 
+ class CString(Node):
+     def __init__(self, val):
+diff --git a/src/rewriter/rw_parser.py b/src/rewriter/rw_parser.py
+index ab5dd2ce4..aab1b542d 100644
+--- a/src/rewriter/rw_parser.py
++++ b/src/rewriter/rw_parser.py
+@@ -24,6 +24,7 @@ symbol_to_op = {e.symbol: e for e in Op if e.symbol is not None}
+ class SymbolTable:
+     def __init__(self):
+         self.consts = {
++            'real.pi': App(Op.REAL_PI, []),
+             're.none': App(Op.REGEXP_NONE, []),
+             're.all': App(Op.REGEXP_ALL, []),
+             're.allchar': App(Op.REGEXP_ALLCHAR, []),
+@@ -83,6 +84,14 @@ class Parser:
+         if op == Op.SUB and len(t) == 2:
+             op = Op.NEG
+         return App(op, t[1:])
++    
++    # Action when parsing a decimal or numeral
++    def number_parse_action(s, l, t):
++        num_str = t[0]
++        if '/' in num_str:
++            return CRational(num_str)
++        else:
++            return CInt(int(num_str))
+ 
+     def expr(self, allow_comprehension=True):
+         expr = pp.Forward()
+@@ -95,8 +104,10 @@ class Parser:
+         bconst = pp.Keyword('true').setParseAction(
+             lambda s, l, t: CBool(True)) | pp.Keyword('false').setParseAction(
+                 lambda s, l, t: CBool(False))
+-        iconst = pp.Word(
+-            pp.nums).setParseAction(lambda s, l, t: CInt(int(t[0])))
++        # handles both rationals and numerals
++        aconst = pp.Combine(
++              pp.Word(pp.nums) + pp.Optional('/' + pp.Word(pp.nums))
++          ).setParseAction(self.number_parse_action)
+         strconst = pp.QuotedString(
+             quoteChar='"').setParseAction(lambda s, l, t: CString(t[0]))
+ 
+@@ -108,7 +119,7 @@ class Parser:
+         app = (pp.Suppress('(') + self.symbol() + pp.OneOrMore(expr) +
+                pp.Suppress(')')).setParseAction(self.app_action)
+ 
+-        options = bconst | iconst | strconst | indexed_app | app | var
++        options = bconst | aconst | strconst | indexed_app | app | var
+         if allow_comprehension:
+             lambda_def = (pp.Suppress('(') + pp.Keyword('lambda') +
+                           pp.Suppress('(') + self.symbol() + self.sort() +
+diff --git a/src/theory/arith/rewrites b/src/theory/arith/rewrites
+index a4685693b..b9fa5d0dd 100644
+--- a/src/theory/arith/rewrites
++++ b/src/theory/arith/rewrites
+@@ -10,6 +10,7 @@
+ (define-rule arith-mul-zero ((t ? :list) (s ? :list)) (* t 0 s) 0)
+ 
+ (define-cond-rule arith-div-total ((t ?) (s ?)) (not (= s 0)) (/ t s) (/_total t s))
++(define-rule arith-div-total-zero ((x Real)) (/_total x 0/1) 0/1)
+ 
+ (define-cond-rule arith-int-div-total ((t Int) (s Int)) (not (= s 0)) (div t s) (div_total t s))
+ (define-rule arith-int-div-total-one ((t Int)) (div_total t 1) t)
+@@ -19,11 +20,7 @@
+ (define-rule arith-int-mod-total-one ((t Int)) (mod_total t 1) 0)
+ (define-rule arith-int-mod-total-zero ((t Int)) (mod_total t 0) t)
+ 
+-(define-rule arith-neg-neg-one ((t ?)) (* (- 1) (* (- 1) t)) t)
+-
+ ; Eliminations
+-(define-rule arith-elim-uminus ((t ?)) (- t) (* (- 1) t))
+-(define-rule arith-elim-minus ((t ?) (s ?)) (- t s) (+ t (* (- 1) s)))
+ (define-rule arith-elim-gt ((t ?) (s ?)) (> t s) (not (<= t s)))
+ (define-rule arith-elim-lt ((t ?) (s ?)) (< t s) (not (>= t s)))
+ (define-rule arith-elim-int-gt ((t Int) (s Int)) (> t s) (>= t (+ s 1)))
+@@ -61,12 +58,22 @@
+   (* x (+ y z w))
+   (+ (* x y) (* x (+ z w))))
+ 
+-(define-rule* arith-plus-cancel1 ((t ? :list) (x ?) (s ? :list) (r ? :list)) (+ t x s (* (- 1) x) r) (+ t s r))
+-(define-rule* arith-plus-cancel2 ((t ? :list) (x ?) (s ? :list) (r ? :list)) (+ t (* (- 1) x) s x r) (+ t s r))
+-
+ (define-rule arith-abs-elim ((x ?)) (abs x) (ite (< x 0) (- x) x))
+ 
+ (define-rule arith-to-real-elim ((x Real)) (to_real x) x)
+ (define-rule arith-to-int-elim-to-real ((x ?)) (to_int (to_real x)) (to_int x))
+ (define-rule arith-div-elim-to-real1 ((x ?) (y ?)) (/ (to_real x) y) (/ x y))
+ (define-rule arith-div-elim-to-real2 ((x ?) (y ?)) (/ x (to_real y)) (/ x y))
++
++
++; trancendentals
++
++(define-rule arith-sine-zero () (sin 0/1) 0/1)
++(define-rule arith-sine-pi2 () (sin (* 1/2 real.pi)) 1/1)
++(define-rule arith-cosine-elim ((x Real)) (cos x) (sin (- (* 1/2 real.pi) x)))
++(define-rule arith-tangent-elim ((x Real)) (tan x) (/ (sin x) (cos x)))
++(define-rule arith-secent-elim ((x Real)) (sec x) (/ 1/1 (sin x)))
++(define-rule arith-cosecent-elim ((x Real)) (csc x) (/ 1/1 (cos x)))
++(define-rule arith-cotangent-elim ((x Real)) (cot x) (/ (cos x) (sin x)))
++
++(define-rule arith-pi-not-int () (is_int real.pi) false)
+-- 
+2.47.1
+

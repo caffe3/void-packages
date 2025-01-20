@@ -1,0 +1,369 @@
+From df7773adb86c81602c24a62d47d4f9c5cc51be7d Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 26 Nov 2024 09:12:26 -0600
+Subject: [PATCH 201/312] Add NodeManager pointer to NodeValue (#11320)
+
+It also replaces calls to `NodeManager::currentNM()` with the new
+pointer in `Node`, `NodeValue`, `NodeBuilder`, and
+`NodeManagerTemplate`. A follow-up PR will remove the two constructors
+of `NodeBuilder` that do not take a `NodeManager` pointer as an
+argument.
+---
+ src/expr/node.cpp                  |  7 ++---
+ src/expr/node.h                    | 41 ++++++++++++++++++------------
+ src/expr/node_builder.cpp          | 10 ++++++++
+ src/expr/node_manager_template.cpp |  2 ++
+ src/expr/node_value.cpp            |  8 +++---
+ src/expr/node_value.h              |  5 ++++
+ 6 files changed, 50 insertions(+), 23 deletions(-)
+
+diff --git a/src/expr/node.cpp b/src/expr/node.cpp
+index a430897a6..4d98b76a5 100644
+--- a/src/expr/node.cpp
++++ b/src/expr/node.cpp
+@@ -98,7 +98,8 @@ bool NodeTemplate<ref_count>::isConst() const {
+       Trace("isConst") << "Node::isConst() returning cached value " << (bval ? "true" : "false") << " for: " << *this << std::endl;
+       return bval;
+     } else {
+-      bool bval = expr::TypeChecker::computeIsConst(NodeManager::currentNM(), *this);
++      bool bval =
++          expr::TypeChecker::computeIsConst(d_nv->getNodeManager(), *this);
+       Trace("isConst") << "Node::isConst() computed value " << (bval ? "true" : "false") << " for: " << *this << std::endl;
+       const_cast< NodeTemplate<ref_count>* >(this)->setAttribute(IsConstAttr(), bval);
+       const_cast< NodeTemplate<ref_count>* >(this)->setAttribute(IsConstComputedAttr(), true);
+@@ -113,7 +114,7 @@ template bool NodeTemplate<false>::isConst() const;
+ template <bool ref_count>
+ bool NodeTemplate<ref_count>::hasName() const
+ {
+-  return NodeManager::currentNM()->hasAttribute(*this, expr::VarNameAttr());
++  return d_nv->getNodeManager()->hasAttribute(*this, expr::VarNameAttr());
+ }
+ 
+ template bool NodeTemplate<true>::hasName() const;
+@@ -122,7 +123,7 @@ template bool NodeTemplate<false>::hasName() const;
+ template <bool ref_count>
+ std::string NodeTemplate<ref_count>::getName() const
+ {
+-  return NodeManager::currentNM()->getAttribute(*this, expr::VarNameAttr());
++  return d_nv->getNodeManager()->getAttribute(*this, expr::VarNameAttr());
+ }
+ 
+ template std::string NodeTemplate<true>::getName() const;
+diff --git a/src/expr/node.h b/src/expr/node.h
+index 9294fa9ef..46d28abcd 100644
+--- a/src/expr/node.h
++++ b/src/expr/node.h
+@@ -439,6 +439,15 @@ public:
+     return d_nv->getId();
+   }
+ 
++  /**
++   * Returns the associated node manager
++   */
++  NodeManager* getNodeManager() const
++  {
++    assertTNodeNotExpired();
++    return d_nv->getNodeManager();
++  }
++
+   /**
+    * Returns a node representing the operator of this expression.
+    * If this is an APPLY_UF, then the operator will be a functional term.
+@@ -983,7 +992,7 @@ inline typename AttrKind::value_type NodeTemplate<ref_count>::
+ getAttribute(const AttrKind&) const {
+   assertTNodeNotExpired();
+ 
+-  return NodeManager::currentNM()->getAttribute(*this, AttrKind());
++  return d_nv->getNodeManager()->getAttribute(*this, AttrKind());
+ }
+ 
+ template <bool ref_count>
+@@ -992,7 +1001,7 @@ inline bool NodeTemplate<ref_count>::
+ hasAttribute(const AttrKind&) const {
+   assertTNodeNotExpired();
+ 
+-  return NodeManager::currentNM()->hasAttribute(*this, AttrKind());
++  return d_nv->getNodeManager()->hasAttribute(*this, AttrKind());
+ }
+ 
+ template <bool ref_count>
+@@ -1001,7 +1010,7 @@ inline bool NodeTemplate<ref_count>::getAttribute(const AttrKind&,
+                                                   typename AttrKind::value_type& ret) const {
+   assertTNodeNotExpired();
+ 
+-  return NodeManager::currentNM()->getAttribute(*this, AttrKind(), ret);
++  return d_nv->getNodeManager()->getAttribute(*this, AttrKind(), ret);
+ }
+ 
+ template <bool ref_count>
+@@ -1010,7 +1019,7 @@ inline void NodeTemplate<ref_count>::
+ setAttribute(const AttrKind&, const typename AttrKind::value_type& value) {
+   assertTNodeNotExpired();
+ 
+-  NodeManager::currentNM()->setAttribute(*this, AttrKind(), value);
++  d_nv->getNodeManager()->setAttribute(*this, AttrKind(), value);
+ }
+ 
+ template <bool ref_count>
+@@ -1133,13 +1142,13 @@ template <bool ref_count2>
+ NodeTemplate<true>
+ NodeTemplate<ref_count>::eqNode(const NodeTemplate<ref_count2>& right) const {
+   assertTNodeNotExpired();
+-  return NodeManager::currentNM()->mkNode(Kind::EQUAL, *this, right);
++  return d_nv->getNodeManager()->mkNode(Kind::EQUAL, *this, right);
+ }
+ 
+ template <bool ref_count>
+ NodeTemplate<true> NodeTemplate<ref_count>::notNode() const {
+   assertTNodeNotExpired();
+-  return NodeManager::currentNM()->mkNode(Kind::NOT, *this);
++  return d_nv->getNodeManager()->mkNode(Kind::NOT, *this);
+ }
+ 
+ template <bool ref_count>
+@@ -1147,7 +1156,7 @@ NodeTemplate<true> NodeTemplate<ref_count>::negate() const {
+   assertTNodeNotExpired();
+   return (getKind() == Kind::NOT)
+              ? NodeTemplate<true>(d_nv->getChild(0))
+-             : NodeManager::currentNM()->mkNode(Kind::NOT, *this);
++             : d_nv->getNodeManager()->mkNode(Kind::NOT, *this);
+ }
+ 
+ template <bool ref_count>
+@@ -1155,7 +1164,7 @@ template <bool ref_count2>
+ NodeTemplate<true>
+ NodeTemplate<ref_count>::andNode(const NodeTemplate<ref_count2>& right) const {
+   assertTNodeNotExpired();
+-  return NodeManager::currentNM()->mkNode(Kind::AND, *this, right);
++  return d_nv->getNodeManager()->mkNode(Kind::AND, *this, right);
+ }
+ 
+ template <bool ref_count>
+@@ -1163,7 +1172,7 @@ template <bool ref_count2>
+ NodeTemplate<true>
+ NodeTemplate<ref_count>::orNode(const NodeTemplate<ref_count2>& right) const {
+   assertTNodeNotExpired();
+-  return NodeManager::currentNM()->mkNode(Kind::OR, *this, right);
++  return d_nv->getNodeManager()->mkNode(Kind::OR, *this, right);
+ }
+ 
+ template <bool ref_count>
+@@ -1172,7 +1181,7 @@ NodeTemplate<true>
+ NodeTemplate<ref_count>::iteNode(const NodeTemplate<ref_count2>& thenpart,
+                                  const NodeTemplate<ref_count3>& elsepart) const {
+   assertTNodeNotExpired();
+-  return NodeManager::currentNM()->mkNode(Kind::ITE, *this, thenpart, elsepart);
++  return d_nv->getNodeManager()->mkNode(Kind::ITE, *this, thenpart, elsepart);
+ }
+ 
+ template <bool ref_count>
+@@ -1180,7 +1189,7 @@ template <bool ref_count2>
+ NodeTemplate<true>
+ NodeTemplate<ref_count>::impNode(const NodeTemplate<ref_count2>& right) const {
+   assertTNodeNotExpired();
+-  return NodeManager::currentNM()->mkNode(Kind::IMPLIES, *this, right);
++  return d_nv->getNodeManager()->mkNode(Kind::IMPLIES, *this, right);
+ }
+ 
+ template <bool ref_count>
+@@ -1188,7 +1197,7 @@ template <bool ref_count2>
+ NodeTemplate<true>
+ NodeTemplate<ref_count>::xorNode(const NodeTemplate<ref_count2>& right) const {
+   assertTNodeNotExpired();
+-  return NodeManager::currentNM()->mkNode(Kind::XOR, *this, right);
++  return d_nv->getNodeManager()->mkNode(Kind::XOR, *this, right);
+ }
+ 
+ template <bool ref_count>
+@@ -1212,7 +1221,7 @@ NodeTemplate<true> NodeTemplate<ref_count>::getOperator() const
+   if (mk == kind::metakind::OPERATOR)
+   {
+     /* Returns a BUILTIN node. */
+-    return NodeManager::currentNM()->operatorOf(getKind());
++    return d_nv->getNodeManager()->operatorOf(getKind());
+   }
+   Assert(mk == kind::metakind::PARAMETERIZED);
+   /* The operator is the first child. */
+@@ -1233,12 +1242,12 @@ template <bool ref_count>
+ TypeNode NodeTemplate<ref_count>::getType(bool check) const
+ {
+   assertTNodeNotExpired();
+-  TypeNode tn = NodeManager::currentNM()->getType(*this, check);
++  TypeNode tn = d_nv->getNodeManager()->getType(*this, check);
+   if (tn.isNull())
+   {
+     // recompute with an error stream and throw a type exception
+     std::stringstream errOutTmp;
+-    tn = NodeManager::currentNM()->getType(*this, check, &errOutTmp);
++    tn = d_nv->getNodeManager()->getType(*this, check, &errOutTmp);
+     throw TypeCheckingExceptionPrivate(*this, errOutTmp.str());
+   }
+   return tn;
+@@ -1248,7 +1257,7 @@ template <bool ref_count>
+ TypeNode NodeTemplate<ref_count>::getTypeOrNull(bool check) const
+ {
+   assertTNodeNotExpired();
+-  return NodeManager::currentNM()->getType(*this, check);
++  return d_nv->getNodeManager()->getType(*this, check);
+ }
+ 
+ template <bool ref_count>
+diff --git a/src/expr/node_builder.cpp b/src/expr/node_builder.cpp
+index 606284506..4345db512 100644
+--- a/src/expr/node_builder.cpp
++++ b/src/expr/node_builder.cpp
+@@ -27,6 +27,7 @@ NodeBuilder::NodeBuilder()
+   d_inlineNv.d_id = 0;
+   d_inlineNv.d_rc = 0;
+   d_inlineNv.d_kind = expr::NodeValue::kindToDKind(Kind::UNDEFINED_KIND);
++  d_inlineNv.d_nm = d_nm;
+   d_inlineNv.d_nchildren = 0;
+ }
+ 
+@@ -41,6 +42,7 @@ NodeBuilder::NodeBuilder(Kind k)
+   d_inlineNv.d_id = 1;  // have a kind already
+   d_inlineNv.d_rc = 0;
+   d_inlineNv.d_kind = expr::NodeValue::kindToDKind(k);
++  d_inlineNv.d_nm = d_nm;
+   d_inlineNv.d_nchildren = 0;
+ }
+ 
+@@ -50,6 +52,7 @@ NodeBuilder::NodeBuilder(NodeManager* nm)
+   d_inlineNv.d_id = 0;
+   d_inlineNv.d_rc = 0;
+   d_inlineNv.d_kind = expr::NodeValue::kindToDKind(Kind::UNDEFINED_KIND);
++  d_inlineNv.d_nm = d_nm;
+   d_inlineNv.d_nchildren = 0;
+ }
+ 
+@@ -62,6 +65,7 @@ NodeBuilder::NodeBuilder(NodeManager* nm, Kind k)
+   d_inlineNv.d_id = 1;  // have a kind already
+   d_inlineNv.d_rc = 0;
+   d_inlineNv.d_kind = expr::NodeValue::kindToDKind(k);
++  d_inlineNv.d_nm = d_nm;
+   d_inlineNv.d_nchildren = 0;
+ }
+ 
+@@ -71,6 +75,7 @@ NodeBuilder::NodeBuilder(const NodeBuilder& nb)
+   d_inlineNv.d_id = nb.d_nv->d_id;
+   d_inlineNv.d_rc = 0;
+   d_inlineNv.d_kind = nb.d_nv->d_kind;
++  d_inlineNv.d_nm = d_nm;
+   d_inlineNv.d_nchildren = 0;
+ 
+   internalCopy(nb);
+@@ -167,6 +172,7 @@ void NodeBuilder::clear(Kind k)
+   {
+     (*i)->dec();
+   }
++  d_inlineNv.d_nm = d_nm;
+   d_inlineNv.d_nchildren = 0;
+   // keep track of whether or not we hvae a kind already
+   d_inlineNv.d_id = (k == Kind::UNDEFINED_KIND) ? 0 : 1;
+@@ -314,6 +320,7 @@ void NodeBuilder::realloc(size_t toSize)
+     d_nv->d_id = d_inlineNv.d_id;
+     d_nv->d_rc = 0;
+     d_nv->d_kind = d_inlineNv.d_kind;
++    d_nv->d_nm = d_nm;
+     d_nv->d_nchildren = d_inlineNv.d_nchildren;
+ 
+     std::copy(d_inlineNv.d_children,
+@@ -416,6 +423,7 @@ expr::NodeValue* NodeBuilder::constructNV()
+     nv->d_nchildren = 0;
+     nv->d_kind = d_nv->d_kind;
+     nv->d_id = d_nm->d_nextId++;
++    nv->d_nm = d_nm;
+     nv->d_rc = 0;
+     setUsed();
+     if (TraceIsOn("gc"))
+@@ -498,6 +506,7 @@ expr::NodeValue* NodeBuilder::constructNV()
+       nv->d_nchildren = d_inlineNv.d_nchildren;
+       nv->d_kind = d_inlineNv.d_kind;
+       nv->d_id = d_nm->d_nextId++;
++      nv->d_nm = d_nm;
+       nv->d_rc = 0;
+ 
+       std::copy(d_inlineNv.d_children,
+@@ -558,6 +567,7 @@ expr::NodeValue* NodeBuilder::constructNV()
+       crop();
+       expr::NodeValue* nv = d_nv;
+       nv->d_id = d_nm->d_nextId++;
++      nv->d_nm = d_nm;
+       d_nv = &d_inlineNv;
+       d_nvMaxChildren = default_nchild_thresh;
+       setUsed();
+diff --git a/src/expr/node_manager_template.cpp b/src/expr/node_manager_template.cpp
+index fbd4e265e..1eb33da69 100644
+--- a/src/expr/node_manager_template.cpp
++++ b/src/expr/node_manager_template.cpp
+@@ -1318,6 +1318,7 @@ NodeClass NodeManager::mkConstInternal(Kind k, const T& val)
+   nvStack.d_id = 0;
+   nvStack.d_kind = static_cast<uint32_t>(k);
+   nvStack.d_rc = 0;
++  nvStack.d_nm = this;
+   nvStack.d_nchildren = 1;
+ 
+ #if defined(__GNUC__) \
+@@ -1352,6 +1353,7 @@ NodeClass NodeManager::mkConstInternal(Kind k, const T& val)
+   nv->d_nchildren = 0;
+   nv->d_kind = static_cast<uint32_t>(k);
+   nv->d_id = d_nextId++;
++  nv->d_nm = this;
+   nv->d_rc = 0;
+ 
+   new (&nv->d_children) T(val);
+diff --git a/src/expr/node_value.cpp b/src/expr/node_value.cpp
+index ede2f780b..f52892213 100644
+--- a/src/expr/node_value.cpp
++++ b/src/expr/node_value.cpp
+@@ -97,20 +97,20 @@ std::ostream& operator<<(std::ostream& out, const NodeValue& nv)
+ 
+ void NodeValue::markRefCountMaxedOut()
+ {
+-  Assert(NodeManager::currentNM() != nullptr)
++  Assert(d_nm != nullptr)
+       << "No current NodeManager on incrementing of NodeValue: "
+          "maybe a public cvc5 interface function is missing a "
+          "NodeManagerScope ?";
+-  NodeManager::currentNM()->markRefCountMaxedOut(this);
++  d_nm->markRefCountMaxedOut(this);
+ }
+ 
+ void NodeValue::markForDeletion()
+ {
+-  Assert(NodeManager::currentNM() != nullptr)
++  Assert(d_nm != nullptr)
+       << "No current NodeManager on destruction of NodeValue: "
+          "maybe a public cvc5 interface function is missing a "
+          "NodeManagerScope ?";
+-  NodeManager::currentNM()->markForDeletion(this);
++  d_nm->markForDeletion(this);
+ }
+ 
+ }  // namespace expr
+diff --git a/src/expr/node_value.h b/src/expr/node_value.h
+index 7c92b6792..55c90a4a0 100644
+--- a/src/expr/node_value.h
++++ b/src/expr/node_value.h
+@@ -153,6 +153,8 @@ class CVC5_EXPORT NodeValue
+ 
+   kind::MetaKind getMetaKind() const { return kind::metaKindOf(getKind()); }
+ 
++  NodeManager* getNodeManager() const { return d_nm; }
++
+   uint32_t getNumChildren() const
+   {
+     return (getMetaKind() == kind::metakind::PARAMETERIZED) ? d_nchildren - 1
+@@ -358,6 +360,9 @@ class CVC5_EXPORT NodeValue
+   /** Number of children */
+   uint32_t d_nchildren : NBITS_NCHILDREN;
+ 
++  /** Associated node manager. */
++  NodeManager* d_nm = nullptr;
++
+   /** Variable number of child nodes */
+   NodeValue* d_children[0];
+ }; /* class NodeValue */
+-- 
+2.47.1
+

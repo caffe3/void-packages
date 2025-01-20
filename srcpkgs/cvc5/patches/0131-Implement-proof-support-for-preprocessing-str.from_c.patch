@@ -1,0 +1,210 @@
+From 4b5a81fadb39cdb1694cf017452f0da343182a37 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 18 Oct 2024 14:53:41 -0500
+Subject: [PATCH 131/312] Implement proof support for preprocessing
+ str.from_code (#11285)
+
+Eliminates 10 preprocess lemmas from our regressions.
+
+Also adds the Eunoia definition and makes the printer more robust.
+---
+ proofs/eo/cpc/programs/Strings.eo     | 13 +++++++
+ src/proof/alf/alf_printer.cpp         | 11 ++++--
+ src/theory/strings/term_registry.cpp  | 49 +++++++++++++++++++--------
+ src/theory/strings/term_registry.h    |  5 +++
+ src/theory/strings/theory_strings.cpp | 22 ++++--------
+ 5 files changed, 68 insertions(+), 32 deletions(-)
+
+diff --git a/proofs/eo/cpc/programs/Strings.eo b/proofs/eo/cpc/programs/Strings.eo
+index 2a09d60b9..772dd60a9 100644
+--- a/proofs/eo/cpc/programs/Strings.eo
++++ b/proofs/eo/cpc/programs/Strings.eo
+@@ -443,6 +443,18 @@
+   )
+ )
+ 
++; define: $str_eager_reduction_from_code
++; args:
++; - n Int: The argument of str.from_code.
++; return: the eager reduction predicate for (str.from_code n)
++(define $str_eager_reduction_from_code ((n Int))
++  (eo::define ((k (@purify (str.from_code n))))
++  (ite
++    (and (<= 0 n) (< n 196608))
++    (= n (str.to_code k))
++    (= k "")))
++)
++
+ ; define: $str_eager_reduction_to_code
+ ; args:
+ ; - s (Seq U): The argument of str.to_code.
+@@ -487,6 +499,7 @@
+ (program $mk_str_eager_reduction ((U Type) (x U) (y U) (r RegLan) (n Int) (m Int))
+   (U) Bool
+   (
++    (($mk_str_eager_reduction (str.from_code x)) ($str_eager_reduction_from_code x))
+     (($mk_str_eager_reduction (str.to_code x)) ($str_eager_reduction_to_code x))
+     (($mk_str_eager_reduction (str.contains x y)) ($str_eager_reduction_contains x y))
+     (($mk_str_eager_reduction (str.indexof x y n)) ($str_eager_reduction_indexof x y n))
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index c0dd8da98..435a767e4 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -24,6 +24,7 @@
+ #include "expr/node_algorithm.h"
+ #include "expr/subs.h"
+ #include "options/main_options.h"
++#include "options/strings_options.h"
+ #include "printer/printer.h"
+ #include "printer/smt2/smt2_printer.h"
+ #include "proof/alf/alf_dependent_type_converter.h"
+@@ -31,6 +32,7 @@
+ #include "rewriter/rewrite_db.h"
+ #include "smt/print_benchmark.h"
+ #include "theory/strings/theory_strings_utils.h"
++#include "util/string.h"
+ 
+ namespace cvc5::internal {
+ 
+@@ -216,8 +218,13 @@ bool AlfPrinter::isHandled(const ProofNode* pfn) const
+       // depends on the operator
+       Assert(!pargs.empty());
+       Kind k = pargs[0].getKind();
+-      return k == Kind::STRING_CONTAINS || k == Kind::STRING_TO_CODE
+-             || k == Kind::STRING_INDEXOF || k == Kind::STRING_IN_REGEXP;
++      if (k == Kind::STRING_TO_CODE || k == Kind::STRING_FROM_CODE)
++      {
++        // must use standard alphabet size
++        return options().strings.stringsAlphaCard == String::num_codes();
++      }
++      return k == Kind::STRING_CONTAINS || k == Kind::STRING_INDEXOF
++             || k == Kind::STRING_IN_REGEXP;
+     }
+     break;
+     //
+diff --git a/src/theory/strings/term_registry.cpp b/src/theory/strings/term_registry.cpp
+index 15e6c4473..88e89bf3b 100644
+--- a/src/theory/strings/term_registry.cpp
++++ b/src/theory/strings/term_registry.cpp
+@@ -152,6 +152,21 @@ Node TermRegistry::eagerReduce(Node t, SkolemCache* sc, uint32_t alphaCard)
+           Kind::IMPLIES, t, nm->mkNode(Kind::STRING_LENGTH, t[0]).eqNode(len));
+     }
+   }
++  else if (tk == Kind::STRING_FROM_CODE)
++  {
++    // str.from_code(t) ---> ite(0 <= t < |A|, t = str.to_code(k), k = "")
++    Node k = sc->mkSkolemCached(t, SkolemCache::SK_PURIFY, "kFromCode");
++    Node tc = t[0];
++    Node card = nm->mkConstInt(Rational(alphaCard));
++    Node cond = nm->mkNode(Kind::AND,
++                           nm->mkNode(Kind::LEQ, nm->mkConstInt(0), tc),
++                           nm->mkNode(Kind::LT, tc, card));
++    Node emp = Word::mkEmptyWord(t.getType());
++    lemma = nm->mkNode(Kind::ITE,
++                       cond,
++                       tc.eqNode(nm->mkNode(Kind::STRING_TO_CODE, k)),
++                       k.eqNode(emp));
++  }
+   return lemma;
+ }
+ 
+@@ -305,20 +320,7 @@ void TermRegistry::registerTermInternal(Node n)
+     }
+     if (doEagerReduce)
+     {
+-      Node eagerRedLemma = eagerReduce(n, &d_skCache, d_alphaCard);
+-      if (!eagerRedLemma.isNull())
+-      {
+-        // if there was an eager reduction, we make the trust node for it
+-        if (d_epg != nullptr)
+-        {
+-          regTermLem = d_epg->mkTrustNode(
+-              eagerRedLemma, ProofRule::STRING_EAGER_REDUCTION, {}, {n});
+-        }
+-        else
+-        {
+-          regTermLem = TrustNode::mkTrustLemma(eagerRedLemma, nullptr);
+-        }
+-      }
++      regTermLem = eagerReduceTrusted(n);
+     }
+   }
+   if (!regTermLem.isNull())
+@@ -331,6 +333,25 @@ void TermRegistry::registerTermInternal(Node n)
+   }
+ }
+ 
++TrustNode TermRegistry::eagerReduceTrusted(const Node& n)
++{
++  TrustNode regTermLem;
++  Node eagerRedLemma = eagerReduce(n, &d_skCache, d_alphaCard);
++  if (!eagerRedLemma.isNull())
++  {
++    if (d_epg != nullptr)
++    {
++      regTermLem = d_epg->mkTrustNode(
++          eagerRedLemma, ProofRule::STRING_EAGER_REDUCTION, {}, {n});
++    }
++    else
++    {
++      regTermLem = TrustNode::mkTrustLemma(eagerRedLemma, nullptr);
++    }
++  }
++  return regTermLem;
++}
++
+ void TermRegistry::registerType(TypeNode tn)
+ {
+   if (d_registeredTypes.find(tn) != d_registeredTypes.end())
+diff --git a/src/theory/strings/term_registry.h b/src/theory/strings/term_registry.h
+index 55337fc4f..b30a5fdfd 100644
+--- a/src/theory/strings/term_registry.h
++++ b/src/theory/strings/term_registry.h
+@@ -65,6 +65,11 @@ class TermRegistry : protected EnvObj
+   uint32_t getAlphabetCardinality() const;
+   /** Finish initialize, which sets the inference manager */
+   void finishInit(InferenceManager* im);
++  /**
++   * Return a TrustNode of kind LEMMA that provides the eager reduction lemma
++   * for t, or the null trust node if it does not exist.
++   */
++  TrustNode eagerReduceTrusted(const Node& t);
+   /** The eager reduce routine
+    *
+    * Constructs a lemma for t that is incomplete, but communicates pertinent
+diff --git a/src/theory/strings/theory_strings.cpp b/src/theory/strings/theory_strings.cpp
+index 820badf47..4e2c41646 100644
+--- a/src/theory/strings/theory_strings.cpp
++++ b/src/theory/strings/theory_strings.cpp
+@@ -1123,22 +1123,12 @@ TrustNode TheoryStrings::ppRewrite(TNode atom, std::vector<SkolemLemma>& lems)
+   Kind ak = atom.getKind();
+   if (ak == Kind::STRING_FROM_CODE)
+   {
+-    // str.from_code(t) ---> ite(0 <= t < |A|, t = str.to_code(k), k = "")
+-    NodeManager* nm = nodeManager();
+-    SkolemCache* sc = d_termReg.getSkolemCache();
+-    Node k = sc->mkSkolemCached(atom, SkolemCache::SK_PURIFY, "kFromCode");
+-    Node t = atom[0];
+-    Node card = nm->mkConstInt(Rational(d_termReg.getAlphabetCardinality()));
+-    Node cond = nm->mkNode(Kind::AND,
+-                           nm->mkNode(Kind::LEQ, d_zero, t),
+-                           nm->mkNode(Kind::LT, t, card));
+-    Node emp = Word::mkEmptyWord(atom.getType());
+-    Node pred = nm->mkNode(Kind::ITE,
+-                           cond,
+-                           t.eqNode(nm->mkNode(Kind::STRING_TO_CODE, k)),
+-                           k.eqNode(emp));
+-    TrustNode tnk = TrustNode::mkTrustLemma(pred);
+-    lems.push_back(SkolemLemma(tnk, k));
++    // for the sake of proofs, we use the eager reduction utility
++    Node k = nodeManager()->getSkolemManager()->mkPurifySkolem(atom);
++    TrustNode lemma = d_termReg.eagerReduceTrusted(atom);
++    lems.push_back(SkolemLemma(lemma, k));
++    // We rewrite the term to its purify variable, which can be justified
++    // trivially.
+     return TrustNode::mkTrustRewrite(atom, k, nullptr);
+   }
+   if (ak == Kind::REGEXP_RANGE)
+-- 
+2.47.1
+

@@ -1,0 +1,79 @@
+From 7b50b6ee65cd485698712493b593f1419bc20f7d Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 14 Aug 2024 12:37:23 -0500
+Subject: [PATCH 025/312] Add support for more evaluations in cpc proofs
+ (#11147)
+
+---
+ proofs/eo/cpc/Cpc.eo            |  3 ++-
+ proofs/eo/cpc/programs/Arith.eo | 26 ++++++++++++++++++++++++++
+ src/proof/alf/alf_printer.cpp   |  2 ++
+ 3 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/proofs/eo/cpc/Cpc.eo b/proofs/eo/cpc/Cpc.eo
+index 3fa5d0833..cd76784be 100644
+--- a/proofs/eo/cpc/Cpc.eo
++++ b/proofs/eo/cpc/Cpc.eo
+@@ -134,7 +134,8 @@
+       (($run_evaluate (to_real x))         (eo::to_q ($run_evaluate x)))
+       (($run_evaluate (to_int x))          (eo::to_z ($run_evaluate x)))
+       (($run_evaluate (is_int x))          (eo::is_eq (eo::to_q (eo::to_z x)) (eo::to_q x)))
+-
++      (($run_evaluate (int.log2 x))        ($arith_eval_int_log_2 ($run_evaluate x)))
++      (($run_evaluate (int.ispow2 x))      ($arith_eval_is_pow_2 ($run_evaluate x)))
+ 
+       ; strings
+       (($run_evaluate (str.++ xs yss))     (eo::concat ($run_evaluate xs) ($run_evaluate yss)))
+diff --git a/proofs/eo/cpc/programs/Arith.eo b/proofs/eo/cpc/programs/Arith.eo
+index 74ddf8e35..0605458ef 100644
+--- a/proofs/eo/cpc/programs/Arith.eo
++++ b/proofs/eo/cpc/programs/Arith.eo
+@@ -82,6 +82,32 @@
+ (define $arith_eval_int_log_2 ((x Int))
+   (eo::ite (eo::is_neg (eo::neg x)) ($arith_eval_int_log_2_rec x) (int.log2 x)))
+ 
++; program: $arith_eval_is_pow_2_rec
++; args:
++; - x  Int: The term to compute whether it is a power of two, assumed to be a positive numeral value.
++; return: true iff x is a power of two.
++; note: Helper method for $arith_eval_is_pow_2 below.
++(program $arith_eval_is_pow_2_rec ((x Int))
++  (Int) Bool
++  (
++  (($arith_eval_is_pow_2_rec 1) true)
++  (($arith_eval_is_pow_2_rec x) (eo::ite (eo::is_eq (eo::zmod x 2) 0) 
++                                  ($arith_eval_is_pow_2_rec (eo::zdiv x 2))
++                                  false))
++  )
++)
++
++; define: $arith_eval_is_pow_2
++; args:
++; - x Int: The term to compute whether it is a power of two.
++; return: >
++;   true iff x is a power of two. If x is not a numeral value, we return
++;   the term (int.ispow2 x).
++(define $arith_eval_is_pow_2 ((x Int))
++  (eo::ite (eo::is_z x) 
++    (eo::ite (eo::is_neg x) false ($arith_eval_is_pow_2_rec x))
++    (int.ispow2 x)))
++
+ ;; =============== for ARITH_POLY_NORM
+ 
+ ; Definitions of monomials and polynomials.
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index cc818f4f2..9a3897c31 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -305,6 +305,8 @@ bool AlfPrinter::canEvaluate(Node n) const
+         case Kind::DIVISION_TOTAL:
+         case Kind::INTS_DIVISION:
+         case Kind::INTS_DIVISION_TOTAL:
++        case Kind::INTS_ISPOW2:
++        case Kind::INTS_LOG2:
+         case Kind::TO_REAL:
+         case Kind::TO_INTEGER:
+         case Kind::IS_INTEGER:
+-- 
+2.47.1
+

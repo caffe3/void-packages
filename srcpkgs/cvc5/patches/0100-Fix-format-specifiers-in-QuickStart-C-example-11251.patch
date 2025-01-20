@@ -1,0 +1,41 @@
+From 4f582c14a5a16d81a486dd9aa74f33188e27d707 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Thu, 3 Oct 2024 10:48:03 -0500
+Subject: [PATCH 100/312] Fix format specifiers in QuickStart C example
+ (#11251)
+
+It addresses the following warnings triggered by clang on macOS:
+```
+warning: format specifies type 'long' but the argument has type 'int64_t' (aka 'long long') [-Wformat]
+  printf("value for x: %ld/%lu\n", x_num, x_den);
+                       ~~~         ^~~~~
+                       %lld
+warning: format specifies type 'unsigned long' but the argument has type 'uint64_t' (aka 'unsigned long long') [-Wformat]
+  printf("value for x: %ld/%lu\n", x_num, x_den);
+                           ~~~            ^~~~~
+                           %llu
+```
+---
+ examples/api/c/quickstart.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/examples/api/c/quickstart.c b/examples/api/c/quickstart.c
+index eafe711e0..5ba90a329 100644
+--- a/examples/api/c/quickstart.c
++++ b/examples/api/c/quickstart.c
+@@ -184,9 +184,9 @@ int main()
+   uint64_t x_minus_y_den;
+   cvc5_term_get_real64_value(x_minus_y_val, &x_minus_y_num, &x_minus_y_den);
+ 
+-  printf("value for x: %ld/%lu\n", x_num, x_den);
+-  printf("value for y: %ld/%lu\n", y_num, y_den);
+-  printf("value for x - y: %ld/%lu\n", x_minus_y_num, x_minus_y_den);
++  printf("value for x: %lld/%llu\n", x_num, x_den);
++  printf("value for y: %lld/%llu\n", y_num, y_den);
++  printf("value for x - y: %lld/%llu\n", x_minus_y_num, x_minus_y_den);
+   //! [docs-c-quickstart-12 end]
+ 
+   // Another way to independently compute the value of x - y would be
+-- 
+2.47.1
+

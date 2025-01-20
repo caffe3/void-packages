@@ -1,0 +1,140 @@
+From 99c68269506eddc01ff4d17c57e42acb992b3e44 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 5 Nov 2024 13:37:02 -0600
+Subject: [PATCH 156/312] Add a few more simple missing RARE rules (#11318)
+
+---
+ include/cvc5/cvc5_proof_rule.h  | 10 ++++++++++
+ proofs/eo/cpc/rules/Rewrites.eo | 21 +++++++++++++++++++++
+ src/theory/booleans/rewrites    |  5 +++++
+ src/theory/uf/rewrites          |  5 +++++
+ 4 files changed, 41 insertions(+)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 6da7c1fd9..07a554547 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -3005,8 +3005,12 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(BOOL_AND_DUP),
+   /** Auto-generated from RARE rule bool-and-conf */
+   EVALUE(BOOL_AND_CONF),
++  /** Auto-generated from RARE rule bool-and-conf2 */
++  EVALUE(BOOL_AND_CONF2),
+   /** Auto-generated from RARE rule bool-or-taut */
+   EVALUE(BOOL_OR_TAUT),
++  /** Auto-generated from RARE rule bool-or-taut2 */
++  EVALUE(BOOL_OR_TAUT2),
+   /** Auto-generated from RARE rule bool-or-de-morgan */
+   EVALUE(BOOL_OR_DE_MORGAN),
+   /** Auto-generated from RARE rule bool-implies-de-morgan */
+@@ -3043,6 +3047,10 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(ITE_THEN_LOOKAHEAD_SELF),
+   /** Auto-generated from RARE rule ite-else-lookahead-self */
+   EVALUE(ITE_ELSE_LOOKAHEAD_SELF),
++  /** Auto-generated from RARE rule ite-then-lookahead-not-self */
++  EVALUE(ITE_THEN_LOOKAHEAD_NOT_SELF),
++  /** Auto-generated from RARE rule ite-else-lookahead-not-self */
++  EVALUE(ITE_ELSE_LOOKAHEAD_NOT_SELF),
+   /** Auto-generated from RARE rule bool-not-ite-elim */
+   EVALUE(BOOL_NOT_ITE_ELIM),
+   /** Auto-generated from RARE rule ite-true-cond */
+@@ -3699,6 +3707,8 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(EQ_REFL),
+   /** Auto-generated from RARE rule eq-symm */
+   EVALUE(EQ_SYMM),
++  /** Auto-generated from RARE rule eq-cond-deq */
++  EVALUE(EQ_COND_DEQ),
+   /** Auto-generated from RARE rule distinct-binary-elim */
+   EVALUE(DISTINCT_BINARY_ELIM),
+   /** Auto-generated from RARE rule uf-bv2nat-geq-elim */
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index a4d66418a..f30a1a19b 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -277,10 +277,18 @@
+   :args (xs1 w1 ys1 zs1)
+   :conclusion (= (and xs1 w1 ys1 (not w1) zs1) false)
+ )
++(declare-rule bool-and-conf2 ((xs1 Bool :list) (w1 Bool) (ys1 Bool :list) (zs1 Bool :list))
++  :args (xs1 w1 ys1 zs1)
++  :conclusion (= (and xs1 (not w1) ys1 w1 zs1) false)
++)
+ (declare-rule bool-or-taut ((xs1 Bool :list) (w1 Bool) (ys1 Bool :list) (zs1 Bool :list))
+   :args (xs1 w1 ys1 zs1)
+   :conclusion (= (or xs1 w1 ys1 (not w1) zs1) true)
+ )
++(declare-rule bool-or-taut2 ((xs1 Bool :list) (w1 Bool) (ys1 Bool :list) (zs1 Bool :list))
++  :args (xs1 w1 ys1 zs1)
++  :conclusion (= (or xs1 (not w1) ys1 w1 zs1) true)
++)
+ (declare-rule bool-or-de-morgan ((x1 Bool) (y1 Bool) (zs1 Bool :list))
+   :args (x1 y1 zs1)
+   :conclusion (= (not (or x1 y1 zs1)) (and (not x1) (not ($singleton_elim (or y1 zs1)))))
+@@ -354,6 +362,14 @@
+   :args (c1 x1)
+   :conclusion (= (ite c1 x1 c1) (ite c1 x1 false))
+ )
++(declare-rule ite-then-lookahead-not-self ((c1 Bool) (x1 Bool))
++  :args (c1 x1)
++  :conclusion (= (ite c1 (not c1) x1) (ite c1 false x1))
++)
++(declare-rule ite-else-lookahead-not-self ((c1 Bool) (x1 Bool))
++  :args (c1 x1)
++  :conclusion (= (ite c1 x1 (not c1)) (ite c1 x1 true))
++)
+ (declare-rule bool-not-ite-elim ((c1 Bool) (x1 Bool) (y1 Bool))
+   :args (c1 x1 y1)
+   :conclusion (= (not (ite c1 x1 y1)) (ite c1 (not x1) (not y1)))
+@@ -1821,6 +1837,11 @@
+   :args (t1 s1)
+   :conclusion (= (= t1 s1) (= s1 t1))
+ )
++(declare-rule eq-cond-deq ((@T0 Type) (@T1 Type) (@T2 Type) (t1 @T0) (s1 @T1) (r1 @T2))
++  :premises ((= (= s1 r1) false))
++  :args (t1 s1 r1)
++  :conclusion (= (= (= t1 s1) (= t1 r1)) (and (not (= t1 s1)) (not (= t1 r1))))
++)
+ (declare-rule distinct-binary-elim ((@T0 Type) (@T1 Type) (t1 @T0) (s1 @T1))
+   :args (t1 s1)
+   :conclusion (= (distinct t1 s1) (not (= t1 s1)))
+diff --git a/src/theory/booleans/rewrites b/src/theory/booleans/rewrites
+index a2a8aa1e1..9a8d55f35 100644
+--- a/src/theory/booleans/rewrites
++++ b/src/theory/booleans/rewrites
+@@ -25,7 +25,9 @@
+ (define-rule* bool-and-dup ((xs Bool :list) (b Bool) (ys Bool :list) (zs Bool :list)) (and xs b ys b zs) (and xs b ys zs))
+ 
+ (define-rule bool-and-conf ((xs Bool :list) (w Bool) (ys Bool :list) (zs Bool :list)) (and xs w ys (not w) zs) false)
++(define-rule bool-and-conf2 ((xs Bool :list) (w Bool) (ys Bool :list) (zs Bool :list)) (and xs (not w) ys w zs) false)
+ (define-rule bool-or-taut ((xs Bool :list) (w Bool) (ys Bool :list) (zs Bool :list)) (or xs w ys (not w) zs) true)
++(define-rule bool-or-taut2 ((xs Bool :list) (w Bool) (ys Bool :list) (zs Bool :list)) (or xs (not w) ys w zs) true)
+ 
+ (define-rule* bool-or-de-morgan ((x Bool) (y Bool) (zs Bool :list)) 
+   (not (or x y zs))
+@@ -59,4 +61,7 @@
+ (define-rule ite-then-lookahead-self ((c Bool) (x Bool)) (ite c c x) (ite c true x))
+ (define-rule ite-else-lookahead-self ((c Bool) (x Bool)) (ite c x c) (ite c x false))
+ 
++(define-rule ite-then-lookahead-not-self ((c Bool) (x Bool)) (ite c (not c) x) (ite c false x))
++(define-rule ite-else-lookahead-not-self ((c Bool) (x Bool)) (ite c x (not c)) (ite c x true))
++
+ (define-rule bool-not-ite-elim ((c Bool) (x Bool) (y Bool)) (not (ite c x y)) (ite c (not x) (not y)))
+diff --git a/src/theory/uf/rewrites b/src/theory/uf/rewrites
+index 0491f448c..0f196b256 100644
+--- a/src/theory/uf/rewrites
++++ b/src/theory/uf/rewrites
+@@ -3,6 +3,11 @@
+ (define-rule eq-refl ((t ?)) (= t t) true)
+ (define-rule eq-symm ((t ?) (s ?)) (= t s) (= s t))
+ 
++(define-cond-rule eq-cond-deq ((t ?) (s ?) (r ?))
++  (= (= s r) false)
++  (= (= t s) (= t r))
++  (and (not (= t s)) (not (= t r))))
++
+ (define-rule distinct-binary-elim ((t ?) (s ?)) (distinct t s) (not (= t s)))
+ 
+ ; bv to arith conversions
+-- 
+2.47.1
+

@@ -1,0 +1,232 @@
+From c1c228522406e8e56db1f2956685ab389ca0fa87 Mon Sep 17 00:00:00 2001
+From: Haniel Barbosa <hanielbbarbosa@gmail.com>
+Date: Mon, 19 Aug 2024 17:25:16 -0300
+Subject: [PATCH 031/312] [alethe] Refactor translation of ASSUME/SCOPE
+ (#11167)
+
+With this change the Alethe post-processor uses `ProofRule::ASSUME`,
+which would be helpful in a future effort to use the same printer as
+CPC. This commit also refactors the translation of SCOPE.
+
+Only a few commits are left to finish the migration of the fixes from
+proof-new. This commit disables the few active regressions in main that
+test the Alethe backend. They will be reactivated once the migration in
+finished.
+---
+ src/proof/alethe/alethe_post_processor.cpp | 77 +++++++++++-----------
+ test/regress/cli/CMakeLists.txt            | 22 +++----
+ 2 files changed, 48 insertions(+), 51 deletions(-)
+
+diff --git a/src/proof/alethe/alethe_post_processor.cpp b/src/proof/alethe/alethe_post_processor.cpp
+index 17aef183b..d8e340477 100644
+--- a/src/proof/alethe/alethe_post_processor.cpp
++++ b/src/proof/alethe/alethe_post_processor.cpp
+@@ -187,40 +187,39 @@ bool AletheProofPostprocessCallback::update(Node res,
+     // defined in the original documentation of the rules in proof_rule.h.
+     //================================================= Core rules
+     //======================== Assume and Scope
++    // nothing happens
+     case ProofRule::ASSUME:
+     {
+-      return addAletheStep(AletheRule::ASSUME, res, res, children, {}, *cdp);
++      return false;
+     }
+-    // See proof_rule.h for documentation on the SCOPE rule. This comment uses
+-    // variable names as introduced there. Since the SCOPE rule originally
+-    // concludes
+-    // (=> (and F1 ... Fn) F) or (not (and F1 ... Fn)) but the ANCHOR rule
+-    // concludes (cl (not F1) ... (not Fn) F), to keep the original shape of the
+-    // proof node it is necessary to rederive the original conclusion. The
+-    // transformation is described below, depending on the form of SCOPE's
+-    // conclusion.
+-    //
+-    // Note that after the original conclusion is rederived the new proof node
+-    // will actually have to be printed, respectively, (cl (=> (and F1 ... Fn)
+-    // F)) or (cl (not (and F1 ... Fn))).
++    // The SCOPE rule is translated into Alethe using the "subproof" rule. The
++    // conclusion is either (=> (and F1 ... Fn) F) or (not (and F1 ... Fn)), so
++    // it must be converted into (cl (not F1) ... (not Fn) F), and extra steps
++    // must be added to derive the original conclusion, which is the one to be
++    // used in the steps depending on this one.
+     //
+-    // Let (not (and F1 ... Fn))^i denote the repetition of (not (and F1 ...
+-    // Fn)) for i times.
++    // The following transformation is applied. Let (not (and F1 ... Fn))^i
++    // denote the repetition of (not (and F1 ...  Fn)) for i times.
+     //
+     // T1:
+     //
+-    //   P
+-    // ----- ANCHOR    ------- ... ------- AND_POS
+-    //  VP1             VP2_1  ...  VP2_n
+-    // ------------------------------------ RESOLUTION
++    // -------------------------------- anchor
++    // ---- assume         ---- assume
++    //  F1            ...   Fn
++    //        ...
++    // -----
++    //   F
++    // ----- subproof    ------- ... ------- and_pos
++    //  VP1               VP2_1  ...  VP2_n
++    // ------------------------------------ resolution
+     //               VP2a
+-    // ------------------------------------ REORDERING
++    // ------------------------------------ reordering
+     //  VP2b
+-    // ------ CONTRACTION           ------- IMPLIES_NEG1
++    // ------ contraction           ------- implies_neg1
+     //   VP3                          VP4
+-    // ------------------------------------  RESOLUTION    ------- IMPLIES_NEG2
++    // ------------------------------------ resolution    ------- implies_neg2
+     //    VP5                                                VP6
+-    // ----------------------------------------------------------- RESOLUTION
++    // ----------------------------------------------------------- resolution
+     //                               VP7
+     //
+     // VP1: (cl (not F1) ... (not Fn) F)
+@@ -233,18 +232,18 @@ bool AletheProofPostprocessCallback::update(Node res,
+     // VP6: (cl (=> (and F1 ... Fn) F) (not F))
+     // VP7: (cl (=> (and F1 ... Fn) F) (=> (and F1 ... Fn) F))
+     //
+-    // Note that if n = 1, then the ANCHOR step yields (cl (not F1) F), which is
+-    // the same as VP3. Since VP1 = VP3, the steps for that transformation are
+-    // not generated.
++    // Note that if n = 1, then the "subproof" step yields (cl (not F1) F),
++    // which is the same as VP3. Since VP1 = VP3, the steps for that
++    // transformation are not generated.
+     //
+     //
+     // If F = false:
+     //
+-    //                                    --------- IMPLIES_SIMPLIFY
++    //                                    --------- implies_simplify
+     //    T1                                 VP9
+-    // --------- CONTRACTION              --------- EQUIV_1
++    // --------- contraction              --------- equiv_1
+     //    VP8                                VP10
+-    // -------------------------------------------- RESOLUTION
++    // -------------------------------------------- resolution
+     //          (cl (not (and F1 ... Fn)))*
+     //
+     // VP8: (cl (=> (and F1 ... Fn) false))
+@@ -253,7 +252,7 @@ bool AletheProofPostprocessCallback::update(Node res,
+     //
+     // Otherwise,
+     //                T1
+-    //  ------------------------------ CONTRACTION
++    //  ------------------------------ contraction
+     //   (cl (=> (and F1 ... Fn) F))**
+     //
+     //
+@@ -265,20 +264,14 @@ bool AletheProofPostprocessCallback::update(Node res,
+ 
+       // Build vp1
+       std::vector<Node> negNode{d_cl};
+-      std::vector<Node> sanitized_args;
+       for (const Node& arg : args)
+       {
+         negNode.push_back(arg.notNode());  // (not F1) ... (not Fn)
+-        sanitized_args.push_back(d_anc.convert(arg));
+       }
+       negNode.push_back(children[0]);  // (cl (not F1) ... (not Fn) F)
+       Node vp1 = nm->mkNode(Kind::SEXPR, negNode);
+-      success &= addAletheStep(AletheRule::ANCHOR_SUBPROOF,
+-                               vp1,
+-                               vp1,
+-                               children,
+-                               sanitized_args,
+-                               *cdp);
++      success &= addAletheStep(
++          AletheRule::ANCHOR_SUBPROOF, vp1, vp1, children, args, *cdp);
+ 
+       Node andNode, vp3;
+       if (args.size() == 1)
+@@ -296,8 +289,12 @@ bool AletheProofPostprocessCallback::update(Node res,
+         for (size_t i = 0, size = args.size(); i < size; i++)
+         {
+           vp2_i = nm->mkNode(Kind::SEXPR, d_cl, andNode.notNode(), args[i]);
+-          success &=
+-              addAletheStep(AletheRule::AND_POS, vp2_i, vp2_i, {}, {}, *cdp);
++          success &= addAletheStep(AletheRule::AND_POS,
++                                   vp2_i,
++                                   vp2_i,
++                                   {},
++                                   std::vector<Node>{nm->mkConstInt(i)},
++                                   *cdp);
+           premisesVP2.push_back(vp2_i);
+           notAnd.push_back(andNode.notNode());  // cl F (not (and F1 ... Fn))^i
+         }
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index e6a3b98e4..390f8ce98 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -935,9 +935,9 @@ set(regress_0_tests
+   regress0/ho/lambda-test-deps.smt2
+   regress0/ho/lambda-test-deps-simple.smt2
+   regress0/ho/lazy-lambda-model.smt2
+-  regress0/ho/m-enum-bug1.smt2 
+-  regress0/ho/m-enum-bug2.smt2 
+-  regress0/ho/m-enum-bug3.smt2 
++  regress0/ho/m-enum-bug1.smt2
++  regress0/ho/m-enum-bug2.smt2
++  regress0/ho/m-enum-bug3.smt2
+   regress0/ho/match-middle.smt2
+   regress0/ho/model-dep-arg.smt2
+   regress0/ho/model-lam-simple.smt2
+@@ -1294,7 +1294,6 @@ set(regress_0_tests
+   regress0/printer/tuples_and_records.cvc.smt2
+   regress0/proj-issue307-get-value-re.smt2
+   regress0/proj-issue645-abs-value-subs.smt2
+-  regress0/proofs/alethe-res-need-or-step.smt2
+   regress0/proofs/cyclic-ucp.smt2
+   regress0/proofs/bvrewrite-concat-merge.smt2
+   regress0/proofs/bvrewrite-extract.smt2
+@@ -1317,12 +1316,9 @@ set(regress_0_tests
+   regress0/proofs/issue9172-doublePropProof.smt2
+   regress0/proofs/issue9200-lfsc-inst-sorts.smt2
+   regress0/proofs/issue9205-eqProofNary.smt2
+-  regress0/proofs/issue9393-optResReconstruction-alethebug.smt2
+-  regress0/proofs/issue9531-alethe-resolution.smt2
+   regress0/proofs/issue9669-clause-level-opt-incremental.smt2
+   regress0/proofs/issue9770-open-sat-proof.smt2
+   regress0/proofs/lfsc-test-1.smt2
+-  regress0/proofs/nomerge-alethe-pf.smt2
+   regress0/proofs/no-proof-uc.smt2
+   regress0/proofs/open-pf-datatypes.smt2
+   regress0/proofs/open-pf-if-unordered-iff.smt2
+@@ -3384,7 +3380,7 @@ set(regress_1_tests
+   regress1/sygus/interpol_from_pono_1.smt2
+   regress1/sygus/interpol_from_pono_2.smt2
+   regress1/sygus/interpolant-conj-simple.smt2
+-  regress1/sygus/issue10708-unconstrained-int.sy 
++  regress1/sygus/issue10708-unconstrained-int.sy
+   regress1/sygus/issue2914.sy
+   regress1/sygus/issue2935.sy
+   regress1/sygus/issue3109-share-sel.sy
+@@ -3751,6 +3747,13 @@ set(regress_4_tests
+ 
+ set(regression_disabled_tests
+   regress0/arith/miplib-opt1217--27.smtv1.smt2
++  # Alethe tests disabled while fixes to the Alethe backend not fully merged
++  regress0/proofs/alethe-res-need-or-step.smt2
++  regress0/proofs/issue9393-optResReconstruction-alethebug.smt2
++  regress0/proofs/issue9531-alethe-resolution.smt2
++  regress0/proofs/nomerge-alethe-pf.smt2
++  regress0/proofs/issue9515-alethe-skolems-crash.smt2
++  regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
+   # unknown on some builds
+   regress0/arith/issue7984-quant-trans.smt2
+   regress0/aufbv/dubreva005ue.smtv1.smt2
+@@ -3771,9 +3774,6 @@ set(regression_disabled_tests
+   regress0/nl/nta/issue8208-red-nred.smt2
+   # fails with unknown on some builds
+   regress0/quantifiers/nl-sqrt2-q.smt2
+-  # issues with skolems
+-  regress0/proofs/issue9515-alethe-skolems-crash.smt2
+-  regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
+   # need finite model finding command line in tptp regression
+   regress0/tptp/BOO003-4.smt2
+   regress0/tptp/BOO027-1.smt2
+-- 
+2.47.1
+

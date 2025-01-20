@@ -1,0 +1,120 @@
+From f83d7d8e2150440b973eeca9414d45a3e32d4311 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 29 Aug 2024 14:35:45 -0500
+Subject: [PATCH 042/312] Minor fix for MBQI, add regressions for fixed issues
+ (#11186)
+
+Two issues were fixed by dropping an experimental sets option, the 3rd
+is fixed by not allowing certain kinds of terms to appear in MBQI
+reasoning.
+
+Fixes https://github.com/cvc5/cvc5-projects/issues/733.
+Fixes https://github.com/cvc5/cvc5-projects/issues/731.
+Fixes https://github.com/cvc5/cvc5-projects/issues/728.
+---
+ src/theory/quantifiers/inst_strategy_mbqi.cpp        | 12 +++++++-----
+ test/regress/cli/CMakeLists.txt                      |  3 +++
+ test/regress/cli/regress0/sets/proj-issue728.smt2    |  6 ++++++
+ test/regress/cli/regress0/sets/proj-issue731.smt2    |  8 ++++++++
+ .../cli/regress1/seq/proj-issue733-mbqi-w.smt2       |  7 +++++++
+ 5 files changed, 31 insertions(+), 5 deletions(-)
+ create mode 100644 test/regress/cli/regress0/sets/proj-issue728.smt2
+ create mode 100644 test/regress/cli/regress0/sets/proj-issue731.smt2
+ create mode 100644 test/regress/cli/regress1/seq/proj-issue733-mbqi-w.smt2
+
+diff --git a/src/theory/quantifiers/inst_strategy_mbqi.cpp b/src/theory/quantifiers/inst_strategy_mbqi.cpp
+index 4e95a8736..ba21731ff 100644
+--- a/src/theory/quantifiers/inst_strategy_mbqi.cpp
++++ b/src/theory/quantifiers/inst_strategy_mbqi.cpp
+@@ -46,6 +46,8 @@ InstStrategyMbqi::InstStrategyMbqi(Env& env,
+   d_nonClosedKinds.insert(Kind::STORE_ALL);
+   d_nonClosedKinds.insert(Kind::CODATATYPE_BOUND_VARIABLE);
+   d_nonClosedKinds.insert(Kind::UNINTERPRETED_SORT_VALUE);
++  // may appear in certain models e.g. strings of excessive length
++  d_nonClosedKinds.insert(Kind::WITNESS);
+ 
+   if (options().quantifiers.mbqiFastSygus)
+   {
+@@ -400,13 +402,13 @@ Node InstStrategyMbqi::convertToQuery(
+           }
+         }
+       }
+-      else if (cur.getNumChildren() == 0)
++      else if (d_nonClosedKinds.find(ck) != d_nonClosedKinds.end())
+       {
+         // if this is a bad kind, fail immediately
+-        if (d_nonClosedKinds.find(ck) != d_nonClosedKinds.end())
+-        {
+-          return Node::null();
+-        }
++        return Node::null();
++      }
++      else if (cur.getNumChildren() == 0)
++      {
+         cmap[cur] = cur;
+       }
+       else
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 53c7547f0..bcd6504d0 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1705,7 +1705,9 @@ set(regress_0_tests
+   regress0/sets/proj-issue703.smt2
+   regress0/sets/proj-issue720.smt2
+   regress0/sets/proj-issue727.smt2
++  regress0/sets/proj-issue728.smt2
+   regress0/sets/proj-issue730-sets-ipc-fail.smt2
++  regress0/sets/proj-issue731.smt2
+   regress0/sets/rec_copy_loop_check_heap_access_43_4.smt2
+   regress0/sets/set_is_empty.smt2
+   regress0/sets/setel-eq.smt2
+@@ -2970,6 +2972,7 @@ set(regress_1_tests
+   regress1/seq/issue8148-2-const-mv.smt2
+   regress1/seq/issue8148-const-mv.smt2
+   regress1/seq/issue8936-nth-eager-red.smt2
++  regress1/seq/proj-issue733-mbqi-w.smt2
+   regress1/sets/all1.smt2
+   regress1/sets/all2.smt2
+   regress1/sets/all3.smt2  
+diff --git a/test/regress/cli/regress0/sets/proj-issue728.smt2 b/test/regress/cli/regress0/sets/proj-issue728.smt2
+new file mode 100644
+index 000000000..347f27ceb
+--- /dev/null
++++ b/test/regress/cli/regress0/sets/proj-issue728.smt2
+@@ -0,0 +1,6 @@
++; EXPECT: sat
++(set-logic ALL)
++(set-option :sets-ext true)
++(set-option :debug-check-models true)
++(assert (set.is_singleton (set.complement (set.singleton roundTowardZero))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/sets/proj-issue731.smt2 b/test/regress/cli/regress0/sets/proj-issue731.smt2
+new file mode 100644
+index 000000000..cba71c305
+--- /dev/null
++++ b/test/regress/cli/regress0/sets/proj-issue731.smt2
+@@ -0,0 +1,8 @@
++; EXPECT: unsat
++(set-logic ALL)
++(set-option :sets-ext true)
++(set-option :debug-check-models true)
++(declare-sort _u0 0)
++(declare-const _x3 _u0)
++(assert (set.subset (set.singleton _x3) (set.complement (set.singleton _x3))))
++(check-sat)
+diff --git a/test/regress/cli/regress1/seq/proj-issue733-mbqi-w.smt2 b/test/regress/cli/regress1/seq/proj-issue733-mbqi-w.smt2
+new file mode 100644
+index 000000000..2edb5c8f1
+--- /dev/null
++++ b/test/regress/cli/regress1/seq/proj-issue733-mbqi-w.smt2
+@@ -0,0 +1,7 @@
++; COMMAND-LINE: -q
++; EXPECT: sat
++(set-logic ALL)
++(set-option :mbqi-fast-sygus true)
++(declare-const x (Seq Bool))
++(assert (distinct (seq.at x 9510904) (seq.++ (seq.at x 9510904) (seq.rev (seq.at x 9510904)))))
++(check-sat)
+-- 
+2.47.1
+

@@ -1,0 +1,214 @@
+From 83acf433a991241b5268633fc5d83ccbee9cfd34 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 5 Dec 2024 12:00:35 -0600
+Subject: [PATCH 220/312] Handle INST_CONSTANT properly in cpc proofs (#11411)
+
+INST_CONSTANT is a special kind of variable that in rare cases can show
+up in proofs.
+
+This ensures we print this properly in cpc proofs.
+---
+ src/proof/alf/alf_node_converter.cpp          | 30 +++++++++++++++----
+ test/regress/cli/CMakeLists.txt               |  2 ++
+ .../cli/regress0/proofs/dd_ic_pf_764.smt2     |  6 ++++
+ .../cli/regress0/proofs/dd_spark_nnf_pf.smt2  |  6 ++--
+ 4 files changed, 35 insertions(+), 9 deletions(-)
+ create mode 100644 test/regress/cli/regress0/proofs/dd_ic_pf_764.smt2
+
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index bed4fe8fc..60ff996ae 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -82,9 +82,9 @@ Node AlfNodeConverter::postConvert(Node n)
+     // dummy node, return it
+     return n;
+   }
+-  TypeNode tn = n.getType();
+-  if (k == Kind::SKOLEM || k == Kind::DUMMY_SKOLEM)
++  if (k == Kind::SKOLEM || k == Kind::DUMMY_SKOLEM || k == Kind::INST_CONSTANT)
+   {
++    TypeNode tn = n.getType();
+     // constructors/selectors are represented by skolems, which are defined
+     // symbols
+     if (tn.isDatatypeConstructor() || tn.isDatatypeSelector()
+@@ -94,11 +94,14 @@ Node AlfNodeConverter::postConvert(Node n)
+       // to avoid type errors when constructing terms for postConvert
+       return n;
+     }
+-    // might be a skolem function
+-    Node ns = maybeMkSkolemFun(n);
+-    if (!ns.isNull())
++    if (k == Kind::SKOLEM)
+     {
+-      return ns;
++      // might be a skolem function
++      Node ns = maybeMkSkolemFun(n);
++      if (!ns.isNull())
++      {
++        return ns;
++      }
+     }
+     // Otherwise, it is an uncategorized skolem, must use a fresh variable.
+     // This case will only apply for terms originating from places with no
+@@ -125,6 +128,7 @@ Node AlfNodeConverter::postConvert(Node n)
+     }
+     // A variable x of type T can unambiguously referred to as (eo::var "x" T).
+     // We convert to this representation here, which will often be letified.
++    TypeNode tn = n.getType();
+     std::vector<Node> args;
+     Node nn = d_nm->mkConst(String(sname));
+     args.push_back(nn);
+@@ -142,6 +146,7 @@ Node AlfNodeConverter::postConvert(Node n)
+     // must ensure we print higher-order function applications with "_"
+     if (!n.getOperator().isVar())
+     {
++    TypeNode tn = n.getType();
+       std::vector<Node> args;
+       args.push_back(n.getOperator());
+       args.insert(args.end(), n.begin(), n.end());
+@@ -150,10 +155,12 @@ Node AlfNodeConverter::postConvert(Node n)
+   }
+   else if (k == Kind::HO_APPLY)
+   {
++    TypeNode tn = n.getType();
+     return mkInternalApp("_", {n[0], n[1]}, tn);
+   }
+   else if (n.isClosure())
+   {
++    TypeNode tn = n.getType();
+     Node vl = n[0];
+     // Notice that intentionally we drop annotations here.
+     // Additionally, it is important that we convert the closure to a
+@@ -168,6 +175,7 @@ Node AlfNodeConverter::postConvert(Node n)
+   }
+   else if (k == Kind::STORE_ALL)
+   {
++    TypeNode tn = n.getType();
+     Node t = typeAsNode(tn);
+     ArrayStoreAll storeAll = n.getConst<ArrayStoreAll>();
+     Node val = convert(storeAll.getValue());
+@@ -176,11 +184,13 @@ Node AlfNodeConverter::postConvert(Node n)
+   else if (k == Kind::SET_EMPTY || k == Kind::SET_UNIVERSE
+            || k == Kind::BAG_EMPTY || k == Kind::SEP_NIL)
+   {
++    TypeNode tn = n.getType();
+     Node t = typeAsNode(tn);
+     return mkInternalApp(printer::smt2::Smt2Printer::smtKindString(k), {t}, tn);
+   }
+   else if (k == Kind::SET_INSERT)
+   {
++    TypeNode tn = n.getType();
+     std::vector<Node> iargs(n.begin(), n.begin() + n.getNumChildren() - 1);
+     Node list = mkList(iargs);
+     return mkInternalApp("set.insert", {list, n[n.getNumChildren() - 1]}, tn);
+@@ -189,6 +199,7 @@ Node AlfNodeConverter::postConvert(Node n)
+   {
+     if (n.getConst<Sequence>().empty())
+     {
++      TypeNode tn = n.getType();
+       Node t = typeAsNode(tn);
+       return mkInternalApp("seq.empty", {t}, tn);
+     }
+@@ -198,6 +209,7 @@ Node AlfNodeConverter::postConvert(Node n)
+   }
+   else if (k == Kind::CONST_FINITE_FIELD)
+   {
++    TypeNode tn = n.getType();
+     const FiniteFieldValue& ffv = n.getConst<FiniteFieldValue>();
+     Node v = convert(d_nm->mkConstInt(ffv.getValue()));
+     Node fs = convert(d_nm->mkConstInt(ffv.getFieldSize()));
+@@ -225,6 +237,7 @@ Node AlfNodeConverter::postConvert(Node n)
+     std::vector<Node> newArgs;
+     if (opc.getNumChildren() > 0)
+     {
++      TypeNode tn = n.getType();
+       newArgs.insert(newArgs.end(), opc.begin(), opc.end());
+       newArgs.insert(newArgs.end(), n.begin(), n.end());
+       opc = opc.getOperator();
+@@ -238,6 +251,7 @@ Node AlfNodeConverter::postConvert(Node n)
+   }
+   else if (k == Kind::INDEXED_ROOT_PREDICATE)
+   {
++    TypeNode tn = n.getType();
+     const IndexedRootPredicate& irp =
+         n.getOperator().getConst<IndexedRootPredicate>();
+     std::vector<Node> newArgs;
+@@ -252,6 +266,7 @@ Node AlfNodeConverter::postConvert(Node n)
+            || k == Kind::FLOATINGPOINT_COMPONENT_EXPONENT
+            || k == Kind::FLOATINGPOINT_COMPONENT_SIGNIFICAND)
+   {
++    TypeNode tn = n.getType();
+     // dummy symbol, provide the return type
+     Node tnn = typeAsNode(tn);
+     std::stringstream ss;
+@@ -260,6 +275,7 @@ Node AlfNodeConverter::postConvert(Node n)
+   }
+   else if (k == Kind::SEXPR || k == Kind::BOUND_VAR_LIST)
+   {
++    TypeNode tn = n.getType();
+     // use generic list
+     std::vector<Node> args;
+     args.insert(args.end(), n.begin(), n.end());
+@@ -270,6 +286,7 @@ Node AlfNodeConverter::postConvert(Node n)
+     Kind okind = n.getOperator().getConst<GenericOp>().getKind();
+     if (okind == Kind::FLOATINGPOINT_TO_FP_FROM_IEEE_BV)
+     {
++      TypeNode tn = n.getType();
+       // This does not take a rounding mode, we change the smt2 syntax
+       // to distinguish this case, similar to the case in getOperatorOfTerm
+       // where it is processed as an indexed operator.
+@@ -279,6 +296,7 @@ Node AlfNodeConverter::postConvert(Node n)
+   }
+   else if (GenericOp::isIndexedOperatorKind(k))
+   {
++    TypeNode tn = n.getType();
+     // return app of?
+     std::vector<Node> args =
+         GenericOp::getIndicesForOperator(k, n.getOperator());
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index a9ceb49fa..f0998ef94 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1319,7 +1319,9 @@ set(regress_0_tests
+   regress0/proofs/dd_ada_open.smt2
+   regress0/proofs/dd_bug787_beta_reduce.smt2
+   regress0/proofs/dd_fv-bvl.smt2
++  regress0/proofs/dd_ic_pf_764.smt2
+   regress0/proofs/dd_pf_739.smt2
++  regress0/proofs/dd_spark_nnf_pf.smt2
+   regress0/proofs/define-fun-shadow.smt2
+   regress0/proofs/dsl-cong-eval-cr.smt2
+   regress0/proofs/dsl-no-eval.smt2
+diff --git a/test/regress/cli/regress0/proofs/dd_ic_pf_764.smt2 b/test/regress/cli/regress0/proofs/dd_ic_pf_764.smt2
+new file mode 100644
+index 000000000..ce25a062a
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/dd_ic_pf_764.smt2
+@@ -0,0 +1,6 @@
++; EXPECT: unsat
++(set-logic ALL)
++(declare-const x Bool)
++(declare-const x2 Bool)
++(assert (forall ((e (_ BitVec 32))) (and (not (= (ite (not x2) e (_ bv1 32)) (ite (or x2 x) (_ bv1 32) (_ bv0 32)))) (= (_ bv1 1) ((_ extract 0 0) (bvlshr (_ bv1 7) (ite x (_ bv1 7) (_ bv0 7))))))))
++(check-sat)
+diff --git a/test/regress/cli/regress0/proofs/dd_spark_nnf_pf.smt2 b/test/regress/cli/regress0/proofs/dd_spark_nnf_pf.smt2
+index 16f749a01..d6479f124 100644
+--- a/test/regress/cli/regress0/proofs/dd_spark_nnf_pf.smt2
++++ b/test/regress/cli/regress0/proofs/dd_spark_nnf_pf.smt2
+@@ -8,10 +8,10 @@
+ (declare-fun l (t) o)
+ (declare-datatypes ((u 0)) (((r (r t)))))
+ (declare-datatypes ((f 0)) (((e (c u)))))
+-(declare-datatypes ((s 0)) (((s (c f)))))
+-(declare-datatypes ((s_ 0)) (((s (l s)))))
++(declare-datatypes ((s2 0)) (((s (c f)))))
++(declare-datatypes ((s_ 0)) (((s (l s2)))))
+ (declare-const i7 s_)
+ (declare-fun i (s_) Int)
+ (assert (forall ((v s_)) (or (and (not x5) (or x5 (=> x x5))) (= (i v) (ite (=> x x5) 0 (i (l (r (c (c (l v)))))))))))
+-(assert (exists ((v s)) (and x5 (= 1 (i i7)))))
++(assert (exists ((v s2)) (and x5 (= 1 (i i7)))))
+ (check-sat)
+-- 
+2.47.1
+

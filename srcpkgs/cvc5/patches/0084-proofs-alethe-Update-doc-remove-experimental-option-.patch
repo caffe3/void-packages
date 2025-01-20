@@ -1,0 +1,192 @@
+From ffffb88f81d8126466cbc7f3df79fcab2662098a Mon Sep 17 00:00:00 2001
+From: Haniel Barbosa <hanielbbarbosa@gmail.com>
+Date: Fri, 27 Sep 2024 18:51:27 -0300
+Subject: [PATCH 084/312] [proofs] [alethe] Update doc, remove experimental
+ option (#11210)
+
+---
+ docs/proofs/output_alethe.rst                 | 29 ++++++++-----------
+ src/options/proof_options.toml                |  8 -----
+ src/smt/set_defaults.cpp                      |  8 -----
+ .../proofs/alethe-res-need-or-step.smt2       |  2 +-
+ ...ue9393-optResReconstruction-alethebug.smt2 |  2 +-
+ .../issue9515-alethe-skolems-crash.smt2       |  2 +-
+ ...sue9516-alethe-skolems-undef-in-proof.smt2 |  2 +-
+ .../proofs/issue9531-alethe-resolution.smt2   |  2 +-
+ .../regress0/proofs/nomerge-alethe-pf.smt2    |  2 +-
+ test/regress/cli/run_regression.py            |  5 ++--
+ 10 files changed, 20 insertions(+), 42 deletions(-)
+
+diff --git a/docs/proofs/output_alethe.rst b/docs/proofs/output_alethe.rst
+index ffbb74b47..60c7c7a4e 100644
+--- a/docs/proofs/output_alethe.rst
++++ b/docs/proofs/output_alethe.rst
+@@ -1,32 +1,27 @@
+ Proof format: Alethe
+ ====================
+ 
+-.. warning::
+-
+-    This format is experimental on the main branch of cvc5. To use this
+-    format, the option :ref:`--proof-alethe-experimental
+-    <lbl-option-proof-alethe-experimental>` must be used, or otherwise
+-    an exception is thrown.
+-
+ Using the flag :ref:`proof-format-mode=alethe <lbl-option-proof-format-mode>`,
+ cvc5 outputs proofs in the `Alethe proof format
+-<https://verit.loria.fr/documentation/alethe-spec.pdf>`_. Additonally, the
+-following additional flags are currently required: :ref:`simplification=none
+-<lbl-option-simplification>`, and :ref:`proof-alethe-experimental <lbl-option-proof-alethe-experimental>`.
+-The first requirement is due to not yet supporting proofs with non-detailed steps.
++<https://verit.gitlabpages.uliege.be/alethe/specification.pdf>`_.
+ 
+ The Alethe proof format is a flexible proof format for SMT solvers based on
+ SMT-LIB.  It includes both coarse- and fine-grained steps and was first
+ implemented in the veriT solver :cite:`Bouton2009`.  Alethe proofs can be
+ checked via reconstruction within Isabelle/HOL :cite:`Barbosa2020, Schurr2021`
+ as well as within Coq, the latter via the SMTCoq plugin :cite:`Armand2011,
+-Ekici2017`. There is also a high performance Rust proof checker for Alethe,
+-available `here <https://github.com/ufmg-smite/alethe-proof-checker>`_.
++Ekici2017`. There is also a high performance Rust proof checker and elaborator
++for Alethe: Carcara, available `here
++<https://github.com/ufmg-smite/carcara>`_. For a quick start, the cvc5
++repository contains a :cvc5repo:`script <contrib/get-carcara-checker>` to
++download and install the Carcara checker's version with full support for cvc5
++Alethe proofs, and create scripts for generating proofs with cvc5 and checking
++them with Carcara.
+ 
+-Currently, only the theory of equality with uninterpreted functions, parts of
+-the theory of arithmetic and parts of the theory of quantifiers are supported in
+-cvc5's Alethe proofs.
++Currently, the theories of equality with uninterpreted functions, linear
++arithmetic, bit-vectors and parts of the theory of strings (with or without
++quantifiers) are supported in cvc5's Alethe proofs.
+ 
+ A simple example of cvc5 producing a proof in the Alethe proof format:
+ 
+-.. run-command:: bin/cvc5 --dump-proofs --proof-format-mode=alethe --simplification=none --proof-alethe-experimental ../test/regress/cli/regress0/proofs/qgu-fuzz-1-bool-sat.smt2
++.. run-command:: bin/cvc5 --dump-proofs --proof-format-mode=alethe ../test/regress/cli/regress0/proofs/qgu-fuzz-1-bool-sat.smt2
+diff --git a/src/options/proof_options.toml b/src/options/proof_options.toml
+index 34d9c6fdb..9013c1315 100644
+--- a/src/options/proof_options.toml
++++ b/src/options/proof_options.toml
+@@ -25,14 +25,6 @@ name   = "Proof"
+   name       = "cpc"
+   help       = "Output Cooperating Proof Calculus proof"
+ 
+-[[option]]
+-  name       = "proofAletheExperimental"
+-  category   = "expert"
+-  long       = "proof-alethe-experimental"
+-  type       = "bool"
+-  default    = "false"
+-  help       = "Enable the use of Alethe proofs (experimental)"
+-
+ [[option]]
+   name       = "proofPrintConclusion"
+   category   = "expert"
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index c32c993c0..c4f803490 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -238,14 +238,6 @@ void SetDefaults::setDefaultsPre(Options& opts)
+     // levels
+     if (opts.proof.proofFormatMode == options::ProofFormatMode::ALETHE)
+     {
+-      if (!opts.proof.proofAletheExperimental)
+-      {
+-        std::stringstream ss;
+-        ss << "proof-format=alethe is experimental in this version. If "
+-              "you know what you are doing, you can try --"
+-           << options::proof::longName::proofAletheExperimental;
+-        throw OptionException(ss.str());
+-      }
+       if (opts.proof.proofGranularityMode
+           < options::ProofGranularityMode::THEORY_REWRITE)
+       {
+diff --git a/test/regress/cli/regress0/proofs/alethe-res-need-or-step.smt2 b/test/regress/cli/regress0/proofs/alethe-res-need-or-step.smt2
+index fc45d544b..fa97c7167 100644
+--- a/test/regress/cli/regress0/proofs/alethe-res-need-or-step.smt2
++++ b/test/regress/cli/regress0/proofs/alethe-res-need-or-step.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite --no-proof-alethe-res-pivots --proof-alethe-experimental
++; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite --no-proof-alethe-res-pivots
+ ; EXIT: 0
+ ; SCRUBBER: grep -v -E '.*'
+ (set-logic QF_UF)
+diff --git a/test/regress/cli/regress0/proofs/issue9393-optResReconstruction-alethebug.smt2 b/test/regress/cli/regress0/proofs/issue9393-optResReconstruction-alethebug.smt2
+index 9b88f10a9..13efe85bb 100644
+--- a/test/regress/cli/regress0/proofs/issue9393-optResReconstruction-alethebug.smt2
++++ b/test/regress/cli/regress0/proofs/issue9393-optResReconstruction-alethebug.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite --proof-alethe-res-pivots  --proof-alethe-experimental
++; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite --proof-alethe-res-pivots
+ ; EXIT: 0
+ ; SCRUBBER: grep -v -E '.*'
+ (set-logic QF_UF)
+diff --git a/test/regress/cli/regress0/proofs/issue9515-alethe-skolems-crash.smt2 b/test/regress/cli/regress0/proofs/issue9515-alethe-skolems-crash.smt2
+index 5e05b9000..1b14e50d8 100644
+--- a/test/regress/cli/regress0/proofs/issue9515-alethe-skolems-crash.smt2
++++ b/test/regress/cli/regress0/proofs/issue9515-alethe-skolems-crash.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite --proof-alethe-experimental
++; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite
+ ; EXIT: 0
+ ; SCRUBBER: grep -v -E '.*'
+ (set-logic QF_UF)
+diff --git a/test/regress/cli/regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2 b/test/regress/cli/regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
+index 01782fd8a..4d9ce4294 100644
+--- a/test/regress/cli/regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
++++ b/test/regress/cli/regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite --proof-alethe-experimental
++; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite
+ ; EXIT: 0
+ ; SCRUBBER: grep -v -E '.*'
+ (set-logic QF_UF)
+diff --git a/test/regress/cli/regress0/proofs/issue9531-alethe-resolution.smt2 b/test/regress/cli/regress0/proofs/issue9531-alethe-resolution.smt2
+index f86d7b926..923f20eb0 100644
+--- a/test/regress/cli/regress0/proofs/issue9531-alethe-resolution.smt2
++++ b/test/regress/cli/regress0/proofs/issue9531-alethe-resolution.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --proof-granularity=theory-rewrite --proof-alethe-experimental
++; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --proof-granularity=theory-rewrite
+ ; EXIT: 0
+ ; SCRUBBER: grep -v -E '.*'
+ (set-logic QF_UF)
+diff --git a/test/regress/cli/regress0/proofs/nomerge-alethe-pf.smt2 b/test/regress/cli/regress0/proofs/nomerge-alethe-pf.smt2
+index f0f10397a..ae03cb50b 100644
+--- a/test/regress/cli/regress0/proofs/nomerge-alethe-pf.smt2
++++ b/test/regress/cli/regress0/proofs/nomerge-alethe-pf.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite --proof-alethe-experimental
++; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite
+ ; EXIT: 0
+ ; SCRUBBER: grep -v -E '.*'
+ (set-logic AUFLIA)
+diff --git a/test/regress/cli/run_regression.py b/test/regress/cli/run_regression.py
+index 59120e78d..ca15790d2 100755
+--- a/test/regress/cli/run_regression.py
++++ b/test/regress/cli/run_regression.py
+@@ -277,8 +277,7 @@ class AletheTester(Tester):
+         with tempfile.NamedTemporaryFile(suffix=".smt2.proof") as tmpf:
+             cvc5_args = benchmark_info.command_line_args + [
+                 "--dump-proofs",
+-                "--proof-format=alethe",
+-                "--proof-alethe-experimental"
++                "--proof-format=alethe"
+             ]
+             # remove duplicates
+             cvc5_args = list(dict.fromkeys(cvc5_args))
+@@ -714,7 +713,7 @@ def run_benchmark(benchmark_info):
+     check_result =  check_scrubber(scrubber_error, benchmark_info.scrubber)
+     if check_result != None:
+       return check_result
+-    
++
+     scrubber_error = ""
+     if benchmark_info.error_scrubber:
+         error, scrubber_error, _ = run_process(
+-- 
+2.47.1
+

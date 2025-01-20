@@ -1,0 +1,281 @@
+From 14e8532a397a70fb5fbecd89e41cd1a4776adf88 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 20 Dec 2024 14:30:22 -0600
+Subject: [PATCH 263/312] Make TrustId::THEORY_INFERENCE theory specific
+ (#11425)
+
+This simplifies statistics so that THEORY_INFERENCE is not further
+subcategorized by a theory id. There is no need to do this since there
+is no generic architecture at the moment that uses theory inference in a
+theory-agnostic way.
+
+Instead we introduce specific trust ids for each theory as needed.
+---
+ src/proof/proof_node_to_sexpr.cpp         |  2 +-
+ src/proof/trust_id.cpp                    |  8 +++++++-
+ src/proof/trust_id.h                      | 12 ++++++++++--
+ src/theory/arith/linear/constraint.cpp    |  6 ++----
+ src/theory/arith/pp_rewrite_eq.cpp        |  2 +-
+ src/theory/arrays/inference_manager.cpp   |  4 +---
+ src/theory/datatypes/infer_proof_cons.cpp |  3 +--
+ src/theory/datatypes/infer_proof_cons.h   |  2 --
+ src/theory/sep/theory_sep.cpp             |  3 +--
+ src/theory/sets/infer_proof_cons.cpp      |  3 +--
+ src/theory/sets/infer_proof_cons.h        |  1 -
+ src/theory/sets/inference_manager.cpp     |  2 --
+ src/theory/sets/inference_manager.h       |  2 --
+ src/theory/strings/infer_proof_cons.cpp   | 12 +++++-------
+ 14 files changed, 30 insertions(+), 32 deletions(-)
+
+diff --git a/src/proof/proof_node_to_sexpr.cpp b/src/proof/proof_node_to_sexpr.cpp
+index 0f27923a2..38ab84f70 100644
+--- a/src/proof/proof_node_to_sexpr.cpp
++++ b/src/proof/proof_node_to_sexpr.cpp
+@@ -357,7 +357,7 @@ ProofNodeToSExpr::ArgFormat ProofNodeToSExpr::getArgumentFormat(
+       {
+         TrustId tid;
+         getTrustId(pn->getArguments()[0], tid);
+-        if (tid == TrustId::THEORY_LEMMA || tid == TrustId::THEORY_INFERENCE)
++        if (tid == TrustId::THEORY_LEMMA)
+         {
+           return ArgFormat::THEORY_ID;
+         }
+diff --git a/src/proof/trust_id.cpp b/src/proof/trust_id.cpp
+index 53212222f..5a920c344 100644
+--- a/src/proof/trust_id.cpp
++++ b/src/proof/trust_id.cpp
+@@ -29,7 +29,13 @@ const char* toString(TrustId id)
+     case TrustId::NONE: return "NONE";
+     // core
+     case TrustId::THEORY_LEMMA: return "THEORY_LEMMA";
+-    case TrustId::THEORY_INFERENCE: return "THEORY_INFERENCE";
++    case TrustId::THEORY_INFERENCE_ARITH: return "THEORY_INFERENCE_ARITH";
++    case TrustId::THEORY_INFERENCE_ARRAYS: return "THEORY_INFERENCE_ARRAYS";
++    case TrustId::THEORY_INFERENCE_DATATYPES:
++      return "THEORY_INFERENCE_DATATYPES";
++    case TrustId::THEORY_INFERENCE_SEP: return "THEORY_INFERENCE_SEP";
++    case TrustId::THEORY_INFERENCE_SETS: return "THEORY_INFERENCE_SETS";
++    case TrustId::THEORY_INFERENCE_STRINGS: return "THEORY_INFERENCE_STRINGS";
+     case TrustId::PP_STATIC_REWRITE: return "PP_STATIC_REWRITE";
+     case TrustId::THEORY_PREPROCESS: return "THEORY_PREPROCESS";
+     case TrustId::THEORY_PREPROCESS_LEMMA: return "THEORY_PREPROCESS_LEMMA";
+diff --git a/src/proof/trust_id.h b/src/proof/trust_id.h
+index fa82104a0..6f310900f 100644
+--- a/src/proof/trust_id.h
++++ b/src/proof/trust_id.h
+@@ -30,8 +30,16 @@ enum class TrustId : uint32_t
+   NONE,
+   /** A lemma sent by a theory without a proof */
+   THEORY_LEMMA,
+-  /** An internal inference made by a theory without a proof */
+-  THEORY_INFERENCE,
++  /**
++   * An internal inference made by a theory without a proof. These are split
++   * per theory, and introduced as needed.
++   */
++  THEORY_INFERENCE_ARITH,
++  THEORY_INFERENCE_ARRAYS,
++  THEORY_INFERENCE_DATATYPES,
++  THEORY_INFERENCE_SEP,
++  THEORY_INFERENCE_SETS,
++  THEORY_INFERENCE_STRINGS,
+   /** A ppStaticRewrite step */
+   PP_STATIC_REWRITE,
+   /** A rewrite of the input formula made by a theory during preprocessing
+diff --git a/src/theory/arith/linear/constraint.cpp b/src/theory/arith/linear/constraint.cpp
+index 8285372a3..b92eb8c4b 100644
+--- a/src/theory/arith/linear/constraint.cpp
++++ b/src/theory/arith/linear/constraint.cpp
+@@ -1842,11 +1842,9 @@ std::shared_ptr<ProofNode> Constraint::externalExplain(
+         }
+         case ArithProofType::IntHoleAP:
+         {
+-          Node t =
+-              builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_ARITH);
+-          pf = pnm->mkTrustedNode(TrustId::THEORY_INFERENCE,
++          pf = pnm->mkTrustedNode(TrustId::THEORY_INFERENCE_ARITH,
+                                   children,
+-                                  {getProofLiteral(), t},
++                                  {getProofLiteral()},
+                                   getProofLiteral());
+           break;
+         }
+diff --git a/src/theory/arith/pp_rewrite_eq.cpp b/src/theory/arith/pp_rewrite_eq.cpp
+index d3d312090..e8625c67a 100644
+--- a/src/theory/arith/pp_rewrite_eq.cpp
++++ b/src/theory/arith/pp_rewrite_eq.cpp
+@@ -51,7 +51,7 @@ TrustNode PreprocessRewriteEq::ppRewriteEq(TNode atom)
+         atom,
+         rewritten,
+         d_env.getProofNodeManager()->mkTrustedNode(
+-            TrustId::THEORY_INFERENCE, {}, {}, eq));
++            TrustId::THEORY_INFERENCE_ARITH, {}, {}, eq));
+   }
+   return TrustNode::mkTrustRewrite(atom, rewritten, nullptr);
+ }
+diff --git a/src/theory/arrays/inference_manager.cpp b/src/theory/arrays/inference_manager.cpp
+index 8481ec76b..ee203414a 100644
+--- a/src/theory/arrays/inference_manager.cpp
++++ b/src/theory/arrays/inference_manager.cpp
+@@ -127,10 +127,8 @@ void InferenceManager::convert(ProofRule& id,
+         Assert(false) << "Unknown rule " << id << "\n";
+       }
+       children.push_back(exp);
+-      args.push_back(mkTrustId(nodeManager(), TrustId::THEORY_INFERENCE));
++      args.push_back(mkTrustId(nodeManager(), TrustId::THEORY_INFERENCE_ARRAYS));
+       args.push_back(conc);
+-      args.push_back(
+-          builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_ARRAYS));
+       id = ProofRule::TRUST;
+       break;
+   }
+diff --git a/src/theory/datatypes/infer_proof_cons.cpp b/src/theory/datatypes/infer_proof_cons.cpp
+index 681ea13d3..940d60e7f 100644
+--- a/src/theory/datatypes/infer_proof_cons.cpp
++++ b/src/theory/datatypes/infer_proof_cons.cpp
+@@ -33,7 +33,6 @@ namespace datatypes {
+ InferProofCons::InferProofCons(Env& env, context::Context* c)
+     : EnvObj(env), d_lazyFactMap(c == nullptr ? &d_context : c)
+ {
+-  d_tdid = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_DATATYPES);
+ }
+ 
+ void InferProofCons::notifyFact(const std::shared_ptr<DatatypesInference>& di)
+@@ -372,7 +371,7 @@ void InferProofCons::convert(InferenceId infer, TNode conc, TNode exp, CDProof*
+   {
+     // failed to reconstruct, add trust
+     Trace("dt-ipc") << "...failed " << infer << std::endl;
+-    cdp->addTrustedStep(conc, TrustId::THEORY_INFERENCE, expv, {d_tdid});
++    cdp->addTrustedStep(conc, TrustId::THEORY_INFERENCE_DATATYPES, expv, {});
+   }
+   else
+   {
+diff --git a/src/theory/datatypes/infer_proof_cons.h b/src/theory/datatypes/infer_proof_cons.h
+index bbaf817d2..5e3214991 100644
+--- a/src/theory/datatypes/infer_proof_cons.h
++++ b/src/theory/datatypes/infer_proof_cons.h
+@@ -72,8 +72,6 @@ class InferProofCons : protected EnvObj, public ProofGenerator
+   virtual std::string identify() const override;
+ 
+  private:
+-  /** Common constants */
+-  Node d_tdid;
+   /** convert
+    *
+    * This method is called when the theory of strings makes an inference
+diff --git a/src/theory/sep/theory_sep.cpp b/src/theory/sep/theory_sep.cpp
+index 7306f0062..367c1a6b7 100644
+--- a/src/theory/sep/theory_sep.cpp
++++ b/src/theory/sep/theory_sep.cpp
+@@ -58,8 +58,7 @@ TheorySep::TheorySep(Env& env, OutputChannel& out, Valuation valuation)
+ {
+   d_true = nodeManager()->mkConst<bool>(true);
+   d_false = nodeManager()->mkConst<bool>(false);
+-  d_tiid = mkTrustId(nodeManager(), TrustId::THEORY_INFERENCE);
+-  d_tsid = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_SEP);
++  d_tiid = mkTrustId(nodeManager(), TrustId::THEORY_INFERENCE_SEP);
+ 
+   // indicate we are using the default theory state object
+   d_theoryState = &d_state;
+diff --git a/src/theory/sets/infer_proof_cons.cpp b/src/theory/sets/infer_proof_cons.cpp
+index fea418365..ce2030ff0 100644
+--- a/src/theory/sets/infer_proof_cons.cpp
++++ b/src/theory/sets/infer_proof_cons.cpp
+@@ -34,7 +34,6 @@ InferProofCons::InferProofCons(Env& env, TheorySetsRewriter* tsr)
+       d_expMap(context())
+ {
+   d_false = nodeManager()->mkConst(false);
+-  d_tid = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_SETS);
+ }
+ 
+ void InferProofCons::notifyFact(const Node& conc,
+@@ -120,7 +119,7 @@ std::shared_ptr<ProofNode> InferProofCons::getProofFor(Node fact)
+   // Try to convert.
+   if (!convert(cdp, id, assumps, conc))
+   {
+-    cdp.addTrustedStep(conc, TrustId::THEORY_INFERENCE, assumps, {d_tid});
++    cdp.addTrustedStep(conc, TrustId::THEORY_INFERENCE_SETS, assumps, {});
+   }
+   return cdp.getProofFor(fact);
+ }
+diff --git a/src/theory/sets/infer_proof_cons.h b/src/theory/sets/infer_proof_cons.h
+index 14ef8b00f..c5c484dca 100644
+--- a/src/theory/sets/infer_proof_cons.h
++++ b/src/theory/sets/infer_proof_cons.h
+@@ -94,7 +94,6 @@ class InferProofCons : protected EnvObj, public ProofGenerator
+   /** The sets rewriter */
+   TheorySetsRewriter* d_tsr;
+   /** Common constants */
+-  Node d_tid;
+   Node d_false;
+   /**
+    * Maps lemma formulas to the inference id they were notified with. This is
+diff --git a/src/theory/sets/inference_manager.cpp b/src/theory/sets/inference_manager.cpp
+index 49cbdf41f..c5b9eccd5 100644
+--- a/src/theory/sets/inference_manager.cpp
++++ b/src/theory/sets/inference_manager.cpp
+@@ -37,8 +37,6 @@ InferenceManager::InferenceManager(Env& env,
+ {
+   d_true = nodeManager()->mkConst(true);
+   d_false = nodeManager()->mkConst(false);
+-  d_tid = mkTrustId(nodeManager(), TrustId::THEORY_INFERENCE);
+-  d_tsid = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_SETS);
+ }
+ 
+ bool InferenceManager::assertFactRec(Node fact, InferenceId id, Node exp, int inferType)
+diff --git a/src/theory/sets/inference_manager.h b/src/theory/sets/inference_manager.h
+index e5f8f3bba..703f5e956 100644
+--- a/src/theory/sets/inference_manager.h
++++ b/src/theory/sets/inference_manager.h
+@@ -92,8 +92,6 @@ class InferenceManager : public InferenceManagerBuffered
+   /** constants */
+   Node d_true;
+   Node d_false;
+-  Node d_tid;
+-  Node d_tsid;
+   /**
+    * Reference to the state object for the theory of sets. We store the
+    * (derived) state here, since it has additional methods required in this
+diff --git a/src/theory/strings/infer_proof_cons.cpp b/src/theory/strings/infer_proof_cons.cpp
+index b3aa955c4..0ac030ff0 100644
+--- a/src/theory/strings/infer_proof_cons.cpp
++++ b/src/theory/strings/infer_proof_cons.cpp
+@@ -705,7 +705,7 @@ void InferProofCons::convert(InferenceId infer,
+       if (conc.getKind() != Kind::OR)
+       {
+         // This should never happen. If it does, we resort to using
+-        // THEORY_INFERENCE below (in production mode).
++        // THEORY_INFERENCE_STRINGS below (in production mode).
+         Assert(false) << "Expected OR conclusion for " << infer;
+       }
+       else
+@@ -1074,8 +1074,8 @@ void InferProofCons::convert(InferenceId infer,
+     case InferenceId::STRINGS_CTN_TRANS:
+     case InferenceId::STRINGS_CTN_DECOMPOSE:
+     default:
+-      // do nothing, these will be converted to THEORY_INFERENCE below since the
+-      // rule is unknown.
++      // do nothing, these will be converted to THEORY_INFERENCE_STRINGS below
++      // since the rule is unknown.
+       break;
+   }
+ 
+@@ -1123,13 +1123,11 @@ void InferProofCons::convert(InferenceId infer,
+         Trace("strings-ipc-fail") << "    e: " << ec << std::endl;
+       }
+     }
+-    // untrustworthy conversion, the argument of THEORY_INFERENCE is its
++    // untrustworthy conversion, the argument of THEORY_INFERENCE_STRINGS is its
+     // conclusion
+     ps.d_args.clear();
+-    ps.d_args.push_back(mkTrustId(nm, TrustId::THEORY_INFERENCE));
++    ps.d_args.push_back(mkTrustId(nm, TrustId::THEORY_INFERENCE_STRINGS));
+     ps.d_args.push_back(conc);
+-    Node t = builtin::BuiltinProofRuleChecker::mkTheoryIdNode(THEORY_STRINGS);
+-    ps.d_args.push_back(t);
+     // use the trust rule
+     ps.d_rule = ProofRule::TRUST;
+   }
+-- 
+2.47.1
+

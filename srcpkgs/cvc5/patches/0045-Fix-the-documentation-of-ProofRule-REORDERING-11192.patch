@@ -1,0 +1,32 @@
+From dd96e4e3558a0ded6d54946da8bac7fb1328c6b7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Hans-J=C3=B6rg?= <hansjoergschurr@users.noreply.github.com>
+Date: Thu, 5 Sep 2024 10:00:26 -0500
+Subject: [PATCH 045/312] Fix the documentation of ProofRule::REORDERING
+ (#11192)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The old documentation would all the rule to change the clause a ∨ b ∨ b
+into the clause a ∨ a ∨ b. This is more than reordering.
+---
+ include/cvc5/cvc5_proof_rule.h | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 3ad2ad17b..03405d99f 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -489,8 +489,7 @@ enum ENUM(ProofRule)
+    *   \inferrule{C_1 \mid C_2}{C_2}
+    *
+    * where
+-   * the set representations of :math:`C_1` and :math:`C_2` are the same and the
+-   * number of literals in :math:`C_2` is the same of that of :math:`C_1`.
++   * the multiset representations of :math:`C_1` and :math:`C_2` are the same.
+    * \endverbatim
+    */
+   EVALUE(REORDERING),
+-- 
+2.47.1
+

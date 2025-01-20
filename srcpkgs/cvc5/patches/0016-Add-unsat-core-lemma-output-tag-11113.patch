@@ -1,0 +1,828 @@
+From 279b9c2c571fa01e4f47e2dc921b2bf2634b4700 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 12 Aug 2024 11:39:00 -0500
+Subject: [PATCH 016/312] Add unsat core lemma output tag (#11113)
+
+Allows one to see the inference id associated with a theory lemma that
+appears in an unsat core.
+
+This PR also removes a previous (more complicated) way of achieving this
+functionality (--proof-annotate).
+---
+ include/cvc5/cvc5_proof_rule.h              |  12 ---
+ src/CMakeLists.txt                          |   4 -
+ src/api/cpp/cvc5_proof_rule_template.cpp    |   1 -
+ src/options/base_options.toml               |   5 +
+ src/options/proof_options.toml              |   8 --
+ src/proof/annotation_proof_generator.cpp    |  87 -----------------
+ src/proof/annotation_proof_generator.h      | 102 --------------------
+ src/proof/proof_node_to_sexpr.cpp           |   6 --
+ src/prop/prop_engine.cpp                    |  22 ++++-
+ src/prop/prop_proof_manager.cpp             |  22 +++++
+ src/prop/prop_proof_manager.h               |  14 +++
+ src/smt/proof_final_callback.cpp            |  22 -----
+ src/smt/proof_final_callback.h              |   5 -
+ src/theory/builtin/proof_checker.cpp        |   6 --
+ src/theory/inference_id_proof_annotator.cpp |  55 -----------
+ src/theory/inference_id_proof_annotator.h   |  64 ------------
+ src/theory/theory_inference_manager.cpp     |  45 +--------
+ src/theory/theory_inference_manager.h       |  14 ---
+ 18 files changed, 63 insertions(+), 431 deletions(-)
+ delete mode 100644 src/proof/annotation_proof_generator.cpp
+ delete mode 100644 src/proof/annotation_proof_generator.h
+ delete mode 100644 src/theory/inference_id_proof_annotator.cpp
+ delete mode 100644 src/theory/inference_id_proof_annotator.h
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 77169eb62..3ad2ad17b 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -338,18 +338,6 @@ enum ENUM(ProofRule)
+    * \endverbatim
+    */
+   EVALUE(THEORY_REWRITE),
+-  /**
+-   * \verbatim embed:rst:leading-asterisk
+-   * **Builtin theory -- Annotation**
+-   *
+-   * .. math::
+-   *   \inferrule{F \mid a_1 \dots a_n}{F}
+-   *
+-   * The terms :math:`a_1 \dots a_n` can be anything used to annotate the proof
+-   * node, one example is where :math:`a_1` is a theory::InferenceId.
+-   * \endverbatim
+-   */
+-  EVALUE(ANNOTATION),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Processing rules -- If-then-else equivalence**
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 98e8224c7..c35dcd5c7 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -158,8 +158,6 @@ libcvc5_add_sources(
+   proof/alf/alf_print_channel.h
+   proof/alf/alf_printer.cpp
+   proof/alf/alf_printer.h
+-  proof/annotation_proof_generator.cpp
+-  proof/annotation_proof_generator.h
+   proof/assumption_proof_generator.cpp
+   proof/assumption_proof_generator.h
+   proof/buffered_proof_generator.cpp
+@@ -759,8 +757,6 @@ libcvc5_add_sources(
+   theory/incomplete_id.h
+   theory/inference_id.cpp
+   theory/inference_id.h
+-  theory/inference_id_proof_annotator.cpp
+-  theory/inference_id_proof_annotator.h
+   theory/inference_manager_buffered.cpp
+   theory/inference_manager_buffered.h
+   theory/lemma_property.cpp
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index 68f1764bd..d4a5f7bce 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -35,7 +35,6 @@ const char* toString(ProofRule rule)
+     case ProofRule::MACRO_SR_PRED_ELIM: return "MACRO_SR_PRED_ELIM";
+     case ProofRule::MACRO_SR_PRED_TRANSFORM: return "MACRO_SR_PRED_TRANSFORM";
+     case ProofRule::ENCODE_EQ_INTRO: return "ENCODE_EQ_INTRO";
+-    case ProofRule::ANNOTATION: return "ANNOTATION";
+     case ProofRule::DSL_REWRITE: return "DSL_REWRITE";
+     case ProofRule::THEORY_REWRITE: return "THEORY_REWRITE";
+     case ProofRule::ITE_EQ: return "ITE_EQ";
+diff --git a/src/options/base_options.toml b/src/options/base_options.toml
+index dad796b81..49768ecea 100644
+--- a/src/options/base_options.toml
++++ b/src/options/base_options.toml
+@@ -250,6 +250,11 @@ name   = "Base"
+   help = "print the corresponding benchmark when successfully computing an unsat core with theory lemmas."
+   description = "With ``-o unsat-core-lemmas-benchmark``, cvc5 prints the corresponding benchmark when it successfully computes an unsat core that includes the theory lemmas used."
+   example-file = "regress0/printer/print_unsat_core_lemmas.smt2"
++[[option.mode.UNSAT_CORE_LEMMAS]]
++  name = "unsat-core-lemmas"
++  help = "print diagnostic information on lemmas that appear in an unsat core with theory lemmas"
++  description = "With ``-o unsat-core-lemmas``, cvc5 prints diagnostic information on lemmas that appear in an unsat core with theory lemmas."
++  example-file = "regress0/printer/print_unsat_core_lemmas.smt2"
+ [[option.mode.PORTFOLIO]]
+   name = "portfolio"
+   help = "prints the option strings tried in portfolio mode."
+diff --git a/src/options/proof_options.toml b/src/options/proof_options.toml
+index e545e6fc0..34d9c6fdb 100644
+--- a/src/options/proof_options.toml
++++ b/src/options/proof_options.toml
+@@ -135,14 +135,6 @@ name   = "Proof"
+   default    = "1000"
+   help       = "the limit of steps considered for reconstructing proofs of theory rewrites"
+ 
+-[[option]]
+-  name       = "proofAnnotate"
+-  category   = "expert"
+-  long       = "proof-annotate"
+-  type       = "bool"
+-  default    = "false"
+-  help       = "add optional annotations to proofs, which enables statistics for inference ids for lemmas and conflicts appearing in final proof"
+-
+ [[option]]
+   name       = "optResReconSize"
+   category   = "regular"
+diff --git a/src/proof/annotation_proof_generator.cpp b/src/proof/annotation_proof_generator.cpp
+deleted file mode 100644
+index 245273d85..000000000
+--- a/src/proof/annotation_proof_generator.cpp
++++ /dev/null
+@@ -1,87 +0,0 @@
+-/******************************************************************************
+- * Top contributors (to current version):
+- *   Andrew Reynolds
+- *
+- * This file is part of the cvc5 project.
+- *
+- * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+- * in the top-level source directory and their institutional affiliations.
+- * All rights reserved.  See the file COPYING in the top-level source
+- * directory for licensing information.
+- * ****************************************************************************
+- *
+- * Implementation of the annotation proof generator class.
+- */
+-
+-#include "proof/annotation_proof_generator.h"
+-
+-#include "proof/proof.h"
+-#include "proof/proof_node.h"
+-#include "proof/proof_node_manager.h"
+-
+-namespace cvc5::internal {
+-
+-AnnotationProofGenerator::AnnotationProofGenerator(ProofNodeManager* pnm,
+-                                                   context::Context* c,
+-                                                   std::string name)
+-    : d_pnm(pnm),
+-      d_name(name),
+-      d_exps(c == nullptr ? &d_context : c),
+-      d_proofs(c == nullptr ? &d_context : c)
+-{
+-}
+-
+-void AnnotationProofGenerator::setExplanationFor(Node f,
+-                                                 ProofGenerator* pg,
+-                                                 Annotator* a)
+-{
+-  Assert(pg != nullptr);
+-  d_exps[f] = std::pair<ProofGenerator*, Annotator*>(pg, a);
+-}
+-
+-std::shared_ptr<ProofNode> AnnotationProofGenerator::getProofFor(Node f)
+-{
+-  // is the proof already cached?
+-  NodeProofNodeMap::iterator it = d_proofs.find(f);
+-  if (it != d_proofs.end())
+-  {
+-    return (*it).second;
+-  }
+-  // make it into an actual proof now
+-  NodeExpMap::iterator itx = d_exps.find(f);
+-  if (itx == d_exps.end())
+-  {
+-    return nullptr;
+-  }
+-  // get the proof from the proof generator
+-  std::shared_ptr<ProofNode> pf = itx->second.first->getProofFor(f);
+-  if (pf == nullptr)
+-  {
+-    d_proofs[f] = nullptr;
+-    return nullptr;
+-  }
+-  // now anntoate it if an annotator was provided
+-  std::shared_ptr<ProofNode> pfa = pf;
+-  if (itx->second.second != nullptr)
+-  {
+-    pfa = itx->second.second->annotate(pf);
+-  }
+-  d_proofs[f] = pfa;
+-  return pfa;
+-}
+-
+-TrustNode AnnotationProofGenerator::transform(const TrustNode& trn,
+-                                              Annotator* a)
+-{
+-  setExplanationFor(trn.getProven(), trn.getGenerator(), a);
+-  return TrustNode::mkReplaceGenTrustNode(trn, this);
+-}
+-
+-bool AnnotationProofGenerator::hasProofFor(Node f)
+-{
+-  return d_exps.find(f) != d_exps.end();
+-}
+-
+-std::string AnnotationProofGenerator::identify() const { return d_name; }
+-
+-}  // namespace cvc5::internal
+diff --git a/src/proof/annotation_proof_generator.h b/src/proof/annotation_proof_generator.h
+deleted file mode 100644
+index 901fa5071..000000000
+--- a/src/proof/annotation_proof_generator.h
++++ /dev/null
+@@ -1,102 +0,0 @@
+-/******************************************************************************
+- * Top contributors (to current version):
+- *   Andrew Reynolds
+- *
+- * This file is part of the cvc5 project.
+- *
+- * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+- * in the top-level source directory and their institutional affiliations.
+- * All rights reserved.  See the file COPYING in the top-level source
+- * directory for licensing information.
+- * ****************************************************************************
+- *
+- * The annotation proof generator class.
+- */
+-
+-#include "cvc5_private.h"
+-
+-#ifndef CVC5__PROOF__ANNOTATION_PROOF_GENERATOR_H
+-#define CVC5__PROOF__ANNOTATION_PROOF_GENERATOR_H
+-
+-#include "context/cdhashmap.h"
+-#include "expr/node.h"
+-#include "proof/proof_generator.h"
+-#include "proof/trust_node.h"
+-
+-namespace cvc5::internal {
+-
+-class ProofNodeManager;
+-
+-/**
+- * Base class for annotators. An annotator is a utility that implements a
+- * simple transformation on proofs: `annotate` below.
+- */
+-class Annotator
+-{
+- public:
+-  Annotator() {}
+-  virtual ~Annotator() {}
+-  /**
+-   * Annotate the proof node. This must return a proof node that concludes the
+-   * same thing as p.
+-   */
+-  virtual std::shared_ptr<ProofNode> annotate(std::shared_ptr<ProofNode> p) = 0;
+-};
+-
+-/**
+- * Annotation proof generator, used to "wrap" proofs of other proof generators
+- * via the annotate method above.
+- */
+-class AnnotationProofGenerator : public ProofGenerator
+-{
+-  typedef context::CDHashMap<Node, std::pair<ProofGenerator*, Annotator*>>
+-      NodeExpMap;
+-  typedef context::CDHashMap<Node, std::shared_ptr<ProofNode>> NodeProofNodeMap;
+-
+- public:
+-  AnnotationProofGenerator(ProofNodeManager* pnm,
+-                           context::Context* c = nullptr,
+-                           std::string name = "AnnotationProofGenerator");
+-  ~AnnotationProofGenerator() {}
+-  /** Get the proof for formula f. */
+-  std::shared_ptr<ProofNode> getProofFor(Node f) override;
+-  /** Can we give the proof for formula f? */
+-  bool hasProofFor(Node f) override;
+-  /**
+-   * Set explanation for fact f, called when pg has a proof for f.
+-   *
+-   * @param f The fact proven by pg,
+-   * @param pg The proof generator that can prove f.
+-   * @param a The annotator that will annotate the proof of f, if necessary.
+-   */
+-  void setExplanationFor(Node f, ProofGenerator* pg, Annotator* a);
+-  /**
+-   * Transform trust node, will be annotated by the given annotator.
+-   */
+-  TrustNode transform(const TrustNode& trn, Annotator* a);
+-  /** identify */
+-  std::string identify() const override;
+-
+- protected:
+-  /** The proof node manager */
+-  ProofNodeManager* d_pnm;
+-  /** Name identifier */
+-  std::string d_name;
+-  /** A dummy context used by this class if none is provided */
+-  context::Context d_context;
+-  /**
+-   * A context-dependent map from formulas to a generator + annotation
+-   * pair, which will be used to generate the proof of formulas if asked.
+-   * We use the context provided to this class or otherwise d_context above.
+-   */
+-  NodeExpMap d_exps;
+-  /**
+-   * A context-dependent map from formulas to the proof nodes we have
+-   * returned in calls to getProofFor.
+-   */
+-  NodeProofNodeMap d_proofs;
+-};
+-
+-}  // namespace cvc5::internal
+-
+-#endif /* CVC5__PROOF__ANNOTATION_PROOF_GENERATOR_H */
+diff --git a/src/proof/proof_node_to_sexpr.cpp b/src/proof/proof_node_to_sexpr.cpp
+index 153ffe8cd..c3961c3bd 100644
+--- a/src/proof/proof_node_to_sexpr.cpp
++++ b/src/proof/proof_node_to_sexpr.cpp
+@@ -347,12 +347,6 @@ ProofNodeToSExpr::ArgFormat ProofNodeToSExpr::getArgumentFormat(
+       }
+     }
+     break;
+-    case ProofRule::ANNOTATION:
+-      if (i == 0)
+-      {
+-        return ArgFormat::INFERENCE_ID;
+-      }
+-      break;
+     case ProofRule::TRUST:
+     {
+       if (i == 0)
+diff --git a/src/prop/prop_engine.cpp b/src/prop/prop_engine.cpp
+index afbbcb735..79cd33da9 100644
+--- a/src/prop/prop_engine.cpp
++++ b/src/prop/prop_engine.cpp
+@@ -773,7 +773,27 @@ void PropEngine::getUnsatCore(std::vector<Node>& core)
+ std::vector<Node> PropEngine::getUnsatCoreLemmas()
+ {
+   Assert(d_env.isSatProofProducing());
+-  return d_ppm->getUnsatCoreLemmas();
++  std::vector<Node> lems = d_ppm->getUnsatCoreLemmas();
++  if (isOutputOn(OutputTag::UNSAT_CORE_LEMMAS))
++  {
++    output(OutputTag::UNSAT_CORE_LEMMAS)
++        << ";; unsat core lemmas start" << std::endl;
++    for (const Node& lem : lems)
++    {
++      output(OutputTag::UNSAT_CORE_LEMMAS) << "(unsat-core-lemma ";
++      output(OutputTag::UNSAT_CORE_LEMMAS)
++          << SkolemManager::getOriginalForm(lem);
++      theory::InferenceId id = d_ppm->getInferenceIdFor(lem);
++      if (id != theory::InferenceId::NONE)
++      {
++        output(OutputTag::UNSAT_CORE_LEMMAS) << " :source " << id;
++      }
++      output(OutputTag::UNSAT_CORE_LEMMAS) << ")" << std::endl;
++    }
++    output(OutputTag::UNSAT_CORE_LEMMAS)
++        << ";; unsat core lemmas end" << std::endl;
++  }
++  return lems;
+ }
+ 
+ std::vector<Node> PropEngine::getLearnedZeroLevelLiterals(
+diff --git a/src/prop/prop_proof_manager.cpp b/src/prop/prop_proof_manager.cpp
+index 532ca8f7a..0dfe66cb1 100644
+--- a/src/prop/prop_proof_manager.cpp
++++ b/src/prop/prop_proof_manager.cpp
+@@ -16,6 +16,7 @@
+ #include "prop/prop_proof_manager.h"
+ 
+ #include "expr/skolem_manager.h"
++#include "options/base_options.h"
+ #include "options/main_options.h"
+ #include "printer/printer.h"
+ #include "proof/proof_ensure_closed.h"
+@@ -63,6 +64,9 @@ PropPfManager::PropPfManager(Env& env,
+       d_assumptions(assumptions),
+       d_inputClauses(userContext()),
+       d_lemmaClauses(userContext()),
++      d_trackLemmaClauseIds(false),
++      d_lemmaClauseIds(userContext()),
++      d_currLemmaId(theory::InferenceId::NONE),
+       d_satPm(nullptr)
+ {
+   // add trivial assumption. This is so that we can check the that the prop
+@@ -72,6 +76,7 @@ PropPfManager::PropPfManager(Env& env,
+   // literal), which leads to adding True as its explanation, since for creating
+   // a learned clause we need at least two literals.
+   d_assertions.push_back(nodeManager()->mkConst(true));
++  d_trackLemmaClauseIds = isOutputOn(OutputTag::UNSAT_CORE_LEMMAS);
+ }
+ 
+ void PropPfManager::ensureLiteral(TNode n) { d_pfCnfStream.ensureLiteral(n); }
+@@ -83,7 +88,9 @@ void PropPfManager::convertAndAssert(theory::InferenceId id,
+                                      bool input,
+                                      ProofGenerator* pg)
+ {
++  d_currLemmaId = id;
+   d_pfCnfStream.convertAndAssert(node, negated, removable, input, pg);
++  d_currLemmaId = theory::InferenceId::NONE;
+   // if input, register the assertion in the proof manager
+   if (input)
+   {
+@@ -139,6 +146,17 @@ std::vector<Node> PropPfManager::getUnsatCoreLemmas()
+   return usedLemmas;
+ }
+ 
++theory::InferenceId PropPfManager::getInferenceIdFor(const Node& lem) const
++{
++  context::CDHashMap<Node, theory::InferenceId>::const_iterator it =
++      d_lemmaClauseIds.find(lem);
++  if (it != d_lemmaClauseIds.end())
++  {
++    return it->second;
++  }
++  return theory::InferenceId::NONE;
++}
++
+ std::vector<Node> PropPfManager::getMinimizedAssumptions()
+ {
+   std::vector<Node> minAssumptions;
+@@ -444,6 +462,10 @@ Node PropPfManager::normalizeAndRegister(TNode clauseNode,
+   else
+   {
+     d_lemmaClauses.insert(normClauseNode);
++    if (d_trackLemmaClauseIds)
++    {
++      d_lemmaClauseIds[normClauseNode] = d_currLemmaId;
++    }
+   }
+   if (d_satPm)
+   {
+diff --git a/src/prop/prop_proof_manager.h b/src/prop/prop_proof_manager.h
+index 4fb35369d..04703735f 100644
+--- a/src/prop/prop_proof_manager.h
++++ b/src/prop/prop_proof_manager.h
+@@ -118,6 +118,14 @@ class PropPfManager : protected EnvObj
+   /** Return lemmas used in the SAT proof. */
+   std::vector<Node> getUnsatCoreLemmas();
+ 
++  /**
++   * Get inference id for a lemma, e.g. one that appears in the return of
++   * getUnsatCoreLemmas. Note that the inference id will be InferenceId::NONE
++   * if lem is not an unsat core lemma, or if it corresponded e.g. to a lemma
++   * learned via theory propagation.
++   */
++  theory::InferenceId getInferenceIdFor(const Node& lem) const;
++
+   /**
+    * Checks that the prop engine proof is closed w.r.t. the given assertions and
+    * previously registered assertions in d_assertions.
+@@ -270,6 +278,12 @@ class PropPfManager : protected EnvObj
+   context::CDHashSet<Node> d_inputClauses;
+   /** Asserted clauses derived from lemmas */
+   context::CDHashSet<Node> d_lemmaClauses;
++  /** Are we tracking inference identifiers? */
++  bool d_trackLemmaClauseIds;
++  /** Mapping lemma clauses to inference identifiers */
++  context::CDHashMap<Node, theory::InferenceId> d_lemmaClauseIds;
++  /** The current identifier */
++  theory::InferenceId d_currLemmaId;
+   /** The current propagation being processed via this class. */
+   Node d_currPropagationProcessed;
+   /** Temporary, pointer to SAT proof manager */
+diff --git a/src/smt/proof_final_callback.cpp b/src/smt/proof_final_callback.cpp
+index 3f112032e..85fa6a83e 100644
+--- a/src/smt/proof_final_callback.cpp
++++ b/src/smt/proof_final_callback.cpp
+@@ -39,9 +39,6 @@ ProofFinalCallback::ProofFinalCallback(Env& env)
+           "finalProof::ruleCount")),
+       d_instRuleIds(statisticsRegistry().registerHistogram<theory::InferenceId>(
+           "finalProof::instRuleId")),
+-      d_annotationRuleIds(
+-          statisticsRegistry().registerHistogram<theory::InferenceId>(
+-              "finalProof::annotationRuleId")),
+       d_dslRuleCount(statisticsRegistry().registerHistogram<ProofRewriteRule>(
+           "finalProof::dslRuleCount")),
+       d_theoryRewriteRuleCount(
+@@ -132,25 +129,6 @@ bool ProofFinalCallback::shouldUpdate(std::shared_ptr<ProofNode> pn,
+       }
+     }
+   }
+-  else if (r == ProofRule::ANNOTATION)
+-  {
+-    // we currently assume the annotation is a single inference id
+-    const std::vector<Node>& args = pn->getArguments();
+-    if (args.size() > 0)
+-    {
+-      InferenceId id;
+-      if (getInferenceId(args[0], id))
+-      {
+-        d_annotationRuleIds << id;
+-        // Use e.g. `--check-proofs --proof-annotate -t im-pf` to see a list of
+-        // inference that appear in the final proof.
+-        Trace("im-pf") << "(inference-pf " << id << " " << pn->getResult()
+-                       << ")" << std::endl;
+-        Trace("im-pf-assert")
+-            << "(assert " << pn->getResult() << ") ; " << id << std::endl;
+-      }
+-    }
+-  }
+   else if (r == ProofRule::TRUST)
+   {
+     TrustId id;
+diff --git a/src/smt/proof_final_callback.h b/src/smt/proof_final_callback.h
+index 8dd714d6d..b370f726f 100644
+--- a/src/smt/proof_final_callback.h
++++ b/src/smt/proof_final_callback.h
+@@ -58,11 +58,6 @@ class ProofFinalCallback : protected EnvObj, public ProofNodeUpdaterCallback
+    * marked with the given inference id.
+    */
+   HistogramStat<theory::InferenceId> d_instRuleIds;
+-  /**
+-   * Counts number of postprocessed proof nodes of rule ANNOTATION that were
+-   * marked with the given inference id.
+-   */
+-  HistogramStat<theory::InferenceId> d_annotationRuleIds;
+   /**
+    * Counts number of postprocessed proof nodes for each kind of DSL proof rule
+    */
+diff --git a/src/theory/builtin/proof_checker.cpp b/src/theory/builtin/proof_checker.cpp
+index b1f23bd6c..a7ba5b28d 100644
+--- a/src/theory/builtin/proof_checker.cpp
++++ b/src/theory/builtin/proof_checker.cpp
+@@ -49,7 +49,6 @@ void BuiltinProofRuleChecker::registerTo(ProofChecker* pc)
+   pc->registerChecker(ProofRule::SUBS, this);
+   pc->registerChecker(ProofRule::EVALUATE, this);
+   pc->registerChecker(ProofRule::ACI_NORM, this);
+-  pc->registerChecker(ProofRule::ANNOTATION, this);
+   pc->registerChecker(ProofRule::ITE_EQ, this);
+   pc->registerChecker(ProofRule::ENCODE_EQ_INTRO, this);
+   pc->registerChecker(ProofRule::DSL_REWRITE, this);
+@@ -426,11 +425,6 @@ Node BuiltinProofRuleChecker::checkInternal(ProofRule id,
+     Node ac = rconv.postConvert(args[0]);
+     return args[0].eqNode(ac);
+   }
+-  else if (id == ProofRule::ANNOTATION)
+-  {
+-    Assert(children.size() == 1);
+-    return children[0];
+-  }
+   else if (id == ProofRule::DSL_REWRITE)
+   {
+     // consult rewrite db, apply args[1]...args[n] as a substitution
+diff --git a/src/theory/inference_id_proof_annotator.cpp b/src/theory/inference_id_proof_annotator.cpp
+deleted file mode 100644
+index 98c7c5be4..000000000
+--- a/src/theory/inference_id_proof_annotator.cpp
++++ /dev/null
+@@ -1,55 +0,0 @@
+-/******************************************************************************
+- * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr
+- *
+- * This file is part of the cvc5 project.
+- *
+- * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+- * in the top-level source directory and their institutional affiliations.
+- * All rights reserved.  See the file COPYING in the top-level source
+- * directory for licensing information.
+- * ****************************************************************************
+- *
+- * The inference id annotator class.
+- */
+-
+-#include "theory/inference_id_proof_annotator.h"
+-
+-#include "proof/proof_node.h"
+-#include "proof/proof_node_manager.h"
+-
+-namespace cvc5::internal {
+-namespace theory {
+-
+-InferenceIdProofAnnotator::InferenceIdProofAnnotator(ProofNodeManager* pnm,
+-                                                     context::Context* c)
+-    : d_pnm(pnm), d_ids(c), d_list(c)
+-{
+-}
+-void InferenceIdProofAnnotator::setAnnotation(Node f, InferenceId id)
+-{
+-  d_ids[f] = id;
+-}
+-
+-std::shared_ptr<ProofNode> InferenceIdProofAnnotator::annotate(
+-    std::shared_ptr<ProofNode> p)
+-{
+-  Node f = p->getResult();
+-  NodeInferenceIdMap::iterator it = d_ids.find(f);
+-  if (it != d_ids.end())
+-  {
+-    std::vector<Node> pfArgs;
+-    pfArgs.push_back(mkInferenceIdNode(it->second));
+-    std::shared_ptr<ProofNode> pa =
+-        d_pnm->mkNode(ProofRule::ANNOTATION, {p}, pfArgs);
+-    // for now, do a double annotation to make stats accurate
+-    std::shared_ptr<ProofNode> paf =
+-        d_pnm->mkNode(ProofRule::ANNOTATION, {pa}, {});
+-    d_list.push_back(paf);
+-    return paf;
+-  }
+-  return p;
+-}
+-
+-}  // namespace theory
+-}  // namespace cvc5::internal
+diff --git a/src/theory/inference_id_proof_annotator.h b/src/theory/inference_id_proof_annotator.h
+deleted file mode 100644
+index e40c10992..000000000
+--- a/src/theory/inference_id_proof_annotator.h
++++ /dev/null
+@@ -1,64 +0,0 @@
+-/******************************************************************************
+- * Top contributors (to current version):
+- *   Andrew Reynolds
+- *
+- * This file is part of the cvc5 project.
+- *
+- * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
+- * in the top-level source directory and their institutional affiliations.
+- * All rights reserved.  See the file COPYING in the top-level source
+- * directory for licensing information.
+- * ****************************************************************************
+- *
+- * The inference id annotator class.
+- */
+-
+-#include "cvc5_private.h"
+-
+-#ifndef CVC5__THEORY__INFERENCE_ID_PROOF_ANNOTATOR_H
+-#define CVC5__THEORY__INFERENCE_ID_PROOF_ANNOTATOR_H
+-
+-#include "context/cdhashmap.h"
+-#include "context/cdlist.h"
+-#include "expr/node.h"
+-#include "proof/annotation_proof_generator.h"
+-#include "theory/inference_id.h"
+-
+-namespace cvc5::internal {
+-namespace theory {
+-
+-/** A class that tracks formulas to inference id annotations */
+-class InferenceIdProofAnnotator : public Annotator
+-{
+-  typedef context::CDHashMap<Node, InferenceId> NodeInferenceIdMap;
+-  typedef context::CDList<std::shared_ptr<ProofNode>> ProofNodeList;
+-
+- public:
+-  InferenceIdProofAnnotator(ProofNodeManager* pnm, context::Context* c);
+-  /** Set annotation, that formula f should be annotated by id */
+-  void setAnnotation(Node f, InferenceId id);
+-  /**
+-   * Annotate the proof node with the appropriate inference ID. Given proof
+-   * P proving F that was generated as a lemma with inference id `i`, this
+-   * returns (ANNOTATION (ANNOTATION P : args i)). The outer ANNOTATION is
+-   * used since commonly a proof node is "linked" into another, where its
+-   * children and rule are copied into another. Using ANNOTATION (with no
+-   * arguments) ensures the top-most ANNOTATION may be linked/copied
+-   * multiple times; however its child (which counts `i`) will only appear
+-   * once in the final proof.
+-   */
+-  std::shared_ptr<ProofNode> annotate(std::shared_ptr<ProofNode> p) override;
+-
+- private:
+-  /** The proof node manager of the theory */
+-  ProofNodeManager* d_pnm;
+-  /** The inference id for each formula */
+-  NodeInferenceIdMap d_ids;
+-  /** Ensure we keep proof nodes alive */
+-  ProofNodeList d_list;
+-};
+-
+-}  // namespace theory
+-}  // namespace cvc5::internal
+-
+-#endif /* CVC5__THEORY__INFERENCE_ID_PROOF_ANNOTATOR_H */
+diff --git a/src/theory/theory_inference_manager.cpp b/src/theory/theory_inference_manager.cpp
+index 962c19bbc..7827c527c 100644
+--- a/src/theory/theory_inference_manager.cpp
++++ b/src/theory/theory_inference_manager.cpp
+@@ -16,11 +16,9 @@
+ #include "theory/theory_inference_manager.h"
+ 
+ #include "options/proof_options.h"
+-#include "proof/annotation_proof_generator.h"
+ #include "proof/eager_proof_generator.h"
+ #include "proof/trust_id.h"
+ #include "theory/builtin/proof_checker.h"
+-#include "theory/inference_id_proof_annotator.h"
+ #include "theory/output_channel.h"
+ #include "theory/rewriter.h"
+ #include "theory/theory.h"
+@@ -65,15 +63,8 @@ TheoryInferenceManager::TheoryInferenceManager(Env& env,
+   if (isProofEnabled())
+   {
+     context::UserContext* u = userContext();
+-    ProofNodeManager* pnm = env.getProofNodeManager();
+     d_defaultPg.reset(
+         new EagerProofGenerator(env, u, statsName + "EagerProofGenerator"));
+-    if (options().proof.proofAnnotate)
+-    {
+-      d_iipa.reset(new InferenceIdProofAnnotator(pnm, u));
+-      d_apg.reset(new AnnotationProofGenerator(
+-          pnm, u, statsName + "AnnotationProofGenerator"));
+-    }
+   }
+ }
+ 
+@@ -148,11 +139,6 @@ void TheoryInferenceManager::trustedConflict(TrustNode tconf, InferenceId id)
+   resourceManager()->spendResource(id);
+   Trace("im") << "(conflict " << id << " " << tconf.getProven() << ")"
+               << std::endl;
+-  // annotate if the annotation proof generator is active
+-  if (d_apg != nullptr)
+-  {
+-    tconf = annotateId(tconf, id, true);
+-  }
+   d_out.trustedConflict(tconf, id);
+   ++d_numConflicts;
+ }
+@@ -289,16 +275,7 @@ bool TheoryInferenceManager::trustedLemma(const TrustNode& tlem,
+   // shouldn't send trivially true or false lemmas
+   Assert(!rewrite(tlem.getProven()).isConst());
+   d_numCurrentLemmas++;
+-  // annotate if the annotation proof generator is active
+-  if (d_apg != nullptr)
+-  {
+-    TrustNode tlema = annotateId(tlem, id);
+-    d_out.trustedLemma(tlema, id, p);
+-  }
+-  else
+-  {
+-    d_out.trustedLemma(tlem, id, p);
+-  }
++  d_out.trustedLemma(tlem, id, p);
+   return true;
+ }
+ 
+@@ -583,26 +560,6 @@ bool TheoryInferenceManager::cacheLemma(TNode lem, LemmaProperty p)
+   return true;
+ }
+ 
+-TrustNode TheoryInferenceManager::annotateId(const TrustNode& trn,
+-                                             InferenceId id,
+-                                             bool isConflict)
+-{
+-  Assert(d_iipa != nullptr && d_apg != nullptr);
+-  Node lemma = trn.getProven();
+-  TrustNode trna = trn;
+-  // ensure we have a proof generator, make trusted theory lemma if not
+-  if (trn.getGenerator() == nullptr)
+-  {
+-    Node tid = mkTrustId(TrustId::THEORY_LEMMA);
+-    Node tidn =
+-        builtin::BuiltinProofRuleChecker::mkTheoryIdNode(d_theory.getId());
+-    trna = d_defaultPg->mkTrustNode(
+-        trn.getNode(), ProofRule::TRUST, {}, {tid, lemma, tidn}, isConflict);
+-  }
+-  d_iipa->setAnnotation(lemma, id);
+-  return d_apg->transform(trna, d_iipa.get());
+-}
+-
+ DecisionManager* TheoryInferenceManager::getDecisionManager()
+ {
+   return d_decManager;
+diff --git a/src/theory/theory_inference_manager.h b/src/theory/theory_inference_manager.h
+index a82549157..d4292315f 100644
+--- a/src/theory/theory_inference_manager.h
++++ b/src/theory/theory_inference_manager.h
+@@ -32,7 +32,6 @@
+ namespace cvc5::internal {
+ 
+ class ProofNodeManager;
+-class AnnotationProofGenerator;
+ class EagerProofGenerator;
+ 
+ namespace theory {
+@@ -40,7 +39,6 @@ namespace theory {
+ class Theory;
+ class TheoryState;
+ class DecisionManager;
+-class InferenceIdProofAnnotator;
+ namespace eq {
+ class EqualityEngine;
+ class ProofEqEngine;
+@@ -444,14 +442,6 @@ class TheoryInferenceManager : protected EnvObj
+    * override this method to take the lemma property into account as needed.
+    */
+   virtual bool cacheLemma(TNode lem, LemmaProperty p);
+-  /**
+-   * Return the trust node that is equivalent to trn, but its proof (if asked
+-   * for) will be wrapped in (ANNOTATE ... :args id). We return a trust
+-   * node of trust node kind CONFLICT if isConflict is true.
+-   */
+-  TrustNode annotateId(const TrustNode& trn,
+-                       InferenceId id,
+-                       bool isConflict = false);
+   /** The theory object */
+   Theory& d_theory;
+   /** Reference to the state of theory */
+@@ -468,10 +458,6 @@ class TheoryInferenceManager : protected EnvObj
+   std::unique_ptr<eq::ProofEqEngine> d_pfeeAlloc;
+   /** Proof generator for trusted THEORY_LEMMA steps */
+   std::unique_ptr<EagerProofGenerator> d_defaultPg;
+-  /** The inference id proof annotator */
+-  std::unique_ptr<InferenceIdProofAnnotator> d_iipa;
+-  /** The annotation proof generator */
+-  std::unique_ptr<AnnotationProofGenerator> d_apg;
+   /** Whether this manager caches lemmas */
+   bool d_cacheLemmas;
+   /**
+-- 
+2.47.1
+

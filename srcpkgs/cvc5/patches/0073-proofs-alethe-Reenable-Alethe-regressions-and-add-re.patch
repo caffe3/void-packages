@@ -1,0 +1,100 @@
+From e7f25fcc463c2d160abb6be9691ae4ee95dcb2fa Mon Sep 17 00:00:00 2001
+From: Haniel Barbosa <hanielbbarbosa@gmail.com>
+Date: Tue, 24 Sep 2024 21:18:15 -0300
+Subject: [PATCH 073/312] [proofs] [alethe] Reenable Alethe regressions and add
+ regression from closed issue (#11208)
+
+---
+ test/regress/cli/CMakeLists.txt                  | 16 ++++++++--------
+ .../proofs/issue9515-alethe-skolems-crash.smt2   |  2 +-
+ .../issue9516-alethe-skolems-undef-in-proof.smt2 |  2 +-
+ test/regress/cli/regress0/proofs/issue9927.smt2  |  5 +++++
+ 4 files changed, 15 insertions(+), 10 deletions(-)
+ create mode 100644 test/regress/cli/regress0/proofs/issue9927.smt2
+
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 54208a547..620f50552 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1303,6 +1303,7 @@ set(regress_0_tests
+   regress0/printer/tuples_and_records.cvc.smt2
+   regress0/proj-issue307-get-value-re.smt2
+   regress0/proj-issue645-abs-value-subs.smt2
++  regress0/proofs/alethe-res-need-or-step.smt2
+   regress0/proofs/cyclic-ucp.smt2
+   regress0/proofs/bvrewrite-concat-merge.smt2
+   regress0/proofs/bvrewrite-extract.smt2
+@@ -1325,9 +1326,15 @@ set(regress_0_tests
+   regress0/proofs/issue9172-doublePropProof.smt2
+   regress0/proofs/issue9200-lfsc-inst-sorts.smt2
+   regress0/proofs/issue9205-eqProofNary.smt2
++  regress0/proofs/issue9393-optResReconstruction-alethebug.smt2
++  regress0/proofs/issue9515-alethe-skolems-crash.smt2
++  regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
++  regress0/proofs/issue9531-alethe-resolution.smt2
+   regress0/proofs/issue9669-clause-level-opt-incremental.smt2
+   regress0/proofs/issue9770-open-sat-proof.smt2
++  regress0/proofs/issue9927.smt2
+   regress0/proofs/lfsc-test-1.smt2
++  regress0/proofs/nomerge-alethe-pf.smt2
+   regress0/proofs/no-proof-uc.smt2
+   regress0/proofs/open-pf-datatypes.smt2
+   regress0/proofs/open-pf-if-unordered-iff.smt2
+@@ -2985,7 +2992,7 @@ set(regress_1_tests
+   regress1/seq/proj-issue733-mbqi-w.smt2
+   regress1/sets/all1.smt2
+   regress1/sets/all2.smt2
+-  regress1/sets/all3.smt2  
++  regress1/sets/all3.smt2
+   regress1/sets/choose.cvc.smt2
+   regress1/sets/choose1.smt2
+   regress1/sets/choose2.smt2
+@@ -3761,13 +3768,6 @@ set(regress_4_tests
+ 
+ set(regression_disabled_tests
+   regress0/arith/miplib-opt1217--27.smtv1.smt2
+-  # Alethe tests disabled while fixes to the Alethe backend not fully merged
+-  regress0/proofs/alethe-res-need-or-step.smt2
+-  regress0/proofs/issue9393-optResReconstruction-alethebug.smt2
+-  regress0/proofs/issue9531-alethe-resolution.smt2
+-  regress0/proofs/nomerge-alethe-pf.smt2
+-  regress0/proofs/issue9515-alethe-skolems-crash.smt2
+-  regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
+   # unknown on some builds
+   regress0/arith/issue7984-quant-trans.smt2
+   regress0/aufbv/dubreva005ue.smtv1.smt2
+diff --git a/test/regress/cli/regress0/proofs/issue9515-alethe-skolems-crash.smt2 b/test/regress/cli/regress0/proofs/issue9515-alethe-skolems-crash.smt2
+index 1b14e50d8..5e05b9000 100644
+--- a/test/regress/cli/regress0/proofs/issue9515-alethe-skolems-crash.smt2
++++ b/test/regress/cli/regress0/proofs/issue9515-alethe-skolems-crash.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite
++; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite --proof-alethe-experimental
+ ; EXIT: 0
+ ; SCRUBBER: grep -v -E '.*'
+ (set-logic QF_UF)
+diff --git a/test/regress/cli/regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2 b/test/regress/cli/regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
+index 4d9ce4294..01782fd8a 100644
+--- a/test/regress/cli/regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
++++ b/test/regress/cli/regress0/proofs/issue9516-alethe-skolems-undef-in-proof.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite
++; COMMAND-LINE: --dump-proofs --proof-format-mode=alethe --dag-thresh=0 --simplification=none --proof-granularity=theory-rewrite --proof-alethe-experimental
+ ; EXIT: 0
+ ; SCRUBBER: grep -v -E '.*'
+ (set-logic QF_UF)
+diff --git a/test/regress/cli/regress0/proofs/issue9927.smt2 b/test/regress/cli/regress0/proofs/issue9927.smt2
+new file mode 100644
+index 000000000..4bea40d30
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/issue9927.smt2
+@@ -0,0 +1,5 @@
++; EXPECT: unsat
++(set-logic QF_LRA)
++(declare-fun b () Bool)
++(assert (= 0.0 (ite b 2.0 1.0)))
++(check-sat)
+\ No newline at end of file
+-- 
+2.47.1
+

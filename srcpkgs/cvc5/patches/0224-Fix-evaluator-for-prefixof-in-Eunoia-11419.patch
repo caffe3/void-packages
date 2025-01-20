@@ -1,0 +1,53 @@
+From 4d8c0800c40aa2dbf3b897cd51f9fd9f721af85a Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 6 Dec 2024 17:03:38 -0600
+Subject: [PATCH 224/312] Fix evaluator for prefixof in Eunoia (#11419)
+
+---
+ proofs/eo/cpc/Cpc.eo                                 | 2 +-
+ test/regress/cli/CMakeLists.txt                      | 1 +
+ test/regress/cli/regress0/proofs/pfcheck_rw_441.smt2 | 7 +++++++
+ 3 files changed, 9 insertions(+), 1 deletion(-)
+ create mode 100644 test/regress/cli/regress0/proofs/pfcheck_rw_441.smt2
+
+diff --git a/proofs/eo/cpc/Cpc.eo b/proofs/eo/cpc/Cpc.eo
+index bd6e9dc58..e55143392 100644
+--- a/proofs/eo/cpc/Cpc.eo
++++ b/proofs/eo/cpc/Cpc.eo
+@@ -163,7 +163,7 @@
+                                            ))))
+       (($run_evaluate (str.prefixof x y)) (eo::define ((ex ($run_evaluate x)))
+                                           (eo::define ((ey ($run_evaluate y)))
+-                                          (eo::define ((r (eo::find ex ey)))
++                                          (eo::define ((r (eo::find ey ex)))
+                                             (eo::ite (eo::is_eq r 0) true
+                                             (eo::ite (eo::is_z r) false
+                                               (str.prefixof ex ey)))))))
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index f0998ef94..d18ea82cc 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1348,6 +1348,7 @@ set(regress_0_tests
+   regress0/proofs/lfsc-test-1.smt2
+   regress0/proofs/nomerge-alethe-pf.smt2
+   regress0/proofs/no-proof-uc.smt2
++  regress0/proofs/pfcheck_rw_441.smt2
+   regress0/proofs/pp-only-proof.smt2
+   regress0/proofs/open-pf-datatypes.smt2
+   regress0/proofs/open-pf-if-unordered-iff.smt2
+diff --git a/test/regress/cli/regress0/proofs/pfcheck_rw_441.smt2 b/test/regress/cli/regress0/proofs/pfcheck_rw_441.smt2
+new file mode 100644
+index 000000000..ac5ad1a02
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/pfcheck_rw_441.smt2
+@@ -0,0 +1,7 @@
++; EXPECT: unsat
++(set-logic QF_SLIA)
++(declare-fun x () String)
++(declare-fun y () String)
++(declare-fun z () Int)
++(assert (not (= (str.prefixof "B" (str.substr x z 0)) false)))
++(check-sat)
+-- 
+2.47.1
+

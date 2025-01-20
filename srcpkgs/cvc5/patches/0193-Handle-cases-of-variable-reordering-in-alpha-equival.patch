@@ -1,0 +1,72 @@
+From 4804b9c349c4bfb558e6b9c6dd4cd48356364235 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 21 Nov 2024 10:25:09 -0600
+Subject: [PATCH 193/312] Handle cases of variable reordering in alpha
+ equivalence proofs (#11381)
+
+---
+ src/theory/quantifiers/alpha_equivalence.cpp  | 20 +++++++++++++++++++
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../quantifiers/alpha-eq-var-reorder.smt2     |  7 +++++++
+ 3 files changed, 28 insertions(+)
+ create mode 100644 test/regress/cli/regress0/quantifiers/alpha-eq-var-reorder.smt2
+
+diff --git a/src/theory/quantifiers/alpha_equivalence.cpp b/src/theory/quantifiers/alpha_equivalence.cpp
+index 35c18b21d..3b22af1c1 100644
+--- a/src/theory/quantifiers/alpha_equivalence.cpp
++++ b/src/theory/quantifiers/alpha_equivalence.cpp
+@@ -242,6 +242,26 @@ TrustNode AlphaEquivalence::reduceQuantifier(Node q)
+     Assert(eq.getKind() == Kind::EQUAL);
+     Node sret = eq[1];
+     transEq.emplace_back(eq);
++    Assert(sret.getKind() == Kind::FORALL);
++    if (sret[0] != q[0])
++    {
++      // variable reorder?
++      std::vector<Node> children;
++      children.push_back(q[0]);
++      children.push_back(sret[1]);
++      if (sret.getNumChildren() == 3)
++      {
++        children.push_back(sret[2]);
++      }
++      Node sreorder = nodeManager()->mkNode(Kind::FORALL, children);
++      Node eqqr = sret.eqNode(sreorder);
++      if (cdp.addStep(eqqr, ProofRule::QUANT_VAR_REORDERING, {}, {eqqr}))
++      {
++        transEq.push_back(eqqr);
++        sret = sreorder;
++      }
++      // if var reordering did not apply, we likely will not succeed below
++    }
+     // if not syntactically equal, maybe it can be transformed
+     bool success = false;
+     if (sret == q)
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 0468998a9..a15e2d84c 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1426,6 +1426,7 @@ set(regress_0_tests
+   regress0/push-pop/units.cvc.smt2
+   regress0/quantifiers/agg-rew-test-cf.smt2
+   regress0/quantifiers/agg-rew-test.smt2
++  regress0/quantifiers/alpha-eq-var-reorder.smt2
+   regress0/quantifiers/ari056.smt2
+   regress0/quantifiers/ari-syqi.smt2
+   regress0/quantifiers/ARI176e1.smt2
+diff --git a/test/regress/cli/regress0/quantifiers/alpha-eq-var-reorder.smt2 b/test/regress/cli/regress0/quantifiers/alpha-eq-var-reorder.smt2
+new file mode 100644
+index 000000000..c5dbfd212
+--- /dev/null
++++ b/test/regress/cli/regress0/quantifiers/alpha-eq-var-reorder.smt2
+@@ -0,0 +1,7 @@
++; EXPECT: unsat
++(set-logic UF)
++(declare-sort U 0)
++(declare-fun p (U U U) Bool)
++(assert (distinct (forall ((x U) (y U) (z U)) (p x y z))
++                  (forall ((z U) (y U) (x U)) (p x y z))))
++(check-sat)
+-- 
+2.47.1
+

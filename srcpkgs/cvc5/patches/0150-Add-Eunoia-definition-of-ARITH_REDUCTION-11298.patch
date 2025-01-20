@@ -1,0 +1,162 @@
+From cb28a52da3fe7e7b8a55da619a899f6afdbe1a84 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 1 Nov 2024 15:24:14 -0500
+Subject: [PATCH 150/312] Add Eunoia definition of ARITH_REDUCTION (#11298)
+
+The transdental functions are not yet covered for now.
+
+Also makes a minor simplification to the code for operator elim.
+
+A followup PR will modify this rule to avoid introducing mixed
+arithmetic.
+---
+ proofs/eo/cpc/rules/Arith.eo       | 64 ++++++++++++++++++++++++++++++
+ src/proof/alf/alf_printer.cpp      | 10 +++++
+ src/theory/arith/operator_elim.cpp | 38 ++++++------------
+ 3 files changed, 86 insertions(+), 26 deletions(-)
+
+diff --git a/proofs/eo/cpc/rules/Arith.eo b/proofs/eo/cpc/rules/Arith.eo
+index 778ee8e0d..05e368077 100644
+--- a/proofs/eo/cpc/rules/Arith.eo
++++ b/proofs/eo/cpc/rules/Arith.eo
+@@ -251,3 +251,67 @@
+   :premises ((> s t))
+   :conclusion (>= s ($least_int_gt t))
+ )
++
++;;;;; ProofRule::ARITH_REDUCTION
++
++; define: $arith_to_int_reduction
++; args:
++; - r Real: The argument to to_int.
++; return: the reduction predicate for (to_int r).
++(define $arith_to_int_reduction ((r Real))
++  (eo::define ((k (@purify (to_int r))))
++    (and (<= 0/1 (- r k)) (< (- r k) 1/1))))
++
++; define: $arith_int_div_total_reduction
++; args:
++; - u Int: The first argument to div_total.
++; - v Int: The second argument to div_total.
++; return: the reduction predicate for (div_total u v).
++; note: >
++;   We use an optimized form of the lemma when v is a non-zero constant.
++;   This method does not evaluate if v is the constant zero.
++(define $arith_int_div_total_reduction ((u Int) (v Int))
++  (eo::define ((k (@purify (div_total u v))))
++  (eo::define ((lb (<= (* v k) u)))
++  (eo::ite (eo::is_z v)
++    (eo::requires (eo::is_eq v 0) false
++      (and lb (< u (* v (+ k (eo::ite (eo::is_neg v) -1 1))))))
++    (and
++      (=> (> v 0) (and lb (< u (* v (+ k 1)))))
++      (=> (< v 0) (and lb (< u (* v (+ k -1))))))))))
++
++; define: $arith_reduction_pred
++; args:
++; - t T: The term we are considering, which is expected to be an application of an extended arithmetic operator.
++; return: the reduction predicate for term t.
++(define $arith_reduction_pred ((T Type :implicit) (t T))
++  (eo::match ((r Real) (U Type) (u U) (V Type) (v V))
++    t
++    (
++    ((is_int r)       (eo::define ((k (@purify (to_int r))))
++                        (and (= t (= (- r k) 0/1)) ($arith_to_int_reduction r))))
++    ((to_int r)       (eo::define ((k (@purify (to_int r))))
++                        (and (= t k) ($arith_to_int_reduction r))))
++    ((/ u v)          (= t (ite (= v ($arith_mk_zero (eo::typeof v))) (@div_by_zero u) (/_total u v))))
++    ((div u v)        (= t (ite (= v 0) (@int_div_by_zero u) (div_total u v))))
++    ((mod u v)        (= t (ite (= v 0) (@mod_by_zero u) (mod_total u v))))
++    ((/_total u v)    (eo::define ((k (@purify (/_total u v))))
++                        (and (= t k) (=> (not (= v ($arith_mk_zero (eo::typeof v)))) (= (* v k) u)))))
++    ((div_total u v)  (eo::define ((k (@purify (div_total u v))))
++                        (and (= t k) ($arith_int_div_total_reduction u v))))
++    ((mod_total u v)  (eo::define ((k (@purify (div_total u v))))
++                        (and (= t (- u (* v k))) ($arith_int_div_total_reduction u v))))
++    ((abs u)          (= t (ite (< u ($arith_mk_zero (eo::typeof u))) (- u) u)))
++    )
++  )
++)
++
++; rule: arith_reduction
++; implements: ProofRule::ARITH_REDUCTION
++; args:
++; - t T: The term we are considering, which is expected to be an application of an extended arithmetic operator.
++; conclusion: The reduction predicate for t.
++(declare-rule arith_reduction ((T Type) (t T))
++  :args (t)
++  :conclusion ($arith_reduction_pred t)
++)
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 72964b8ec..f186be3d4 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -205,6 +205,16 @@ bool AlfPrinter::isHandled(const ProofNode* pfn) const
+       return res[0][0].getType().isRealOrInt();
+     }
+     break;
++    case ProofRule::ARITH_REDUCTION:
++    {
++      Kind k = pargs[0].getKind();
++      return k == Kind::TO_INTEGER || k == Kind::IS_INTEGER
++             || k == Kind::DIVISION || k == Kind::DIVISION_TOTAL
++             || k == Kind::INTS_DIVISION || k == Kind::INTS_DIVISION_TOTAL
++             || k == Kind::INTS_MODULUS || k == Kind::INTS_MODULUS_TOTAL
++             || k == Kind::ABS;
++    }
++    break;
+     case ProofRule::STRING_REDUCTION:
+     {
+       // depends on the operator
+diff --git a/src/theory/arith/operator_elim.cpp b/src/theory/arith/operator_elim.cpp
+index d1aad5750..e497f4d8d 100644
+--- a/src/theory/arith/operator_elim.cpp
++++ b/src/theory/arith/operator_elim.cpp
+@@ -149,32 +149,18 @@ Node OperatorElim::eliminateOperators(NodeManager* nm,
+       {
+         const Rational& rat = den.getConst<Rational>();
+         Assert(!num.isConst() && rat.sgn() != 0);
+-        if (rat > 0)
+-        {
+-          lem = nm->mkNode(
+-              Kind::AND,
+-              leqNum,
+-              nm->mkNode(
+-                  Kind::LT,
+-                  num,
+-                  nm->mkNode(
+-                      Kind::MULT,
+-                      den,
+-                      nm->mkNode(Kind::ADD, v, nm->mkConstInt(Rational(1))))));
+-        }
+-        else
+-        {
+-          lem = nm->mkNode(
+-              Kind::AND,
+-              leqNum,
+-              nm->mkNode(
+-                  Kind::LT,
+-                  num,
+-                  nm->mkNode(
+-                      Kind::MULT,
+-                      den,
+-                      nm->mkNode(Kind::ADD, v, nm->mkConstInt(Rational(-1))))));
+-        }
++        lem = nm->mkNode(
++            Kind::AND,
++            leqNum,
++            nm->mkNode(
++                Kind::LT,
++                num,
++                nm->mkNode(
++                    Kind::MULT,
++                    den,
++                    nm->mkNode(Kind::ADD,
++                               v,
++                               nm->mkConstInt(Rational(rat > 0 ? 1 : -1))))));
+       }
+       else
+       {
+-- 
+2.47.1
+

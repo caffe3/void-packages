@@ -1,0 +1,24 @@
+From b46faea2a3cc4a75277a36e89efa1e535446dcef Mon Sep 17 00:00:00 2001
+From: Abdalrhman Mohamed <abdoo8080@outlook.com>
+Date: Tue, 22 Oct 2024 10:23:07 -0700
+Subject: [PATCH 136/312] Add missing UF Sort to intern-to-extern map. (#11307)
+
+---
+ src/api/cpp/cvc5.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/api/cpp/cvc5.cpp b/src/api/cpp/cvc5.cpp
+index c4cbcbe02..0d82acbf8 100644
+--- a/src/api/cpp/cvc5.cpp
++++ b/src/api/cpp/cvc5.cpp
+@@ -869,6 +869,7 @@ const static std::
+             {internal::Kind::FUNCTION_TYPE, SortKind::FUNCTION_SORT},
+             {internal::Kind::SEQUENCE_TYPE, SortKind::SEQUENCE_SORT},
+             {internal::Kind::SET_TYPE, SortKind::SET_SORT},
++            {internal::Kind::SORT_TYPE, SortKind::UNINTERPRETED_SORT},
+             {internal::Kind::TUPLE_TYPE, SortKind::TUPLE_SORT},
+             {internal::Kind::NULLABLE_TYPE, SortKind::NULLABLE_SORT},
+         };
+-- 
+2.47.1
+

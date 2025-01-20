@@ -1,0 +1,158 @@
+From 27b80a17b002a3fecea1a930da5ff40f7d9eca26 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 8 Jan 2025 10:42:49 -0600
+Subject: [PATCH 278/312] More missing cases of EVALUATE in CPC+Eunoia (#11492)
+
+Also adds a missing case for eager string reduction.
+---
+ proofs/eo/cpc/Cpc.eo                          |  4 ++
+ proofs/eo/cpc/programs/Strings.eo             | 65 +++++++++++++++++++
+ src/proof/alf/alf_printer.cpp                 |  5 +-
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/strings/from-int-eval.smt2   |  4 ++
+ 5 files changed, 78 insertions(+), 1 deletion(-)
+ create mode 100644 test/regress/cli/regress0/strings/from-int-eval.smt2
+
+diff --git a/proofs/eo/cpc/Cpc.eo b/proofs/eo/cpc/Cpc.eo
+index 2fcbd9a80..f29b9cf79 100644
+--- a/proofs/eo/cpc/Cpc.eo
++++ b/proofs/eo/cpc/Cpc.eo
+@@ -183,6 +183,10 @@
+                                                (str.to_code ex))))))
+       (($run_evaluate (str.from_code x))   (eo::define ((ex ($run_evaluate x)))
+                                              (eo::ite ($str_is_code_point ex) (eo::to_str x) "")))
++      (($run_evaluate (str.to_int x))      (eo::define ((ex ($run_evaluate x)))
++                                             ($str_to_int_eval ex)))
++      (($run_evaluate (str.from_int n))    (eo::define ((en ($run_evaluate n)))
++                                             ($str_from_int_eval en)))
+ 
+       ; bitvectors
+       (($run_evaluate (bvnot xb))          (eo::not ($run_evaluate xb)))
+diff --git a/proofs/eo/cpc/programs/Strings.eo b/proofs/eo/cpc/programs/Strings.eo
+index 0a5ff1a53..bc60304a4 100644
+--- a/proofs/eo/cpc/programs/Strings.eo
++++ b/proofs/eo/cpc/programs/Strings.eo
+@@ -520,6 +520,8 @@
+           (= (str.len x) 1)
+           (and (>= t 0) (< t 196608))
+           (= t (eo::neg 1)))))
++    (($mk_str_eager_reduction (str.to_int x))
++        (>= (str.to_int x) -1))
+     (($mk_str_eager_reduction (str.contains x y))
+         (eo::define ((k1 (@purify ($str_first_ctn_pre x y))))
+         (eo::define ((k2 (@purify ($str_first_ctn_post x y))))
+@@ -1554,3 +1556,66 @@
+   (($str_re_consume s r) ($str_re_consume_process s r false))
+   )
+ )
++
++; program: $str_from_int_eval_rec
++; args:
++; - n Int: The integer to process, expected to be non-negative.
++; - s String: The accumulated return value.
++; returns: >
++;   The result of evaluating `(str.from_int n)` given the current accumulated return value.
++(program $str_from_int_eval_rec ((s String) (n Int))
++  (Int String) Bool
++  (
++  (($str_from_int_eval_rec n s) (eo::ite (eo::is_eq n 0)
++                                  (eo::ite (eo::is_eq s "") "0" s)
++                                  ($str_from_int_eval_rec
++                                    (eo::zdiv n 10)
++                                    (eo::concat (eo::to_str (eo::add 48 (eo::zmod n 10))) s))))
++  )
++)
++
++; define: $str_from_int_eval
++; args:
++; - n Int: The integer to process.
++; returns: >
++;   The result of evaluating `(str.from_int n)` if `n` is an integer literal,
++;   or the term `(str.from_int n)` otherwise.
++(define $str_from_int_eval ((n Int))
++  (eo::ite (eo::is_z n)
++    (eo::ite (eo::is_neg n)
++      ""
++      ($str_from_int_eval_rec n ""))
++    (str.from_int n)))
++
++; program: $str_to_int_eval_rec
++; args:
++; - s String: The string to process, expected to be in reversed flat form.
++; - e Int: The exponent.
++; - n Int: The accumulated return value.
++; returns: >
++;   The result of evaluating `(str.to_int s)` given the current exponent and
++;   accumulated return value.
++(program $str_to_int_eval_rec ((s1 String) (s2 String :list) (e Int) (n Int))
++  (String Int Int) Bool
++  (
++  (($str_to_int_eval_rec (str.++ s1 s2) e n)  (eo::define ((c (eo::add (eo::to_z s1) -48)))
++                                              (eo::ite (eo::and (eo::gt 10 c) (eo::not (eo::is_neg c)))
++                                                ($str_to_int_eval_rec s2 (eo::mul e 10) (eo::add (eo::mul c e) n))
++                                                -1)))
++  (($str_to_int_eval_rec "" e n)              n)
++  )
++)
++
++; define: $str_to_int_eval
++; args:
++; - s String: The string to process.
++; returns: >
++;   The result of evaluating `(str.to_int s)` if `s` is a string literal,
++;   or the term `(str.to_int s)` otherwise.
++(define $str_to_int_eval ((s String))
++  (eo::ite (eo::is_str s)
++    (eo::ite (eo::is_eq s "")
++      -1
++      ; consider characters in reverse order
++      ($str_to_int_eval_rec ($str_to_flat_form s true) 1 0))
++    (str.to_int s)))
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 30db9ff22..fd7df1882 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -239,7 +239,8 @@ bool AlfPrinter::isHandled(const Options& opts, const ProofNode* pfn)
+         return opts.strings.stringsAlphaCard == String::num_codes();
+       }
+       return k == Kind::STRING_CONTAINS || k == Kind::STRING_INDEXOF
+-             || k == Kind::STRING_INDEXOF_RE || k == Kind::STRING_IN_REGEXP;
++             || k == Kind::STRING_INDEXOF_RE || k == Kind::STRING_IN_REGEXP
++             || k == Kind::STRING_STOI;
+     }
+     break;
+     //
+@@ -374,6 +375,8 @@ bool AlfPrinter::canEvaluate(Node n)
+         case Kind::STRING_TO_CODE:
+         case Kind::STRING_FROM_CODE:
+         case Kind::STRING_PREFIX:
++        case Kind::STRING_ITOS:
++        case Kind::STRING_STOI:
+         case Kind::BITVECTOR_EXTRACT:
+         case Kind::BITVECTOR_CONCAT:
+         case Kind::BITVECTOR_ADD:
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 9f5cd27b4..a7cc6e290 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1828,6 +1828,7 @@ set(regress_0_tests
+   regress0/strings/escchar.smt2
+   regress0/strings/foreign-theory-rew-simple.smt2
+   regress0/strings/from_code.smt2
++  regress0/strings/from-int-eval.smt2
+   regress0/strings/gen-esc-seq.smt2
+   regress0/strings/hconst-092618.smt2
+   regress0/strings/idof-rewrites.smt2
+diff --git a/test/regress/cli/regress0/strings/from-int-eval.smt2 b/test/regress/cli/regress0/strings/from-int-eval.smt2
+new file mode 100644
+index 000000000..302c17cc4
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/from-int-eval.smt2
+@@ -0,0 +1,4 @@
++; EXPECT: unsat
++(set-logic ALL)
++(assert (= (str.from_int 123) "124"))
++(check-sat)
+-- 
+2.47.1
+

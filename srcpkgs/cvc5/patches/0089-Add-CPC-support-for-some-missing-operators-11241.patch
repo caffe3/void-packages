@@ -1,0 +1,102 @@
+From 2a904beff54bfd9bc907abb65e39f20f682a1fe6 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 1 Oct 2024 11:16:24 -0500
+Subject: [PATCH 089/312] Add CPC support for some missing operators (#11241)
+
+These were uncovered on a dev branch with a "proof logging"
+infrastructure.
+
+This also makes our printing of internal FP operators more
+standard/uniform.
+---
+ proofs/eo/cpc/Cpc.eo                     |  2 ++
+ proofs/eo/cpc/theories/FloatingPoints.eo |  1 +
+ src/printer/smt2/smt2_printer.cpp        | 29 ++++++++++++++++++------
+ src/proof/alf/alf_node_converter.cpp     |  2 +-
+ 4 files changed, 26 insertions(+), 8 deletions(-)
+
+diff --git a/proofs/eo/cpc/Cpc.eo b/proofs/eo/cpc/Cpc.eo
+index f6500b070..fc095cf26 100644
+--- a/proofs/eo/cpc/Cpc.eo
++++ b/proofs/eo/cpc/Cpc.eo
+@@ -81,6 +81,8 @@
+ 
+ ; disclaimer: this function is not in SMT-LIB.
+ (declare-const fmf.card (-> Type Int Bool))
++; disclaimer: this function is not in SMT-LIB.
++(declare-const fmf.combined_card (-> Int Bool))
+ (declare-type @ho-elim-sort (Type))
+ (declare-const @fmf-fun-sort (-> (! Type :var T :implicit) T Type))
+ 
+diff --git a/proofs/eo/cpc/theories/FloatingPoints.eo b/proofs/eo/cpc/theories/FloatingPoints.eo
+index 8c012ca73..0fc51737e 100644
+--- a/proofs/eo/cpc/theories/FloatingPoints.eo
++++ b/proofs/eo/cpc/theories/FloatingPoints.eo
+@@ -143,3 +143,4 @@
+ (declare-const @fp.ZERO (-> (! Type :var T) T))
+ (declare-const @fp.INF (-> (! Type :var T) T))
+ (declare-const @fp.NAN (-> (! Type :var T) T))
++(declare-const @fp.RMBITBLAST (-> RoundingMode (BitVec 5)))
+diff --git a/src/printer/smt2/smt2_printer.cpp b/src/printer/smt2/smt2_printer.cpp
+index af07dceb2..f6ff7e29a 100644
+--- a/src/printer/smt2/smt2_printer.cpp
++++ b/src/printer/smt2/smt2_printer.cpp
+@@ -390,6 +390,21 @@ bool Smt2Printer::toStreamBase(std::ostream& out,
+       out << ss.str();
+       break;
+     }
++    case Kind::CARDINALITY_CONSTRAINT_OP:
++    {
++      const CardinalityConstraint& cc =
++          n.getConst<CardinalityConstraint>();
++      TypeNode tn = cc.getType();
++      out << "(_ fmf.card " << tn << " " << cc.getUpperBound() << ")";
++    }
++      break;
++    case Kind::COMBINED_CARDINALITY_CONSTRAINT_OP:
++    {
++      const CombinedCardinalityConstraint& cc =
++          n.getConst<CombinedCardinalityConstraint>();
++      out << "(_ fmf.combined_card " << cc.getUpperBound() << ")";
++    }
++      break;
+     case Kind::DIVISIBLE_OP:
+       out << "(_ divisible " << n.getConst<Divisible>().k << ")";
+       break;
+@@ -1368,13 +1383,13 @@ std::string Smt2Printer::smtKindString(Kind k)
+     case Kind::FLOATINGPOINT_TO_REAL: return "fp.to_real";
+     case Kind::FLOATINGPOINT_TO_REAL_TOTAL: return "fp.to_real_total";
+ 
+-    case Kind::FLOATINGPOINT_COMPONENT_NAN: return "NAN";
+-    case Kind::FLOATINGPOINT_COMPONENT_INF: return "INF";
+-    case Kind::FLOATINGPOINT_COMPONENT_ZERO: return "ZERO";
+-    case Kind::FLOATINGPOINT_COMPONENT_SIGN: return "SIGN";
+-    case Kind::FLOATINGPOINT_COMPONENT_EXPONENT: return "EXPONENT";
+-    case Kind::FLOATINGPOINT_COMPONENT_SIGNIFICAND: return "SIGNIFICAND";
+-    case Kind::ROUNDINGMODE_BITBLAST: return "RMBITBLAST";
++    case Kind::FLOATINGPOINT_COMPONENT_NAN: return "@fp.NAN";
++    case Kind::FLOATINGPOINT_COMPONENT_INF: return "@fp.INF";
++    case Kind::FLOATINGPOINT_COMPONENT_ZERO: return "@fp.ZERO";
++    case Kind::FLOATINGPOINT_COMPONENT_SIGN: return "@fp.SIGN";
++    case Kind::FLOATINGPOINT_COMPONENT_EXPONENT: return "@fp.EXPONENT";
++    case Kind::FLOATINGPOINT_COMPONENT_SIGNIFICAND: return "@fp.SIGNIFICAND";
++    case Kind::ROUNDINGMODE_BITBLAST: return "@fp.RMBITBLAST";
+ 
+     // string theory
+     case Kind::STRING_CONCAT: return "str.++";
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index ca42ce972..522d260d9 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -257,7 +257,7 @@ Node AlfNodeConverter::postConvert(Node n)
+     // dummy symbol, provide the return type
+     Node tnn = typeAsNode(tn);
+     std::stringstream ss;
+-    ss << "@fp." << printer::smt2::Smt2Printer::smtKindString(k);
++    ss << printer::smt2::Smt2Printer::smtKindString(k);
+     return mkInternalApp(ss.str(), {tnn}, tn);
+   }
+   else if (k == Kind::SEXPR || k == Kind::BOUND_VAR_LIST)
+-- 
+2.47.1
+

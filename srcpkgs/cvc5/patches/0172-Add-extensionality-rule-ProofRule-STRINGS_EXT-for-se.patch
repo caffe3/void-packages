@@ -1,0 +1,341 @@
+From 3336be60a8f12ecd24e421b347d801100c09c845 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 15 Nov 2024 08:28:33 -0600
+Subject: [PATCH 172/312] Add extensionality rule `ProofRule::STRINGS_EXT` for
+ sequences and strings (#11369)
+
+This rule is used by default for sequences, and can be used for strings
+given an option.
+
+FYI @HanielB
+---
+ include/cvc5/cvc5_proof_rule.h                | 18 +++++
+ proofs/eo/cpc/programs/Strings.eo             | 17 +++++
+ proofs/eo/cpc/rules/Strings.eo                | 16 +++++
+ src/api/cpp/cvc5_proof_rule_template.cpp      |  1 +
+ src/proof/alf/alf_printer.cpp                 |  1 +
+ src/theory/strings/core_solver.cpp            | 67 +++++++++++--------
+ src/theory/strings/core_solver.h              | 16 +++++
+ src/theory/strings/infer_proof_cons.cpp       |  6 ++
+ src/theory/strings/proof_checker.cpp          | 15 +++++
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/strings/strings-ext.smt2     |  9 +++
+ 11 files changed, 139 insertions(+), 28 deletions(-)
+ create mode 100644 test/regress/cli/regress0/strings/strings-ext.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index fe549c149..a2417b1a2 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -1784,6 +1784,24 @@ enum ENUM(ProofRule)
+    * \endverbatim
+    */
+   EVALUE(STRING_SEQ_UNIT_INJ),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Strings -- Extensionality**
++   *
++   * .. math::
++   *
++   *   \inferrule{s \neq t\mid -}
++   *   {\mathit{seq.len}(s) \neq \mathit{seq.len}(t) \vee (\mathit{seq.nth}(s,k)\neq\mathit{set.nth}(t,k) \wedge 0 \leq k \wedge k < \mathit{seq.len}(s))}
++   *
++   * where :math:`s,t` are terms of sequence type, :math:`k` is the
++   * :math:`\texttt{STRINGS_DEQ_DIFF}` skolem for :math:`s,t`. Alternatively,
++   * if :math:`s,t` are terms of string type, we use 
++   * :math:`\mathit{seq.substr}(s,k,1)` instead of :math:`\mathit{seq.nth}(s,k)`
++   * and similarly for :math:`t`.
++   *
++   * \endverbatim
++   */
++  EVALUE(STRING_EXT),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Strings -- (Macro) String inference**
+diff --git a/proofs/eo/cpc/programs/Strings.eo b/proofs/eo/cpc/programs/Strings.eo
+index a4c97cd13..a18da46de 100644
+--- a/proofs/eo/cpc/programs/Strings.eo
++++ b/proofs/eo/cpc/programs/Strings.eo
+@@ -39,6 +39,23 @@
+   (eo::list_concat str.++ x y)
+ )
+ 
++; define: $str_mk_nth
++; args:
++; - x (Seq T): The string-like term
++; - n Int: The index
++; return: >
++;   A term corresponding to extracting the n^th position of x, which as a
++;   special case is a string of length one if x is a string. This is used
++;   by ProofRule::STRING_EXT.
++(define $str_mk_nth ((T Type :implicit) (x (Seq T)) (n Int))
++  (eo::match ((U Type))
++  (eo::typeof x)
++  (
++    (String   (str.substr x n 1))
++    ((Seq U)  (seq.nth x n))
++  ))
++)
++
+ ; define: $str_cons
+ ; args:
+ ; - x (Seq T): The first string.
+diff --git a/proofs/eo/cpc/rules/Strings.eo b/proofs/eo/cpc/rules/Strings.eo
+index 38087220f..c40616899 100644
+--- a/proofs/eo/cpc/rules/Strings.eo
++++ b/proofs/eo/cpc/rules/Strings.eo
+@@ -415,6 +415,22 @@
+     ))
+ )
+ 
++;;;;; ProofRule::STRING_EXT
++
++; rule: string_ext
++; implements: ProofRule::STRING_EXT
++; premises:
++; - deq: A disequality between strings or sequences.
++; conclusion: The strings have different length or are disequal for a witness index, as given by the skolem (@strings_deq_diff s t).
++(declare-rule string_ext ((T Type)  (s (Seq T)) (t (Seq T)))
++  :premises ((not (= s t)))
++  :conclusion (eo::define ((k (@strings_deq_diff s t)))
++              (or (not (= (str.len s) (str.len t))) 
++                  (and (not (= ($str_mk_nth s k) ($str_mk_nth t k)))
++                       (<= 0 k)
++                       (< k (str.len s)))))
++)
++
+ ;;-------------------- Extended functions 
+ 
+ ; rule: string_reduction
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index a0d06eb33..e2b6876b8 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -155,6 +155,7 @@ const char* toString(ProofRule rule)
+       return "RE_UNFOLD_NEG_CONCAT_FIXED";
+     case ProofRule::STRING_CODE_INJ: return "STRING_CODE_INJ";
+     case ProofRule::STRING_SEQ_UNIT_INJ: return "STRING_SEQ_UNIT_INJ";
++    case ProofRule::STRING_EXT: return "STRING_EXT";
+     case ProofRule::MACRO_STRING_INFERENCE: return "MACRO_STRING_INFERENCE";
+     //================================================= Arith rules
+     case ProofRule::MACRO_ARITH_SCALE_SUM_UB: return "MACRO_ARITH_SCALE_SUM_UB";
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 400cb2823..d44ff8a51 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -170,6 +170,7 @@ bool AlfPrinter::isHandled(const Options& opts, const ProofNode* pfn)
+     case ProofRule::STRING_CODE_INJ:
+     case ProofRule::STRING_SEQ_UNIT_INJ:
+     case ProofRule::STRING_DECOMPOSE:
++    case ProofRule::STRING_EXT:
+     case ProofRule::ITE_EQ:
+     case ProofRule::INSTANTIATE:
+     case ProofRule::SKOLEMIZE:
+diff --git a/src/theory/strings/core_solver.cpp b/src/theory/strings/core_solver.cpp
+index eef86748f..6f7036ce7 100644
+--- a/src/theory/strings/core_solver.cpp
++++ b/src/theory/strings/core_solver.cpp
+@@ -851,6 +851,44 @@ Node CoreSolver::getDecomposeConclusion(NodeManager* nm,
+   return nm->mkNode(Kind::AND, conc, lc);
+ }
+ 
++Node CoreSolver::getExtensionalityConclusion(NodeManager* nm,
++                                             const Node& a,
++                                             const Node& b,
++                                             SkolemCache* skc)
++{
++  Node k = skc->mkSkolemFun(nm, SkolemId::STRINGS_DEQ_DIFF, a, b);
++  // we could use seq.nth instead of substr
++  Node ss1, ss2;
++  if (a.getType().isString())
++  {
++    // substring of length 1
++    Node one = nm->mkConstInt(Rational(1));
++    ss1 = nm->mkNode(Kind::STRING_SUBSTR, a, k, one);
++    ss2 = nm->mkNode(Kind::STRING_SUBSTR, b, k, one);
++  }
++  else
++  {
++    // as an optimization, for sequences, use seq.nth
++    ss1 = nm->mkNode(Kind::SEQ_NTH, a, k);
++    ss2 = nm->mkNode(Kind::SEQ_NTH, b, k);
++  }
++
++  // disequality between nth/substr
++  Node conc1 = ss1.eqNode(ss2).negate();
++
++  // The skolem k is in the bounds of at least
++  // one string/sequence
++  Node len1 = nm->mkNode(Kind::STRING_LENGTH, a);
++  Node len2 = nm->mkNode(Kind::STRING_LENGTH, b);
++  Node zero = nm->mkConstInt(Rational(0));
++  Node conc2 = nm->mkNode(Kind::LEQ, zero, k);
++  Node conc3 = nm->mkNode(Kind::LT, k, len1);
++  Node lenDeq = nm->mkNode(Kind::EQUAL, len1, len2).negate();
++
++  std::vector<Node> concs = {conc1, conc2, conc3};
++  return nm->mkNode(Kind::OR, lenDeq, nm->mkAnd(concs));
++}
++
+ void CoreSolver::getNormalForms(Node eqc,
+                                 std::vector<NormalForm>& normal_forms,
+                                 std::map<Node, unsigned>& term_to_nf_index,
+@@ -2456,36 +2494,9 @@ void CoreSolver::processDeqExtensionality(Node n1, Node n2)
+ 
+   NodeManager* nm = nodeManager();
+   SkolemCache* sc = d_termReg.getSkolemCache();
+-  Node k = sc->mkSkolemFun(nm, SkolemId::STRINGS_DEQ_DIFF, n1, n2);
++  Node conc = getExtensionalityConclusion(nm, eq[0], eq[1], sc);
+   Node deq = eq.negate();
+-  // we could use seq.nth instead of substr
+-  Node ss1, ss2;
+-  if (n1.getType().isString())
+-  {
+-    // substring of length 1
+-    ss1 = nm->mkNode(Kind::STRING_SUBSTR, n1, k, d_one);
+-    ss2 = nm->mkNode(Kind::STRING_SUBSTR, n2, k, d_one);
+-  }
+-  else
+-  {
+-    // as an optimization, for sequences, use seq.nth
+-    ss1 = nm->mkNode(Kind::SEQ_NTH, n1, k);
+-    ss2 = nm->mkNode(Kind::SEQ_NTH, n2, k);
+-  }
+-
+-  // disequality between nth/substr
+-  Node conc1 = ss1.eqNode(ss2).negate();
+-
+-  // The skolem k is in the bounds of at least
+-  // one string/sequence
+-  Node len1 = nm->mkNode(Kind::STRING_LENGTH, n1);
+-  Node len2 = nm->mkNode(Kind::STRING_LENGTH, n2);
+-  Node conc2 = nm->mkNode(Kind::LEQ, d_zero, k);
+-  Node conc3 = nm->mkNode(Kind::LT, k, len1);
+-  Node lenDeq = nm->mkNode(Kind::EQUAL, len1, len2).negate();
+ 
+-  std::vector<Node> concs = {conc1, conc2, conc3};
+-  Node conc = nm->mkNode(Kind::OR, lenDeq, nm->mkAnd(concs));
+   // A != B => ( seq.len(A) != seq.len(B) or
+   //             ( seq.nth(A, d) != seq.nth(B, d) ^ 0 <= d < seq.len(A) ) )
+   // Note that we take A != B verbatim, and do not explain it.
+diff --git a/src/theory/strings/core_solver.h b/src/theory/strings/core_solver.h
+index d1826694d..26e6549c8 100644
+--- a/src/theory/strings/core_solver.h
++++ b/src/theory/strings/core_solver.h
+@@ -258,6 +258,7 @@ class CoreSolver : public InferSideEffectProcess, protected EnvObj
+    * where we are in the second case if isRev is true. This method is called
+    * both by the core solver and by the strings proof checker.
+    *
++   * @param nm Pointer to the node manager
+    * @param x The first term
+    * @param y The second term
+    * @param rule The proof rule whose conclusion we are asking for
+@@ -300,6 +301,7 @@ class CoreSolver : public InferSideEffectProcess, protected EnvObj
+    * k_2 may be shared, hence their length constraint must be guarded by the
+    * premises of this inference.
+    *
++   * @param nm Pointer to the node manager
+    * @param x The string term
+    * @param l The length term
+    * @param isRev Whether the equation is in a reverse direction
+@@ -313,6 +315,20 @@ class CoreSolver : public InferSideEffectProcess, protected EnvObj
+                                      bool isRev,
+                                      SkolemCache* skc,
+                                      std::vector<Node>& newSkolems);
++  /**
++   * This returns the conclusion of the extensionality rule, see
++   * ProofRule::STRING_EXT.
++   * 
++   * @param nm Pointer to the node manager
++   * @param a The first string term
++   * @param a The second string term
++   * @param skc The skolem cache (to allocate fresh variables if necessary)
++   * @return The conclusion of the inference.
++   */
++  static Node getExtensionalityConclusion(NodeManager* nm,
++                                          const Node& a,
++                                          const Node& b,
++                                          SkolemCache* skc);
+ 
+   /** Called when ii is ready to be processed as a fact */
+   void processFact(InferInfo& ii, ProofGenerator*& pg) override;
+diff --git a/src/theory/strings/infer_proof_cons.cpp b/src/theory/strings/infer_proof_cons.cpp
+index 2b1536fd0..450d85261 100644
+--- a/src/theory/strings/infer_proof_cons.cpp
++++ b/src/theory/strings/infer_proof_cons.cpp
+@@ -300,6 +300,12 @@ void InferProofCons::convert(InferenceId infer,
+       useBuffer = (mainEqSRew3 == conc);
+     }
+     break;
++    // ========================== extensionality
++    case InferenceId::STRINGS_DEQ_EXTENSIONALITY:
++    {
++      ps.d_rule = ProofRule::STRING_EXT;
++    }
++    break;
+     // ========================== substitution+rewriting, CONCAT_EQ, ...
+     case InferenceId::STRINGS_F_CONST:
+     case InferenceId::STRINGS_F_UNIFY:
+diff --git a/src/theory/strings/proof_checker.cpp b/src/theory/strings/proof_checker.cpp
+index e7953e780..6a47df986 100644
+--- a/src/theory/strings/proof_checker.cpp
++++ b/src/theory/strings/proof_checker.cpp
+@@ -60,6 +60,7 @@ void StringProofRuleChecker::registerTo(ProofChecker* pc)
+   pc->registerChecker(ProofRule::RE_UNFOLD_NEG_CONCAT_FIXED, this);
+   pc->registerChecker(ProofRule::STRING_CODE_INJ, this);
+   pc->registerChecker(ProofRule::STRING_SEQ_UNIT_INJ, this);
++  pc->registerChecker(ProofRule::STRING_EXT, this);
+   // trusted rule
+   pc->registerTrustedChecker(ProofRule::MACRO_STRING_INFERENCE, this, 2);
+ }
+@@ -528,6 +529,20 @@ Node StringProofRuleChecker::checkInternal(ProofRule id,
+     AlwaysAssert(t[0].getType() == t[1].getType());
+     return t[0].eqNode(t[1]);
+   }
++  else if (id == ProofRule::STRING_EXT)
++  {
++    Assert(children.size() == 1);
++    Assert(args.empty());
++    Node deq = children[0];
++    if (deq.getKind() != Kind::NOT || deq[0].getKind() != Kind::EQUAL
++        || !deq[0][0].getType().isStringLike())
++    {
++      return Node::null();
++    }
++    SkolemCache skc(nm, nullptr);
++    return CoreSolver::getExtensionalityConclusion(
++        nm, deq[0][0], deq[0][1], &skc);
++  }
+   else if (id == ProofRule::MACRO_STRING_INFERENCE)
+   {
+     Assert(args.size() >= 3);
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index fbf83b7a9..6279bd11f 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1911,6 +1911,7 @@ set(regress_0_tests
+   regress0/strings/str004.smt2
+   regress0/strings/str005.smt2
+   regress0/strings/strings-charat.cvc.smt2
++  regress0/strings/strings-ext.smt2
+   regress0/strings/strings-native-simple.cvc.smt2
+   regress0/strings/strip-endpoint-itos.smt2
+   regress0/strings/substr-rewrites.smt2
+diff --git a/test/regress/cli/regress0/strings/strings-ext.smt2 b/test/regress/cli/regress0/strings/strings-ext.smt2
+new file mode 100644
+index 000000000..8e5c5f576
+--- /dev/null
++++ b/test/regress/cli/regress0/strings/strings-ext.smt2
+@@ -0,0 +1,9 @@
++; COMMAND-LINE: --strings-deq-ext --enum-inst
++; EXPECT: unsat
++(set-logic ALL)
++(declare-const s String)
++(declare-const t String)
++(assert (= (str.len s) (str.len t) 1))
++(assert (not (= s t)))
++(assert (forall ((x Int)) (= (str.substr s x 1) (str.substr t x 1))))
++(check-sat)
+-- 
+2.47.1
+

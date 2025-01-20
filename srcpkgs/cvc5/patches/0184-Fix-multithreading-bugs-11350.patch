@@ -1,0 +1,131 @@
+From 5af5df511f3ea4f71a8d0ffbc3a166811a7848d2 Mon Sep 17 00:00:00 2001
+From: Amalee Wilson <amalee@cs.stanford.edu>
+Date: Tue, 19 Nov 2024 11:29:41 -0800
+Subject: [PATCH 184/312] Fix multithreading bugs (#11350)
+
+I was running into some rarely-occurring seg faults when using multiple
+instances of Solver/InputParser/SymbolManager across independent,
+non-communicating threads. Making these variables thread_local fixed the
+issue. Ran 1000 times with these fixes and did not see the bug.
+---
+ src/main/signal_handlers.cpp                        | 2 +-
+ src/preprocessing/preprocessing_pass_registry.cpp   | 3 ++-
+ src/preprocessing/util/ite_utilities.cpp            | 8 ++++----
+ src/printer/printer.cpp                             | 2 +-
+ src/printer/printer.h                               | 2 +-
+ src/theory/quantifiers/candidate_rewrite_filter.cpp | 2 +-
+ src/theory/theory_model_builder.cpp                 | 3 ---
+ 7 files changed, 10 insertions(+), 12 deletions(-)
+
+diff --git a/src/main/signal_handlers.cpp b/src/main/signal_handlers.cpp
+index afa92087a..a7e7729c2 100644
+--- a/src/main/signal_handlers.cpp
++++ b/src/main/signal_handlers.cpp
+@@ -213,7 +213,7 @@ void ill_handler(int sig, siginfo_t* info, void*)
+ 
+ #endif /* __WIN32__ */
+ 
+-static terminate_handler default_terminator;
++static thread_local terminate_handler default_terminator;
+ 
+ void cvc5terminate()
+ {
+diff --git a/src/preprocessing/preprocessing_pass_registry.cpp b/src/preprocessing/preprocessing_pass_registry.cpp
+index 2505dbf84..da8e16168 100644
+--- a/src/preprocessing/preprocessing_pass_registry.cpp
++++ b/src/preprocessing/preprocessing_pass_registry.cpp
+@@ -68,7 +68,8 @@ using namespace cvc5::internal::preprocessing::passes;
+ 
+ PreprocessingPassRegistry& PreprocessingPassRegistry::getInstance()
+ {
+-  static PreprocessingPassRegistry* ppReg = new PreprocessingPassRegistry();
++  static thread_local PreprocessingPassRegistry* ppReg =
++      new PreprocessingPassRegistry();
+   return *ppReg;
+ }
+ 
+diff --git a/src/preprocessing/util/ite_utilities.cpp b/src/preprocessing/util/ite_utilities.cpp
+index 22776ffe4..5992d5ce0 100644
+--- a/src/preprocessing/util/ite_utilities.cpp
++++ b/src/preprocessing/util/ite_utilities.cpp
+@@ -1064,13 +1064,13 @@ Node ITESimplifier::transformAtom(TNode atom)
+   }
+ }
+ 
+-static unsigned numBranches = 0;
+-static unsigned numFalseBranches = 0;
+-static unsigned itesMade = 0;
++static thread_local unsigned numBranches = 0;
++static thread_local unsigned numFalseBranches = 0;
++static thread_local unsigned itesMade = 0;
+ 
+ Node ITESimplifier::constantIteEqualsConstant(TNode cite, TNode constant)
+ {
+-  static int instance = 0;
++  static thread_local int instance = 0;
+   ++instance;
+   Trace("ite::constantIteEqualsConstant")
+       << instance << "constantIteEqualsConstant(" << cite << ", " << constant
+diff --git a/src/printer/printer.cpp b/src/printer/printer.cpp
+index 1214377e7..981768d4d 100644
+--- a/src/printer/printer.cpp
++++ b/src/printer/printer.cpp
+@@ -32,7 +32,7 @@ using namespace std;
+ 
+ namespace cvc5::internal {
+ 
+-unique_ptr<Printer>
++thread_local unique_ptr<Printer>
+     Printer::d_printers[static_cast<size_t>(Language::LANG_MAX)];
+ 
+ unique_ptr<Printer> Printer::makePrinter(Language lang)
+diff --git a/src/printer/printer.h b/src/printer/printer.h
+index aa8842cf3..1fbbf4d54 100644
+--- a/src/printer/printer.h
++++ b/src/printer/printer.h
+@@ -390,7 +390,7 @@ class CVC5_EXPORT Printer
+   static std::unique_ptr<Printer> makePrinter(Language lang);
+ 
+   /** Printers for each Language */
+-  static std::unique_ptr<Printer>
++  static thread_local std::unique_ptr<Printer>
+       d_printers[static_cast<size_t>(Language::LANG_MAX)];
+ 
+ }; /* class Printer */
+diff --git a/src/theory/quantifiers/candidate_rewrite_filter.cpp b/src/theory/quantifiers/candidate_rewrite_filter.cpp
+index 54efef92a..d44dee6fe 100644
+--- a/src/theory/quantifiers/candidate_rewrite_filter.cpp
++++ b/src/theory/quantifiers/candidate_rewrite_filter.cpp
+@@ -28,7 +28,7 @@ namespace theory {
+ namespace quantifiers {
+ 
+ // the number of d_drewrite objects we have allocated (to avoid name conflicts)
+-static unsigned drewrite_counter = 0;
++static thread_local unsigned drewrite_counter = 0;
+ 
+ CandidateRewriteFilter::CandidateRewriteFilter(Env& env)
+     : EnvObj(env),
+diff --git a/src/theory/theory_model_builder.cpp b/src/theory/theory_model_builder.cpp
+index 24bdb15e2..0b657da06 100644
+--- a/src/theory/theory_model_builder.cpp
++++ b/src/theory/theory_model_builder.cpp
+@@ -1177,8 +1177,6 @@ void TheoryEngineModelBuilder::debugCheckModel(TheoryModel* tm)
+     for (; !eqc_i.isFinished(); ++eqc_i)
+     {
+       Node n = *eqc_i;
+-      static int repCheckInstance = 0;
+-      ++repCheckInstance;
+       AlwaysAssert(rep.getType() == n.getType())
+           << "Representative " << rep << " of " << n
+           << " violates type constraints (" << rep.getType() << " and "
+@@ -1188,7 +1186,6 @@ void TheoryEngineModelBuilder::debugCheckModel(TheoryModel* tm)
+       {
+         std::stringstream err;
+         err << "Failed representative check:" << std::endl
+-            << "( " << repCheckInstance << ") "
+             << "n: " << n << std::endl
+             << "getValue(n): " << val << std::endl
+             << "rep: " << rep << std::endl;
+-- 
+2.47.1
+

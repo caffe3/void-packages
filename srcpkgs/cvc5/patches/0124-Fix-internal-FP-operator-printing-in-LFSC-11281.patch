@@ -1,0 +1,81 @@
+From 0e9f8d6cc6737773f0e5bff90d989043ebf790df Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 15 Oct 2024 15:34:32 -0500
+Subject: [PATCH 124/312] Fix internal FP operator printing in LFSC (#11281)
+
+Fixes nightlies.
+---
+ src/proof/lfsc/lfsc_node_converter.cpp | 46 +++++++++++++++++++-------
+ 1 file changed, 34 insertions(+), 12 deletions(-)
+
+diff --git a/src/proof/lfsc/lfsc_node_converter.cpp b/src/proof/lfsc/lfsc_node_converter.cpp
+index 1791f1ba1..a2a9d4e15 100644
+--- a/src/proof/lfsc/lfsc_node_converter.cpp
++++ b/src/proof/lfsc/lfsc_node_converter.cpp
+@@ -332,6 +332,13 @@ Node LfscNodeConverter::postConvert(Node n)
+            || k == Kind::INTS_DIVISION || k == Kind::INTS_DIVISION_TOTAL
+            || k == Kind::INTS_MODULUS || k == Kind::INTS_MODULUS_TOTAL
+            || k == Kind::NEG || k == Kind::POW
++           || k == Kind::FLOATINGPOINT_COMPONENT_NAN
++           || k == Kind::FLOATINGPOINT_COMPONENT_INF
++           || k == Kind::FLOATINGPOINT_COMPONENT_ZERO
++           || k == Kind::FLOATINGPOINT_COMPONENT_SIGN
++           || k == Kind::FLOATINGPOINT_COMPONENT_EXPONENT
++           || k == Kind::FLOATINGPOINT_COMPONENT_SIGNIFICAND
++           || k == Kind::ROUNDINGMODE_BITBLAST
+            || GenericOp::isIndexedOperatorKind(k))
+   {
+     // must give special names to SMT-LIB operators with arithmetic subtyping
+@@ -1088,22 +1095,37 @@ Node LfscNodeConverter::getOperatorOfTerm(Node n, bool macroApply)
+   {
+     opName << "f_";
+   }
+-  // all arithmetic kinds must explicitly deal with real vs int subtyping
+-  if (k == Kind::ADD || k == Kind::MULT || k == Kind::NONLINEAR_MULT
+-      || k == Kind::GEQ || k == Kind::GT || k == Kind::LEQ || k == Kind::LT
+-      || k == Kind::SUB || k == Kind::DIVISION || k == Kind::DIVISION_TOTAL
+-      || k == Kind::INTS_DIVISION || k == Kind::INTS_DIVISION_TOTAL
+-      || k == Kind::INTS_MODULUS || k == Kind::INTS_MODULUS_TOTAL
+-      || k == Kind::NEG || k == Kind::POW)
++  if (k == Kind::FLOATINGPOINT_COMPONENT_NAN
++      || k == Kind::FLOATINGPOINT_COMPONENT_INF
++      || k == Kind::FLOATINGPOINT_COMPONENT_ZERO
++      || k == Kind::FLOATINGPOINT_COMPONENT_SIGN
++      || k == Kind::FLOATINGPOINT_COMPONENT_EXPONENT
++      || k == Kind::FLOATINGPOINT_COMPONENT_SIGNIFICAND
++      || k == Kind::ROUNDINGMODE_BITBLAST)
+   {
+-    // currently allow subtyping
+-    opName << "a.";
++    // remove @fp.
++    std::string str = printer::smt2::Smt2Printer::smtKindString(k);
++    opName << str.substr(4);
+   }
+-  if (k == Kind::NEG)
++  else
+   {
+-    opName << "u";
++    // all arithmetic kinds must explicitly deal with real vs int subtyping
++    if (k == Kind::ADD || k == Kind::MULT || k == Kind::NONLINEAR_MULT
++        || k == Kind::GEQ || k == Kind::GT || k == Kind::LEQ || k == Kind::LT
++        || k == Kind::SUB || k == Kind::DIVISION || k == Kind::DIVISION_TOTAL
++        || k == Kind::INTS_DIVISION || k == Kind::INTS_DIVISION_TOTAL
++        || k == Kind::INTS_MODULUS || k == Kind::INTS_MODULUS_TOTAL
++        || k == Kind::NEG || k == Kind::POW)
++    {
++      // currently allow subtyping
++      opName << "a.";
++    }
++    if (k == Kind::NEG)
++    {
++      opName << "u";
++    }
++    opName << printer::smt2::Smt2Printer::smtKindString(k);
+   }
+-  opName << printer::smt2::Smt2Printer::smtKindString(k);
+   return getSymbolInternal(k, ftype, opName.str());
+ }
+ 
+-- 
+2.47.1
+

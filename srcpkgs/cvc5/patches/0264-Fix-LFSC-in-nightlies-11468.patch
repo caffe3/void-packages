@@ -1,0 +1,71 @@
+From 53b33b86702995c233774fa2ec15b8a2654bd8e3 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Sat, 21 Dec 2024 12:45:40 -0600
+Subject: [PATCH 264/312] Fix LFSC in nightlies (#11468)
+
+---
+ src/proof/lfsc/lfsc_printer.cpp    | 2 +-
+ src/theory/sep/theory_sep.cpp      | 4 ++--
+ src/theory/sep/theory_sep.h        | 1 -
+ test/regress/cli/run_regression.py | 1 +
+ 4 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/proof/lfsc/lfsc_printer.cpp b/src/proof/lfsc/lfsc_printer.cpp
+index 34976f197..6fb8007e8 100644
+--- a/src/proof/lfsc/lfsc_printer.cpp
++++ b/src/proof/lfsc/lfsc_printer.cpp
+@@ -672,7 +672,7 @@ bool LfscPrinter::computeProofArgs(const ProofNode* pn,
+   for (const Node& a : args)
+   {
+     Node ac = d_tproc.convert(a);
+-    Assert(!ac.isNull());
++    Assert(!ac.isNull()) << "Could not convert " << a << " in " << r;
+     as.push_back(ac);
+   }
+   // The proof expression stream, which packs the next expressions (proofs,
+diff --git a/src/theory/sep/theory_sep.cpp b/src/theory/sep/theory_sep.cpp
+index 367c1a6b7..422fa8025 100644
+--- a/src/theory/sep/theory_sep.cpp
++++ b/src/theory/sep/theory_sep.cpp
+@@ -1899,12 +1899,12 @@ void TheorySep::sendLemma( std::vector< Node >& ant, Node conc, InferenceId id,
+       if( conc==d_false ){
+         Trace("sep-lemma") << "Sep::Conflict: " << ant << " by " << id
+                            << std::endl;
+-        d_im.conflictExp(id, ProofRule::TRUST, ant, {d_tiid, conc, d_tsid});
++        d_im.conflictExp(id, ProofRule::TRUST, ant, {d_tiid, conc});
+       }else{
+         Trace("sep-lemma") << "Sep::Lemma: " << conc << " from " << ant
+                            << " by " << id << std::endl;
+         TrustNode trn = d_im.mkLemmaExp(
+-            conc, ProofRule::TRUST, ant, {}, {d_tiid, conc, d_tsid});
++            conc, ProofRule::TRUST, ant, {}, {d_tiid, conc});
+         d_im.addPendingLemma(
+             trn.getNode(), id, LemmaProperty::NONE, trn.getGenerator());
+       }
+diff --git a/src/theory/sep/theory_sep.h b/src/theory/sep/theory_sep.h
+index 4d2cb9866..50a3af3b3 100644
+--- a/src/theory/sep/theory_sep.h
++++ b/src/theory/sep/theory_sep.h
+@@ -55,7 +55,6 @@ class TheorySep : public Theory {
+ 
+   /** Trust id (for proofs) */
+   Node d_tiid;
+-  Node d_tsid;
+ 
+   //whether bounds have been initialized
+   bool d_bounds_init;
+diff --git a/test/regress/cli/run_regression.py b/test/regress/cli/run_regression.py
+index 9bc6adf3f..6aa5eff6c 100755
+--- a/test/regress/cli/run_regression.py
++++ b/test/regress/cli/run_regression.py
+@@ -224,6 +224,7 @@ class LfscTester(Tester):
+         with tempfile.NamedTemporaryFile() as tmpf:
+             cvc5_args = [
+                 "--dump-proofs",
++                "--no-dt-share-sel",
+                 "--proof-format=lfsc",
+                 "--proof-granularity=theory-rewrite",
+                 "--proof-check=lazy",
+-- 
+2.47.1
+

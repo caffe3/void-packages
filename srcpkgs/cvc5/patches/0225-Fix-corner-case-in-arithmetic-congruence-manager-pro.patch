@@ -1,0 +1,87 @@
+From f7c487619055196612bcf1d142109c77c26f746a Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 6 Dec 2024 17:19:56 -0600
+Subject: [PATCH 225/312] Fix corner case in arithmetic congruence manager
+ proofs (#11422)
+
+---
+ .../arith/linear/congruence_manager.cpp       | 14 +++++++++++--
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../regress/cli/regress0/proofs/t3_rw903.smt2 | 20 +++++++++++++++++++
+ 3 files changed, 33 insertions(+), 2 deletions(-)
+ create mode 100644 test/regress/cli/regress0/proofs/t3_rw903.smt2
+
+diff --git a/src/theory/arith/linear/congruence_manager.cpp b/src/theory/arith/linear/congruence_manager.cpp
+index c1a98bd81..719495402 100644
+--- a/src/theory/arith/linear/congruence_manager.cpp
++++ b/src/theory/arith/linear/congruence_manager.cpp
+@@ -366,6 +366,7 @@ bool ArithCongruenceManager::propagate(TNode x){
+     ++(d_statistics.d_conflicts);
+     if (isProofEnabled())
+     {
++      Trace("arith-cm-proof") << "Handle conflict " << finalPf << std::endl;
+       // we have a proof of (=> C L1) and need a proof of
+       // (not (and C L2)), where L1 and L2 are contradictory literals,
+       // stored in proven[1] and neg respectively below.
+@@ -376,9 +377,18 @@ bool ArithCongruenceManager::propagate(TNode x){
+       Node finalPfNeg = finalPf.notNode();
+       cdp.addProof(texpC.toProofNode());
+       Node proven = texpC.getProven();
++      Trace("arith-cm-proof") << "Proven was " << proven << std::endl;
+       Node antec = proven[0];
+-      std::vector<Node> antecc(antec.begin(), antec.end());
+-      cdp.addStep(antec, ProofRule::AND_INTRO, antecc, {});
++      std::vector<Node> antecc;
++      if (antec.getKind() == Kind::AND)
++      {
++        antecc.insert(antecc.end(), antec.begin(), antec.end());
++        cdp.addStep(antec, ProofRule::AND_INTRO, antecc, {});
++      }
++      else
++      {
++        antecc.push_back(antec);
++      }
+       cdp.addStep(proven[1], ProofRule::MODUS_PONENS, {antec, proven}, {});
+       std::shared_ptr<ProofNode> pf;
+       bool success = false;
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index d18ea82cc..e8dbaaa5f 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1383,6 +1383,7 @@ set(regress_0_tests
+   regress0/proofs/subtype-elim-rare-fail.smt2
+   regress0/proofs/str-term-276-indexof-eval.smt2
+   regress0/proofs/t1-difficulty-filter.smt2
++  regress0/proofs/t3_rw903.smt2
+   regress0/proofs/tricky-sat-assumption-incremental-bookeeping.smt2
+   regress0/proofs/trust-subs-eq-open.smt2
+   regress0/proofs/unused-def1.smt2
+diff --git a/test/regress/cli/regress0/proofs/t3_rw903.smt2 b/test/regress/cli/regress0/proofs/t3_rw903.smt2
+new file mode 100644
+index 000000000..052e207ed
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/t3_rw903.smt2
+@@ -0,0 +1,20 @@
++; EXPECT: unsat
++(set-logic UFNIA)
++(declare-fun pow2 (Int) Int)
++(declare-fun intor (Int Int Int) Int)
++(declare-fun intxor (Int Int Int) Int)
++(define-fun bitof ((k Int) (l Int) (a Int)) Int (mod (div a (pow2 l)) 2))
++(define-fun intmax ((k Int)) Int (- (pow2 k) 1))
++(define-fun in_range ((k Int) (x Int)) Bool (and (>= x 0) (<= x (intmax k))))
++(define-fun intmodtotal ((k Int) (a Int) (b Int)) Int (ite (= b 0) a (mod a b)))
++(define-fun intneg ((k Int) (a Int)) Int (intmodtotal k (- (pow2 k) a) (pow2 k)))
++(define-fun intshl ((k Int) (a Int) (b Int)) Int (intmodtotal k (* a (pow2 b)) (pow2 k)))
++(define-fun intadd ((k Int) (a Int) (b Int)) Int (intmodtotal k (+ a b) (pow2 k)))
++(define-fun intmul ((k Int) (a Int) (b Int)) Int (intmodtotal k (* a b) (pow2 k)))
++(define-fun and_ax ((k Int)) Bool true)
++(define-fun or_ax ((k Int)) Bool true)
++(define-fun xor_ax ((k Int)) Bool true)
++(define-fun is_bv_width ((k Int)) Bool (and (> k 0) (and_ax k) (or_ax k) (xor_ax k)))
++(define-fun is_bv_var ((k Int) (x Int)) Bool (in_range k x))
++(assert (not (forall ((s Int) (t Int) (k Int)) (=> (and (is_bv_var k s) (is_bv_var k t) (is_bv_width k)) (= (intshl k s (intadd k (intmul k t 0) s)) (intshl k s s))))))
++(check-sat)
+-- 
+2.47.1
+

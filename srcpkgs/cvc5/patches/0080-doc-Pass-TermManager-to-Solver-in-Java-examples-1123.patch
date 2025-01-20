@@ -1,0 +1,1999 @@
+From 6f32ee5ca0e3795e2ce8c6111b44547e53820301 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Thu, 26 Sep 2024 16:00:25 -0500
+Subject: [PATCH 080/312] doc: Pass TermManager to Solver in Java examples
+ (#11232)
+
+It also replaces calls to deprecated functions of `Solver` with the
+corresponding function of `TermManager`.
+
+---------
+
+Co-authored-by: mudathirmahgoub <mudathirmahgoub@gmail.com>
+---
+ docs/api/java/quickstart.rst               |  84 +++++++++-------
+ examples/SimpleVC.java                     |  27 +++---
+ examples/api/java/Bags.java                |  69 ++++++-------
+ examples/api/java/BitVectors.java          |  47 ++++-----
+ examples/api/java/BitVectorsAndArrays.java |  37 +++----
+ examples/api/java/Combination.java         |  45 ++++-----
+ examples/api/java/Datatypes.java           |  55 ++++++-----
+ examples/api/java/Exceptions.java          |  11 ++-
+ examples/api/java/Extract.java             |  27 +++---
+ examples/api/java/FiniteField.java         |  27 +++---
+ examples/api/java/HelloWorld.java          |   5 +-
+ examples/api/java/LinearArith.java         |  33 ++++---
+ examples/api/java/Parser.java              |   3 +-
+ examples/api/java/ParserSymbolManager.java |   3 +-
+ examples/api/java/QuickStart.java          | 108 +++++++++++----------
+ examples/api/java/Relations.java           |  92 +++++++++---------
+ examples/api/java/Sequences.java           |  23 ++---
+ examples/api/java/Sets.java                |  53 +++++-----
+ examples/api/java/Statistics.java          |   3 +-
+ examples/api/java/Strings.java             |  50 +++++-----
+ examples/api/java/SygusFun.java            |  43 ++++----
+ examples/api/java/SygusInv.java            |  29 +++---
+ examples/api/java/Transcendentals.java     |  25 ++---
+ examples/api/java/Uf.java                  |  39 ++++----
+ examples/api/java/UnsatCores.java          |  13 +--
+ 25 files changed, 494 insertions(+), 457 deletions(-)
+
+diff --git a/docs/api/java/quickstart.rst b/docs/api/java/quickstart.rst
+index 5eca0e4e2..ef325649c 100644
+--- a/docs/api/java/quickstart.rst
++++ b/docs/api/java/quickstart.rst
+@@ -1,14 +1,16 @@
+ Quickstart Guide
+ ================
+ 
+-First, create a cvc5 `Solver <io/github/cvc5/api/Solver.html>`_
+-instance:
+-
+-.. code-block:: java
++First, create a cvc5 `TermManager <io/github/cvc5/TermManager.html>`_ instance:
+ 
+-     Solver solver = new Solver();
++.. literalinclude:: ../../../examples/api/java/QuickStart.java
++   :language: java
++   :dedent: 6
++   :start-after: docs-java-quickstart-0 start
++   :end-before: docs-java-quickstart-0 end
+ 
+-To produce models and unsat cores, we have to enable the following options.
++Then, create a cvc5 `Solver <io/github/cvc5/Solver.html>`_
++instance:
+ 
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+@@ -16,6 +18,14 @@ To produce models and unsat cores, we have to enable the following options.
+    :start-after: docs-java-quickstart-1 start
+    :end-before: docs-java-quickstart-1 end
+ 
++To produce models and unsat cores, we have to enable the following options.
++
++.. literalinclude:: ../../../examples/api/java/QuickStart.java
++   :language: java
++   :dedent: 6
++   :start-after: docs-java-quickstart-2 start
++   :end-before: docs-java-quickstart-2 end
++
+ Next we set the logic.
+ The simplest way to set a logic for the solver is to choose ``"ALL"``.
+ This enables all logics in the solver.
+@@ -26,8 +36,8 @@ use the logic name, e.g. ``"QF_BV"`` or ``"QF_AUFBV"``.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-2 start
+-   :end-before: docs-java-quickstart-2 end
++   :start-after: docs-java-quickstart-3 start
++   :end-before: docs-java-quickstart-3 end
+ 
+ In the following, we will define real and integer constraints.
+ For this, we first query the solver for the corresponding sorts.
+@@ -35,8 +45,8 @@ For this, we first query the solver for the corresponding sorts.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-3 start
+-   :end-before: docs-java-quickstart-3 end
++   :start-after: docs-java-quickstart-4 start
++   :end-before: docs-java-quickstart-4 end
+ 
+ Now, we create two constants ``x`` and ``y`` of sort ``Real``,
+ and two constants ``a`` and ``b`` of sort ``Integer``.
+@@ -45,8 +55,8 @@ Notice that these are *symbolic* constants, not actual values.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-4 start
+-   :end-before: docs-java-quickstart-4 end
++   :start-after: docs-java-quickstart-5 start
++   :end-before: docs-java-quickstart-5 end
+ 
+ We define the following constraints regarding ``x`` and ``y``:
+ 
+@@ -59,8 +69,8 @@ We construct the required terms and assert them as follows:
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-5 start
+-   :end-before: docs-java-quickstart-5 end
++   :start-after: docs-java-quickstart-6 start
++   :end-before: docs-java-quickstart-6 end
+ 
+ Now we check if the asserted formula is satisfiable, that is, we check if
+ there exist values of sort ``Real`` for ``x`` and ``y`` that satisfy all
+@@ -69,22 +79,22 @@ the constraints.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-6 start
+-   :end-before: docs-java-quickstart-6 end
++   :start-after: docs-java-quickstart-7 start
++   :end-before: docs-java-quickstart-7 end
+ 
+ The result we get from this satisfiability check is either ``sat``, ``unsat``
+ or ``unknown``.
+ It's status can be queried via
+-`Result.isSat <io/github/cvc5/api/Result.html#isSat()>`_,
+-`Result.isUnsat <io/github/cvc5/api/Result.html#isUnsat()>`_ and
+-`Result.isSatUnknown <io/github/cvc5/api/Result.html#isSatUnknown()>`_.
++`Result.isSat <io/github/cvc5/Result.html#isSat()>`_,
++`Result.isUnsat <io/github/cvc5/Result.html#isUnsat()>`_ and
++`Result.isSatUnknown <io/github/cvc5/Result.html#isSatUnknown()>`_.
+ Alternatively, it can also be printed.
+ 
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-7 start
+-   :end-before: docs-java-quickstart-7 end
++   :start-after: docs-java-quickstart-8 start
++   :end-before: docs-java-quickstart-8 end
+ 
+ This will print:
+ 
+@@ -99,8 +109,8 @@ the constraints.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-8 start
+-   :end-before: docs-java-quickstart-8 end
++   :start-after: docs-java-quickstart-9 start
++   :end-before: docs-java-quickstart-9 end
+ 
+ It is also possible to get values for terms that do not appear in the original
+ formula.
+@@ -108,16 +118,16 @@ formula.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-9 start
+-   :end-before: docs-java-quickstart-9 end
++   :start-after: docs-java-quickstart-10 start
++   :end-before: docs-java-quickstart-10 end
+ 
+ We can convert these values to Java types.
+ 
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-10 start
+-   :end-before: docs-java-quickstart-10 end
++   :start-after: docs-java-quickstart-11 start
++   :end-before: docs-java-quickstart-11 end
+ 
+ Another way to independently compute the value of ``x - y`` would be to
+ perform the (rational) arithmetic manually.
+@@ -127,8 +137,8 @@ evaluation.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-11 start
+-   :end-before: docs-java-quickstart-11 end
++   :start-after: docs-java-quickstart-12 start
++   :end-before: docs-java-quickstart-12 end
+ 
+ This will print:
+ 
+@@ -143,8 +153,8 @@ For this, we first reset the assertions added to the solver.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-12 start
+-   :end-before: docs-java-quickstart-12 end
++   :start-after: docs-java-quickstart-13 start
++   :end-before: docs-java-quickstart-13 end
+ 
+ Next, we assert the same assertions as above, but with integers.
+ This time, we inline the construction of terms
+@@ -153,16 +163,16 @@ in the assertion command.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-13 start
+-   :end-before: docs-java-quickstart-13 end
++   :start-after: docs-java-quickstart-14 start
++   :end-before: docs-java-quickstart-14 end
+ 
+ Now, we check whether the revised assertion is satisfiable.
+ 
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-14 start
+-   :end-before: docs-java-quickstart-14 end
++   :start-after: docs-java-quickstart-15 start
++   :end-before: docs-java-quickstart-15 end
+ 
+ This time the asserted formula is unsatisfiable:
+ 
+@@ -177,8 +187,8 @@ of the assertions that is already unsatisfiable.
+ .. literalinclude:: ../../../examples/api/java/QuickStart.java
+    :language: java
+    :dedent: 6
+-   :start-after: docs-java-quickstart-15 start
+-   :end-before: docs-java-quickstart-15 end
++   :start-after: docs-java-quickstart-16 start
++   :end-before: docs-java-quickstart-16 end
+ 
+ This will print:
+ 
+diff --git a/examples/SimpleVC.java b/examples/SimpleVC.java
+index 7290dc453..73eff5ecf 100644
+--- a/examples/SimpleVC.java
++++ b/examples/SimpleVC.java
+@@ -28,28 +28,29 @@ public class SimpleVC
+ {
+   public static void main(String[] args)
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       // Prove that for integers x and y:
+       //   x > 0 AND y > 0  =>  2x + y >= 3
+ 
+-      Sort integer = slv.getIntegerSort();
++      Sort integer = tm.getIntegerSort();
+ 
+-      Term x = slv.mkConst(integer, "x");
+-      Term y = slv.mkConst(integer, "y");
+-      Term zero = slv.mkInteger(0);
++      Term x = tm.mkConst(integer, "x");
++      Term y = tm.mkConst(integer, "y");
++      Term zero = tm.mkInteger(0);
+ 
+-      Term x_positive = slv.mkTerm(Kind.GT, x, zero);
+-      Term y_positive = slv.mkTerm(Kind.GT, y, zero);
++      Term x_positive = tm.mkTerm(Kind.GT, x, zero);
++      Term y_positive = tm.mkTerm(Kind.GT, y, zero);
+ 
+-      Term two = slv.mkInteger(2);
+-      Term twox = slv.mkTerm(Kind.MULT, two, x);
+-      Term twox_plus_y = slv.mkTerm(Kind.ADD, twox, y);
++      Term two = tm.mkInteger(2);
++      Term twox = tm.mkTerm(Kind.MULT, two, x);
++      Term twox_plus_y = tm.mkTerm(Kind.ADD, twox, y);
+ 
+-      Term three = slv.mkInteger(3);
+-      Term twox_plus_y_geq_3 = slv.mkTerm(Kind.GEQ, twox_plus_y, three);
++      Term three = tm.mkInteger(3);
++      Term twox_plus_y_geq_3 = tm.mkTerm(Kind.GEQ, twox_plus_y, three);
+ 
+-      Term formula = slv.mkTerm(Kind.AND, x_positive, y_positive).impTerm(twox_plus_y_geq_3);
++      Term formula = tm.mkTerm(Kind.AND, x_positive, y_positive).impTerm(twox_plus_y_geq_3);
+ 
+       System.out.println("Checking entailment of formula " + formula + " with cvc5.");
+       System.out.println("cvc5 should report UNSAT.");
+diff --git a/examples/api/java/Bags.java b/examples/api/java/Bags.java
+index 3c14604e2..3a5d25d13 100644
+--- a/examples/api/java/Bags.java
++++ b/examples/api/java/Bags.java
+@@ -22,7 +22,8 @@ public class Bags
+   public static void main(String args[]) throws CVC5ApiException
+ 
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       slv.setLogic("ALL");
+ 
+@@ -30,21 +31,21 @@ public class Bags
+       slv.setOption("produce-models", "true");
+       slv.setOption("incremental", "true");
+ 
+-      Sort bag = slv.mkBagSort(slv.getStringSort());
+-      Term A = slv.mkConst(bag, "A");
+-      Term B = slv.mkConst(bag, "B");
+-      Term C = slv.mkConst(bag, "C");
+-      Term x = slv.mkConst(slv.getStringSort(), "x");
++      Sort bag = tm.mkBagSort(tm.getStringSort());
++      Term A = tm.mkConst(bag, "A");
++      Term B = tm.mkConst(bag, "B");
++      Term C = tm.mkConst(bag, "C");
++      Term x = tm.mkConst(tm.getStringSort(), "x");
+ 
+-      Term intersectionAC = slv.mkTerm(BAG_INTER_MIN, new Term[] {A, C});
+-      Term intersectionBC = slv.mkTerm(BAG_INTER_MIN, new Term[] {B, C});
++      Term intersectionAC = tm.mkTerm(BAG_INTER_MIN, new Term[] {A, C});
++      Term intersectionBC = tm.mkTerm(BAG_INTER_MIN, new Term[] {B, C});
+ 
+       // union disjoint does not distribute over intersection
+       {
+-        Term unionDisjointAB = slv.mkTerm(BAG_UNION_DISJOINT, new Term[] {A, B});
+-        Term lhs = slv.mkTerm(BAG_INTER_MIN, new Term[] {unionDisjointAB, C});
+-        Term rhs = slv.mkTerm(BAG_UNION_DISJOINT, new Term[] {intersectionAC, intersectionBC});
+-        Term guess = slv.mkTerm(EQUAL, new Term[] {lhs, rhs});
++        Term unionDisjointAB = tm.mkTerm(BAG_UNION_DISJOINT, new Term[] {A, B});
++        Term lhs = tm.mkTerm(BAG_INTER_MIN, new Term[] {unionDisjointAB, C});
++        Term rhs = tm.mkTerm(BAG_UNION_DISJOINT, new Term[] {intersectionAC, intersectionBC});
++        Term guess = tm.mkTerm(EQUAL, new Term[] {lhs, rhs});
+ 
+         System.out.println("cvc5 reports: " + guess.notTerm() + " is "
+             + slv.checkSatAssuming(guess.notTerm()) + ".");
+@@ -58,18 +59,18 @@ public class Bags
+ 
+       // union max distributes over intersection
+       {
+-        Term unionMaxAB = slv.mkTerm(BAG_UNION_MAX, new Term[] {A, B});
+-        Term lhs = slv.mkTerm(BAG_INTER_MIN, new Term[] {unionMaxAB, C});
+-        Term rhs = slv.mkTerm(BAG_UNION_MAX, new Term[] {intersectionAC, intersectionBC});
+-        Term theorem = slv.mkTerm(EQUAL, new Term[] {lhs, rhs});
++        Term unionMaxAB = tm.mkTerm(BAG_UNION_MAX, new Term[] {A, B});
++        Term lhs = tm.mkTerm(BAG_INTER_MIN, new Term[] {unionMaxAB, C});
++        Term rhs = tm.mkTerm(BAG_UNION_MAX, new Term[] {intersectionAC, intersectionBC});
++        Term theorem = tm.mkTerm(EQUAL, new Term[] {lhs, rhs});
+         System.out.println("cvc5 reports: " + theorem.notTerm() + " is "
+             + slv.checkSatAssuming(theorem.notTerm()) + ".");
+       }
+ 
+       // Verify emptbag is a subbag of any bag
+       {
+-        Term emptybag = slv.mkEmptyBag(bag);
+-        Term theorem = slv.mkTerm(BAG_SUBBAG, new Term[] {emptybag, A});
++        Term emptybag = tm.mkEmptyBag(bag);
++        Term theorem = tm.mkTerm(BAG_SUBBAG, new Term[] {emptybag, A});
+ 
+         System.out.println("cvc5 reports: " + theorem.notTerm() + " is "
+             + slv.checkSatAssuming(theorem.notTerm()) + ".");
+@@ -78,27 +79,27 @@ public class Bags
+       // find an element with multiplicity 4 in the disjoint union of
+       // ; {|"a", "a", "b", "b", "b"|} and {|"b", "c", "c"|}
+       {
+-        Term one = slv.mkInteger(1);
+-        Term two = slv.mkInteger(2);
+-        Term three = slv.mkInteger(3);
+-        Term four = slv.mkInteger(4);
+-        Term a = slv.mkString("a");
+-        Term b = slv.mkString("b");
+-        Term c = slv.mkString("c");
++        Term one = tm.mkInteger(1);
++        Term two = tm.mkInteger(2);
++        Term three = tm.mkInteger(3);
++        Term four = tm.mkInteger(4);
++        Term a = tm.mkString("a");
++        Term b = tm.mkString("b");
++        Term c = tm.mkString("c");
+ 
+-        Term bag_a_2 = slv.mkTerm(BAG_MAKE, new Term[] {a, two});
+-        Term bag_b_3 = slv.mkTerm(BAG_MAKE, new Term[] {b, three});
+-        Term bag_b_1 = slv.mkTerm(BAG_MAKE, new Term[] {b, one});
+-        Term bag_c_2 = slv.mkTerm(BAG_MAKE, new Term[] {c, two});
++        Term bag_a_2 = tm.mkTerm(BAG_MAKE, new Term[] {a, two});
++        Term bag_b_3 = tm.mkTerm(BAG_MAKE, new Term[] {b, three});
++        Term bag_b_1 = tm.mkTerm(BAG_MAKE, new Term[] {b, one});
++        Term bag_c_2 = tm.mkTerm(BAG_MAKE, new Term[] {c, two});
+ 
+-        Term bag_a_2_b_3 = slv.mkTerm(BAG_UNION_DISJOINT, new Term[] {bag_a_2, bag_b_3});
++        Term bag_a_2_b_3 = tm.mkTerm(BAG_UNION_DISJOINT, new Term[] {bag_a_2, bag_b_3});
+ 
+-        Term bag_b_1_c_2 = slv.mkTerm(BAG_UNION_DISJOINT, new Term[] {bag_b_1, bag_c_2});
++        Term bag_b_1_c_2 = tm.mkTerm(BAG_UNION_DISJOINT, new Term[] {bag_b_1, bag_c_2});
+ 
+-        Term union_disjoint = slv.mkTerm(BAG_UNION_DISJOINT, new Term[] {bag_a_2_b_3, bag_b_1_c_2});
++        Term union_disjoint = tm.mkTerm(BAG_UNION_DISJOINT, new Term[] {bag_a_2_b_3, bag_b_1_c_2});
+ 
+-        Term count_x = slv.mkTerm(BAG_COUNT, new Term[] {x, union_disjoint});
+-        Term e = slv.mkTerm(EQUAL, new Term[] {four, count_x});
++        Term count_x = tm.mkTerm(BAG_COUNT, new Term[] {x, union_disjoint});
++        Term e = tm.mkTerm(EQUAL, new Term[] {four, count_x});
+         Result result = slv.checkSatAssuming(e);
+ 
+         System.out.println("cvc5 reports: " + e + " is " + result + ".");
+diff --git a/examples/api/java/BitVectors.java b/examples/api/java/BitVectors.java
+index 5bbd0d647..3efa24051 100644
+--- a/examples/api/java/BitVectors.java
++++ b/examples/api/java/BitVectors.java
+@@ -22,7 +22,8 @@ public class BitVectors
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       slv.setLogic("QF_BV"); // Set the logic
+ 
+@@ -46,29 +47,29 @@ public class BitVectors
+       // equivalent by encoding the problem in the bit-vector theory.
+ 
+       // Creating a bit-vector type of width 32
+-      Sort bitvector32 = slv.mkBitVectorSort(32);
++      Sort bitvector32 = tm.mkBitVectorSort(32);
+ 
+       // Variables
+-      Term x = slv.mkConst(bitvector32, "x");
+-      Term a = slv.mkConst(bitvector32, "a");
+-      Term b = slv.mkConst(bitvector32, "b");
++      Term x = tm.mkConst(bitvector32, "x");
++      Term a = tm.mkConst(bitvector32, "a");
++      Term b = tm.mkConst(bitvector32, "b");
+ 
+       // First encode the assumption that x must be Kind.EQUAL to a or b
+-      Term x_eq_a = slv.mkTerm(Kind.EQUAL, x, a);
+-      Term x_eq_b = slv.mkTerm(Kind.EQUAL, x, b);
+-      Term assumption = slv.mkTerm(Kind.OR, x_eq_a, x_eq_b);
++      Term x_eq_a = tm.mkTerm(Kind.EQUAL, x, a);
++      Term x_eq_b = tm.mkTerm(Kind.EQUAL, x, b);
++      Term assumption = tm.mkTerm(Kind.OR, x_eq_a, x_eq_b);
+ 
+       // Assert the assumption
+       slv.assertFormula(assumption);
+ 
+       // Introduce a new variable for the new value of x after assignment.
+-      Term new_x = slv.mkConst(bitvector32, "new_x"); // x after executing code (0)
+-      Term new_x_ = slv.mkConst(bitvector32, "new_x_"); // x after executing code (1) or (2)
++      Term new_x = tm.mkConst(bitvector32, "new_x"); // x after executing code (0)
++      Term new_x_ = tm.mkConst(bitvector32, "new_x_"); // x after executing code (1) or (2)
+ 
+       // Encoding code (0)
+       // new_x = x == a ? b : a;
+-      Term ite = slv.mkTerm(Kind.ITE, x_eq_a, b, a);
+-      Term assignment0 = slv.mkTerm(Kind.EQUAL, new_x, ite);
++      Term ite = tm.mkTerm(Kind.ITE, x_eq_a, b, a);
++      Term assignment0 = tm.mkTerm(Kind.EQUAL, new_x, ite);
+ 
+       // Assert the encoding of code (0)
+       System.out.println("Asserting " + assignment0 + " to cvc5 ");
+@@ -78,13 +79,13 @@ public class BitVectors
+ 
+       // Encoding code (1)
+       // new_x_ = a xor b xor x
+-      Term a_xor_b_xor_x = slv.mkTerm(Kind.BITVECTOR_XOR, a, b, x);
+-      Term assignment1 = slv.mkTerm(Kind.EQUAL, new_x_, a_xor_b_xor_x);
++      Term a_xor_b_xor_x = tm.mkTerm(Kind.BITVECTOR_XOR, a, b, x);
++      Term assignment1 = tm.mkTerm(Kind.EQUAL, new_x_, a_xor_b_xor_x);
+ 
+       // Assert encoding to cvc5 in current context;
+       System.out.println("Asserting " + assignment1 + " to cvc5 ");
+       slv.assertFormula(assignment1);
+-      Term new_x_eq_new_x_ = slv.mkTerm(Kind.EQUAL, new_x, new_x_);
++      Term new_x_eq_new_x_ = tm.mkTerm(Kind.EQUAL, new_x, new_x_);
+ 
+       System.out.println(" Check sat assuming: " + new_x_eq_new_x_.notTerm());
+       System.out.println(" Expect UNSAT. ");
+@@ -94,9 +95,9 @@ public class BitVectors
+ 
+       // Encoding code (2)
+       // new_x_ = a + b - x
+-      Term a_plus_b = slv.mkTerm(Kind.BITVECTOR_ADD, a, b);
+-      Term a_plus_b_minus_x = slv.mkTerm(Kind.BITVECTOR_SUB, a_plus_b, x);
+-      Term assignment2 = slv.mkTerm(Kind.EQUAL, new_x_, a_plus_b_minus_x);
++      Term a_plus_b = tm.mkTerm(Kind.BITVECTOR_ADD, a, b);
++      Term a_plus_b_minus_x = tm.mkTerm(Kind.BITVECTOR_SUB, a_plus_b, x);
++      Term assignment2 = tm.mkTerm(Kind.EQUAL, new_x_, a_plus_b_minus_x);
+ 
+       // Assert encoding to cvc5 in current context;
+       System.out.println("Asserting " + assignment2 + " to cvc5 ");
+@@ -106,18 +107,18 @@ public class BitVectors
+       System.out.println(" Expect UNSAT. ");
+       System.out.println(" cvc5: " + slv.checkSatAssuming(new_x_eq_new_x_.notTerm()));
+ 
+-      Term x_neq_x = slv.mkTerm(Kind.EQUAL, x, x).notTerm();
++      Term x_neq_x = tm.mkTerm(Kind.EQUAL, x, x).notTerm();
+       Term[] v = new Term[] {new_x_eq_new_x_, x_neq_x};
+-      Term query = slv.mkTerm(Kind.AND, v);
++      Term query = tm.mkTerm(Kind.AND, v);
+       System.out.println(" Check sat assuming: " + query.notTerm());
+       System.out.println(" Expect SAT. ");
+       System.out.println(" cvc5: " + slv.checkSatAssuming(query.notTerm()));
+ 
+       // Assert that a is odd
+-      Op extract_op = slv.mkOp(Kind.BITVECTOR_EXTRACT, 0, 0);
+-      Term lsb_of_a = slv.mkTerm(extract_op, a);
++      Op extract_op = tm.mkOp(Kind.BITVECTOR_EXTRACT, 0, 0);
++      Term lsb_of_a = tm.mkTerm(extract_op, a);
+       System.out.println("Sort of " + lsb_of_a + " is " + lsb_of_a.getSort());
+-      Term a_odd = slv.mkTerm(Kind.EQUAL, lsb_of_a, slv.mkBitVector(1, 1));
++      Term a_odd = tm.mkTerm(Kind.EQUAL, lsb_of_a, tm.mkBitVector(1, 1));
+       System.out.println("Assert " + a_odd);
+       System.out.println("Check satisfiability.");
+       slv.assertFormula(a_odd);
+diff --git a/examples/api/java/BitVectorsAndArrays.java b/examples/api/java/BitVectorsAndArrays.java
+index 6cf33ca10..c295caea5 100644
+--- a/examples/api/java/BitVectorsAndArrays.java
++++ b/examples/api/java/BitVectorsAndArrays.java
+@@ -27,7 +27,8 @@ public class BitVectorsAndArrays
+ 
+   public static void main(String[] args) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       slv.setOption("produce-models", "true"); // Produce Models
+       slv.setOption("output-language", "smtlib"); // output-language
+@@ -50,47 +51,47 @@ public class BitVectorsAndArrays
+       int index_size = log2(k); // size of the index
+ 
+       // Sorts
+-      Sort elementSort = slv.mkBitVectorSort(32);
+-      Sort indexSort = slv.mkBitVectorSort(index_size);
+-      Sort arraySort = slv.mkArraySort(indexSort, elementSort);
++      Sort elementSort = tm.mkBitVectorSort(32);
++      Sort indexSort = tm.mkBitVectorSort(index_size);
++      Sort arraySort = tm.mkArraySort(indexSort, elementSort);
+ 
+       // Variables
+-      Term current_array = slv.mkConst(arraySort, "current_array");
++      Term current_array = tm.mkConst(arraySort, "current_array");
+ 
+       // Making a bit-vector constant
+-      Term zero = slv.mkBitVector(index_size, 0);
++      Term zero = tm.mkBitVector(index_size, 0);
+ 
+       // Asserting that current_array[0] > 0
+-      Term current_array0 = slv.mkTerm(Kind.SELECT, current_array, zero);
++      Term current_array0 = tm.mkTerm(Kind.SELECT, current_array, zero);
+       Term current_array0_gt_0 =
+-          slv.mkTerm(Kind.BITVECTOR_SGT, current_array0, slv.mkBitVector(32, 0));
++          tm.mkTerm(Kind.BITVECTOR_SGT, current_array0, tm.mkBitVector(32, 0));
+       slv.assertFormula(current_array0_gt_0);
+ 
+       // Building the assertions in the loop unrolling
+-      Term index = slv.mkBitVector(index_size, 0);
+-      Term old_current = slv.mkTerm(Kind.SELECT, current_array, index);
+-      Term two = slv.mkBitVector(32, 2);
++      Term index = tm.mkBitVector(index_size, 0);
++      Term old_current = tm.mkTerm(Kind.SELECT, current_array, index);
++      Term two = tm.mkBitVector(32, 2);
+ 
+       List<Term> assertions = new ArrayList<Term>();
+       for (int i = 1; i < k; ++i)
+       {
+-        index = slv.mkBitVector(index_size, i);
+-        Term new_current = slv.mkTerm(Kind.BITVECTOR_MULT, two, old_current);
++        index = tm.mkBitVector(index_size, i);
++        Term new_current = tm.mkTerm(Kind.BITVECTOR_MULT, two, old_current);
+         // current[i] = 2 * current[i-1]
+-        current_array = slv.mkTerm(Kind.STORE, current_array, index, new_current);
++        current_array = tm.mkTerm(Kind.STORE, current_array, index, new_current);
+         // current[i-1] < current [i]
+-        Term current_slt_new_current = slv.mkTerm(Kind.BITVECTOR_SLT, old_current, new_current);
++        Term current_slt_new_current = tm.mkTerm(Kind.BITVECTOR_SLT, old_current, new_current);
+         assertions.add(current_slt_new_current);
+ 
+-        old_current = slv.mkTerm(Kind.SELECT, current_array, index);
++        old_current = tm.mkTerm(Kind.SELECT, current_array, index);
+       }
+ 
+-      Term query = slv.mkTerm(Kind.NOT, slv.mkTerm(Kind.AND, assertions.toArray(new Term[0])));
++      Term query = tm.mkTerm(Kind.NOT, tm.mkTerm(Kind.AND, assertions.toArray(new Term[0])));
+ 
+       System.out.println("Asserting " + query + " to cvc5 ");
+       slv.assertFormula(query);
+       System.out.println("Expect sat. ");
+-      System.out.println("cvc5: " + slv.checkSatAssuming(slv.mkTrue()));
++      System.out.println("cvc5: " + slv.checkSatAssuming(tm.mkTrue()));
+ 
+       // Getting the model
+       System.out.println("The satisfying model is: ");
+diff --git a/examples/api/java/Combination.java b/examples/api/java/Combination.java
+index 4f5851191..ad4e1a474 100644
+--- a/examples/api/java/Combination.java
++++ b/examples/api/java/Combination.java
+@@ -39,7 +39,8 @@ public class Combination
+ 
+   public static void main(String[] args) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       slv.setOption("produce-models", "true"); // Produce Models
+       slv.setOption("dag-thresh", "0"); // Disable dagifying the output
+@@ -47,37 +48,37 @@ public class Combination
+       slv.setLogic("QF_UFLIRA");
+ 
+       // Sorts
+-      Sort u = slv.mkUninterpretedSort("u");
+-      Sort integer = slv.getIntegerSort();
+-      Sort bool = slv.getBooleanSort();
+-      Sort uToInt = slv.mkFunctionSort(u, integer);
+-      Sort intPred = slv.mkFunctionSort(integer, bool);
++      Sort u = tm.mkUninterpretedSort("u");
++      Sort integer = tm.getIntegerSort();
++      Sort bool = tm.getBooleanSort();
++      Sort uToInt = tm.mkFunctionSort(u, integer);
++      Sort intPred = tm.mkFunctionSort(integer, bool);
+ 
+       // Variables
+-      Term x = slv.mkConst(u, "x");
+-      Term y = slv.mkConst(u, "y");
++      Term x = tm.mkConst(u, "x");
++      Term y = tm.mkConst(u, "y");
+ 
+       // Functions
+-      Term f = slv.mkConst(uToInt, "f");
+-      Term p = slv.mkConst(intPred, "p");
++      Term f = tm.mkConst(uToInt, "f");
++      Term p = tm.mkConst(intPred, "p");
+ 
+       // Constants
+-      Term zero = slv.mkInteger(0);
+-      Term one = slv.mkInteger(1);
++      Term zero = tm.mkInteger(0);
++      Term one = tm.mkInteger(1);
+ 
+       // Terms
+-      Term f_x = slv.mkTerm(Kind.APPLY_UF, f, x);
+-      Term f_y = slv.mkTerm(Kind.APPLY_UF, f, y);
+-      Term sum = slv.mkTerm(Kind.ADD, f_x, f_y);
+-      Term p_0 = slv.mkTerm(Kind.APPLY_UF, p, zero);
+-      Term p_f_y = slv.mkTerm(Kind.APPLY_UF, p, f_y);
++      Term f_x = tm.mkTerm(Kind.APPLY_UF, f, x);
++      Term f_y = tm.mkTerm(Kind.APPLY_UF, f, y);
++      Term sum = tm.mkTerm(Kind.ADD, f_x, f_y);
++      Term p_0 = tm.mkTerm(Kind.APPLY_UF, p, zero);
++      Term p_f_y = tm.mkTerm(Kind.APPLY_UF, p, f_y);
+ 
+       // Construct the assertions
+-      Term assertions = slv.mkTerm(Kind.AND,
++      Term assertions = tm.mkTerm(Kind.AND,
+           new Term[] {
+-              slv.mkTerm(Kind.LEQ, zero, f_x), // 0 <= f(x)
+-              slv.mkTerm(Kind.LEQ, zero, f_y), // 0 <= f(y)
+-              slv.mkTerm(Kind.LEQ, sum, one), // f(x) + f(y) <= 1
++              tm.mkTerm(Kind.LEQ, zero, f_x), // 0 <= f(x)
++              tm.mkTerm(Kind.LEQ, zero, f_y), // 0 <= f(y)
++              tm.mkTerm(Kind.LEQ, sum, one), // f(x) + f(y) <= 1
+               p_0.notTerm(), // not p(0)
+               p_f_y // p(f(y))
+           });
+@@ -86,7 +87,7 @@ public class Combination
+       System.out.println("Given the following assertions:\n" + assertions + "\n");
+ 
+       System.out.println("Prove x /= y is entailed. \n"
+-          + "cvc5: " + slv.checkSatAssuming(slv.mkTerm(Kind.EQUAL, x, y)) + ".\n");
++          + "cvc5: " + slv.checkSatAssuming(tm.mkTerm(Kind.EQUAL, x, y)) + ".\n");
+ 
+       System.out.println("Call checkSat to show that the assertions are satisfiable. \n"
+           + "cvc5: " + slv.checkSat() + ".\n");
+diff --git a/examples/api/java/Datatypes.java b/examples/api/java/Datatypes.java
+index 59f313492..02997b329 100644
+--- a/examples/api/java/Datatypes.java
++++ b/examples/api/java/Datatypes.java
+@@ -20,6 +20,8 @@ public class Datatypes
+ {
+   private static void test(Solver slv, Sort consListSort) throws CVC5ApiException
+   {
++    TermManager tm = slv.getTermManager();
++
+     // Now our old "consListSpec" is useless--the relevant information
+     // has been copied out, so we can throw that spec away.  We can get
+     // the complete spec for the datatype from the DatatypeSort, and
+@@ -34,10 +36,10 @@ public class Datatypes
+     // which is equivalent to consList["cons"].getConstructor().  Note that
+     // "nil" is a constructor too, so it needs to be applied with
+     // APPLY_CONSTRUCTOR, even though it has no arguments.
+-    Term t = slv.mkTerm(Kind.APPLY_CONSTRUCTOR,
++    Term t = tm.mkTerm(Kind.APPLY_CONSTRUCTOR,
+         consList.getConstructor("cons").getTerm(),
+-        slv.mkInteger(0),
+-        slv.mkTerm(Kind.APPLY_CONSTRUCTOR, consList.getConstructor("nil").getTerm()));
++        tm.mkInteger(0),
++        tm.mkTerm(Kind.APPLY_CONSTRUCTOR, consList.getConstructor("nil").getTerm()));
+ 
+     System.out.println("t is " + t + "\n"
+         + "sort of cons is " + consList.getConstructor("cons").getTerm().getSort() + "\n"
+@@ -48,7 +50,7 @@ public class Datatypes
+     // Here we first get the DatatypeConstructor for cons (with
+     // consList["cons"]) in order to get the "head" selector symbol
+     // to apply.
+-    Term t2 = slv.mkTerm(
++    Term t2 = tm.mkTerm(
+         Kind.APPLY_SELECTOR, consList.getConstructor("cons").getSelector("head").getTerm(), t);
+ 
+     System.out.println("t2 is " + t2 + "\n"
+@@ -81,32 +83,32 @@ public class Datatypes
+ 
+     // You can also define a tester term for constructor 'cons': (_ is cons)
+     Term t_is_cons =
+-        slv.mkTerm(Kind.APPLY_TESTER, consList.getConstructor("cons").getTesterTerm(), t);
++        tm.mkTerm(Kind.APPLY_TESTER, consList.getConstructor("cons").getTesterTerm(), t);
+     System.out.println("t_is_cons is " + t_is_cons + "\n");
+     slv.assertFormula(t_is_cons);
+     // Updating t at 'head' with value 1 is defined as follows:
+-    Term t_updated = slv.mkTerm(Kind.APPLY_UPDATER,
++    Term t_updated = tm.mkTerm(Kind.APPLY_UPDATER,
+         consList.getConstructor("cons").getSelector("head").getUpdaterTerm(),
+         t,
+-        slv.mkInteger(1));
++        tm.mkInteger(1));
+     System.out.println("t_updated is " + t_updated + "\n");
+-    slv.assertFormula(slv.mkTerm(Kind.DISTINCT, t, t_updated));
++    slv.assertFormula(tm.mkTerm(Kind.DISTINCT, t, t_updated));
+ 
+     // You can also define parameterized datatypes.
+     // This example builds a simple parameterized list of sort T, with one
+     // constructor "cons".
+-    Sort sort = slv.mkParamSort("T");
++    Sort sort = tm.mkParamSort("T");
+     DatatypeDecl paramConsListSpec =
+-        slv.mkDatatypeDecl("paramlist", new Sort[] {sort}); // give the datatype a name
+-    DatatypeConstructorDecl paramCons = slv.mkDatatypeConstructorDecl("cons");
+-    DatatypeConstructorDecl paramNil = slv.mkDatatypeConstructorDecl("nil");
++        tm.mkDatatypeDecl("paramlist", new Sort[] {sort}); // give the datatype a name
++    DatatypeConstructorDecl paramCons = tm.mkDatatypeConstructorDecl("cons");
++    DatatypeConstructorDecl paramNil = tm.mkDatatypeConstructorDecl("nil");
+     paramCons.addSelector("head", sort);
+     paramCons.addSelectorSelf("tail");
+     paramConsListSpec.addConstructor(paramCons);
+     paramConsListSpec.addConstructor(paramNil);
+ 
+-    Sort paramConsListSort = slv.mkDatatypeSort(paramConsListSpec);
+-    Sort paramConsIntListSort = paramConsListSort.instantiate(new Sort[] {slv.getIntegerSort()});
++    Sort paramConsListSort = tm.mkDatatypeSort(paramConsListSpec);
++    Sort paramConsIntListSort = paramConsListSort.instantiate(new Sort[] {tm.getIntegerSort()});
+ 
+     Datatype paramConsList = paramConsListSort.getDatatype();
+ 
+@@ -120,14 +122,14 @@ public class Datatypes
+       }
+     }
+ 
+-    Term a = slv.mkConst(paramConsIntListSort, "a");
++    Term a = tm.mkConst(paramConsIntListSort, "a");
+     System.out.println("term " + a + " is of sort " + a.getSort());
+ 
+-    Term head_a = slv.mkTerm(
++    Term head_a = tm.mkTerm(
+         Kind.APPLY_SELECTOR, paramConsList.getConstructor("cons").getSelector("head").getTerm(), a);
+     System.out.println("head_a is " + head_a + " of sort " + head_a.getSort() + "\n"
+         + "sort of cons is " + paramConsList.getConstructor("cons").getTerm().getSort() + "\n");
+-    Term assertion = slv.mkTerm(Kind.GT, head_a, slv.mkInteger(50));
++    Term assertion = tm.mkTerm(Kind.GT, head_a, tm.mkInteger(50));
+     System.out.println("Assert " + assertion);
+     slv.assertFormula(assertion);
+     System.out.println("Expect sat.");
+@@ -136,7 +138,8 @@ public class Datatypes
+ 
+   public static void main(String[] args) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       // This example builds a simple "cons list" of integers, with
+       // two constructors, "cons" and "nil."
+@@ -146,12 +149,12 @@ public class Datatypes
+       // Second, it is "resolved" to an actual sort, at which point function
+       // symbols are assigned to its constructors, selectors, and testers.
+ 
+-      DatatypeDecl consListSpec = slv.mkDatatypeDecl("list"); // give the datatype a name
+-      DatatypeConstructorDecl cons = slv.mkDatatypeConstructorDecl("cons");
+-      cons.addSelector("head", slv.getIntegerSort());
++      DatatypeDecl consListSpec = tm.mkDatatypeDecl("list"); // give the datatype a name
++      DatatypeConstructorDecl cons = tm.mkDatatypeConstructorDecl("cons");
++      cons.addSelector("head", tm.getIntegerSort());
+       cons.addSelectorSelf("tail");
+       consListSpec.addConstructor(cons);
+-      DatatypeConstructorDecl nil = slv.mkDatatypeConstructorDecl("nil");
++      DatatypeConstructorDecl nil = tm.mkDatatypeConstructorDecl("nil");
+       consListSpec.addConstructor(nil);
+ 
+       System.out.println("spec is:"
+@@ -163,7 +166,7 @@ public class Datatypes
+       // This step resolves the "SelfSort" reference and creates
+       // symbols for all the constructors, etc.
+ 
+-      Sort consListSort = slv.mkDatatypeSort(consListSpec);
++      Sort consListSort = tm.mkDatatypeSort(consListSpec);
+ 
+       test(slv, consListSort);
+ 
+@@ -171,10 +174,10 @@ public class Datatypes
+           + ">>> Alternatively, use declareDatatype");
+       System.out.println();
+ 
+-      DatatypeConstructorDecl cons2 = slv.mkDatatypeConstructorDecl("cons");
+-      cons2.addSelector("head", slv.getIntegerSort());
++      DatatypeConstructorDecl cons2 = tm.mkDatatypeConstructorDecl("cons");
++      cons2.addSelector("head", tm.getIntegerSort());
+       cons2.addSelectorSelf("tail");
+-      DatatypeConstructorDecl nil2 = slv.mkDatatypeConstructorDecl("nil");
++      DatatypeConstructorDecl nil2 = tm.mkDatatypeConstructorDecl("nil");
+       DatatypeConstructorDecl[] ctors = new DatatypeConstructorDecl[] {cons2, nil2};
+       Sort consListSort2 = slv.declareDatatype("list2", ctors);
+       test(slv, consListSort2);
+diff --git a/examples/api/java/Exceptions.java b/examples/api/java/Exceptions.java
+index cbe34572f..4aec56164 100644
+--- a/examples/api/java/Exceptions.java
++++ b/examples/api/java/Exceptions.java
+@@ -21,7 +21,8 @@ public class Exceptions
+ {
+   public static void main(String[] args)
+   {
+-    Solver solver = new Solver();
++    TermManager tm = new TermManager();
++    Solver solver = new Solver(tm);
+     {
+       solver.setOption("produce-models", "true");
+ 
+@@ -39,9 +40,9 @@ public class Exceptions
+       // Creating a term with an invalid type
+       try
+       {
+-        Sort integer = solver.getIntegerSort();
+-        Term x = solver.mkVar(integer, "x");
+-        Term invalidTerm = solver.mkTerm(Kind.AND, x, x);
++        Sort integer = tm.getIntegerSort();
++        Term x = tm.mkVar(integer, "x");
++        Term invalidTerm = tm.mkTerm(Kind.AND, x, x);
+         solver.checkSatAssuming(invalidTerm);
+         System.exit(1);
+       }
+@@ -53,7 +54,7 @@ public class Exceptions
+       // Asking for a model after unsat result
+       try
+       {
+-        solver.checkSatAssuming(solver.mkBoolean(false));
++        solver.checkSatAssuming(tm.mkBoolean(false));
+         solver.getModel(new Sort[] {}, new Term[] {});
+         System.exit(1);
+       }
+diff --git a/examples/api/java/Extract.java b/examples/api/java/Extract.java
+index 2e88b6afb..b3ac5e2a1 100644
+--- a/examples/api/java/Extract.java
++++ b/examples/api/java/Extract.java
+@@ -21,31 +21,32 @@ public class Extract
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       slv.setLogic("QF_BV"); // Set the logic
+ 
+-      Sort bitvector32 = slv.mkBitVectorSort(32);
++      Sort bitvector32 = tm.mkBitVectorSort(32);
+ 
+-      Term x = slv.mkConst(bitvector32, "a");
++      Term x = tm.mkConst(bitvector32, "a");
+ 
+-      Op ext_31_1 = slv.mkOp(Kind.BITVECTOR_EXTRACT, 31, 1);
+-      Term x_31_1 = slv.mkTerm(ext_31_1, x);
++      Op ext_31_1 = tm.mkOp(Kind.BITVECTOR_EXTRACT, 31, 1);
++      Term x_31_1 = tm.mkTerm(ext_31_1, x);
+ 
+-      Op ext_30_0 = slv.mkOp(Kind.BITVECTOR_EXTRACT, 30, 0);
+-      Term x_30_0 = slv.mkTerm(ext_30_0, x);
++      Op ext_30_0 = tm.mkOp(Kind.BITVECTOR_EXTRACT, 30, 0);
++      Term x_30_0 = tm.mkTerm(ext_30_0, x);
+ 
+-      Op ext_31_31 = slv.mkOp(Kind.BITVECTOR_EXTRACT, 31, 31);
+-      Term x_31_31 = slv.mkTerm(ext_31_31, x);
++      Op ext_31_31 = tm.mkOp(Kind.BITVECTOR_EXTRACT, 31, 31);
++      Term x_31_31 = tm.mkTerm(ext_31_31, x);
+ 
+-      Op ext_0_0 = slv.mkOp(Kind.BITVECTOR_EXTRACT, 0, 0);
+-      Term x_0_0 = slv.mkTerm(ext_0_0, x);
++      Op ext_0_0 = tm.mkOp(Kind.BITVECTOR_EXTRACT, 0, 0);
++      Term x_0_0 = tm.mkTerm(ext_0_0, x);
+ 
+-      Term eq = slv.mkTerm(Kind.EQUAL, x_31_1, x_30_0);
++      Term eq = tm.mkTerm(Kind.EQUAL, x_31_1, x_30_0);
+       System.out.println(" Asserting: " + eq);
+       slv.assertFormula(eq);
+ 
+-      Term eq2 = slv.mkTerm(Kind.EQUAL, x_31_31, x_0_0);
++      Term eq2 = tm.mkTerm(Kind.EQUAL, x_31_31, x_0_0);
+       System.out.println(" Check entailment assuming: " + eq2);
+       System.out.println(" Expect UNSAT. ");
+       System.out.println(" cvc5: " + slv.checkSatAssuming(eq2.notTerm()));
+diff --git a/examples/api/java/FiniteField.java b/examples/api/java/FiniteField.java
+index caaa7989f..f009b1657 100644
+--- a/examples/api/java/FiniteField.java
++++ b/examples/api/java/FiniteField.java
+@@ -21,28 +21,29 @@ public class FiniteField
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       slv.setLogic("QF_FF"); // Set the logic
+ 
+-      Sort f5 = slv.mkFiniteFieldSort("5", 10);
+-      Term a = slv.mkConst(f5, "a");
+-      Term b = slv.mkConst(f5, "b");
+-      Term z = slv.mkFiniteFieldElem("0", f5, 10);
++      Sort f5 = tm.mkFiniteFieldSort("5", 10);
++      Term a = tm.mkConst(f5, "a");
++      Term b = tm.mkConst(f5, "b");
++      Term z = tm.mkFiniteFieldElem("0", f5, 10);
+ 
+       System.out.println("is ff: " + f5.isFiniteField());
+       System.out.println("ff size: " + f5.getFiniteFieldSize());
+       System.out.println("is ff value: " + z.isFiniteFieldValue());
+       System.out.println("ff value: " + z.getFiniteFieldValue());
+ 
+-      Term inv = slv.mkTerm(Kind.EQUAL,
+-          slv.mkTerm(Kind.FINITE_FIELD_ADD,
+-              slv.mkTerm(Kind.FINITE_FIELD_MULT, a, b),
+-              slv.mkFiniteFieldElem("-1", f5, 10)),
++      Term inv = tm.mkTerm(Kind.EQUAL,
++          tm.mkTerm(Kind.FINITE_FIELD_ADD,
++              tm.mkTerm(Kind.FINITE_FIELD_MULT, a, b),
++              tm.mkFiniteFieldElem("-1", f5, 10)),
+           z);
+ 
+-      Term aIsTwo = slv.mkTerm(
+-          Kind.EQUAL, slv.mkTerm(Kind.FINITE_FIELD_ADD, a, slv.mkFiniteFieldElem("-2", f5, 10)), z);
++      Term aIsTwo = tm.mkTerm(
++          Kind.EQUAL, tm.mkTerm(Kind.FINITE_FIELD_ADD, a, tm.mkFiniteFieldElem("-2", f5, 10)), z);
+ 
+       slv.assertFormula(inv);
+       slv.assertFormula(aIsTwo);
+@@ -50,8 +51,8 @@ public class FiniteField
+       Result r = slv.checkSat();
+       System.out.println("is sat: " + r.isSat());
+ 
+-      Term bIsTwo = slv.mkTerm(
+-          Kind.EQUAL, slv.mkTerm(Kind.FINITE_FIELD_ADD, b, slv.mkFiniteFieldElem("-2", f5, 10)), z);
++      Term bIsTwo = tm.mkTerm(
++          Kind.EQUAL, tm.mkTerm(Kind.FINITE_FIELD_ADD, b, tm.mkFiniteFieldElem("-2", f5, 10)), z);
+ 
+       slv.assertFormula(bIsTwo);
+       r = slv.checkSat();
+diff --git a/examples/api/java/HelloWorld.java b/examples/api/java/HelloWorld.java
+index 21d77609b..b3ccd623c 100644
+--- a/examples/api/java/HelloWorld.java
++++ b/examples/api/java/HelloWorld.java
+@@ -19,9 +19,10 @@ public class HelloWorld
+ {
+   public static void main(String[] args)
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+-      Term helloworld = slv.mkConst(slv.getBooleanSort(), "Hello World!");
++      Term helloworld = tm.mkConst(tm.getBooleanSort(), "Hello World!");
+ 
+       System.out.println(helloworld + " is " + slv.checkSatAssuming(helloworld));
+     }
+diff --git a/examples/api/java/LinearArith.java b/examples/api/java/LinearArith.java
+index 668c3110c..8e441adb0 100644
+--- a/examples/api/java/LinearArith.java
++++ b/examples/api/java/LinearArith.java
+@@ -19,7 +19,8 @@ public class LinearArith
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       slv.setLogic("QF_LIRA"); // Set the logic
+ 
+@@ -27,34 +28,34 @@ public class LinearArith
+       // the maximum value of y - x is 2/3
+ 
+       // Sorts
+-      Sort real = slv.getRealSort();
+-      Sort integer = slv.getIntegerSort();
++      Sort real = tm.getRealSort();
++      Sort integer = tm.getIntegerSort();
+ 
+       // Variables
+-      Term x = slv.mkConst(integer, "x");
+-      Term y = slv.mkConst(real, "y");
++      Term x = tm.mkConst(integer, "x");
++      Term y = tm.mkConst(real, "y");
+ 
+       // Constants
+-      Term three = slv.mkInteger(3);
+-      Term neg2 = slv.mkInteger(-2);
+-      Term two_thirds = slv.mkReal(2, 3);
++      Term three = tm.mkInteger(3);
++      Term neg2 = tm.mkInteger(-2);
++      Term two_thirds = tm.mkReal(2, 3);
+ 
+       // Terms
+-      Term three_y = slv.mkTerm(Kind.MULT, three, y);
+-      Term diff = slv.mkTerm(Kind.SUB, y, x);
++      Term three_y = tm.mkTerm(Kind.MULT, three, y);
++      Term diff = tm.mkTerm(Kind.SUB, y, x);
+ 
+       // Formulas
+-      Term x_geq_3y = slv.mkTerm(Kind.GEQ, x, three_y);
+-      Term x_leq_y = slv.mkTerm(Kind.LEQ, x, y);
+-      Term neg2_lt_x = slv.mkTerm(Kind.LT, neg2, x);
++      Term x_geq_3y = tm.mkTerm(Kind.GEQ, x, three_y);
++      Term x_leq_y = tm.mkTerm(Kind.LEQ, x, y);
++      Term neg2_lt_x = tm.mkTerm(Kind.LT, neg2, x);
+ 
+-      Term assertions = slv.mkTerm(Kind.AND, x_geq_3y, x_leq_y, neg2_lt_x);
++      Term assertions = tm.mkTerm(Kind.AND, x_geq_3y, x_leq_y, neg2_lt_x);
+ 
+       System.out.println("Given the assertions " + assertions);
+       slv.assertFormula(assertions);
+ 
+       slv.push();
+-      Term diff_leq_two_thirds = slv.mkTerm(Kind.LEQ, diff, two_thirds);
++      Term diff_leq_two_thirds = tm.mkTerm(Kind.LEQ, diff, two_thirds);
+       System.out.println("Prove that " + diff_leq_two_thirds + " with cvc5.");
+       System.out.println("cvc5 should report UNSAT.");
+       System.out.println(
+@@ -64,7 +65,7 @@ public class LinearArith
+       System.out.println();
+ 
+       slv.push();
+-      Term diff_is_two_thirds = slv.mkTerm(Kind.EQUAL, diff, two_thirds);
++      Term diff_is_two_thirds = tm.mkTerm(Kind.EQUAL, diff, two_thirds);
+       slv.assertFormula(diff_is_two_thirds);
+       System.out.println("Show that the assertions are consistent with ");
+       System.out.println(diff_is_two_thirds + " with cvc5.");
+diff --git a/examples/api/java/Parser.java b/examples/api/java/Parser.java
+index 1cfba2221..d0c6e2880 100644
+--- a/examples/api/java/Parser.java
++++ b/examples/api/java/Parser.java
+@@ -19,7 +19,8 @@ public class Parser
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+ 
+     // set that we should print success after each successful command
+     slv.setOption("print-success", "true");
+diff --git a/examples/api/java/ParserSymbolManager.java b/examples/api/java/ParserSymbolManager.java
+index 6678c27fb..0421e0b7f 100644
+--- a/examples/api/java/ParserSymbolManager.java
++++ b/examples/api/java/ParserSymbolManager.java
+@@ -20,7 +20,8 @@ public class ParserSymbolManager
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+ 
+     SymbolManager sm = new SymbolManager(slv);
+ 
+diff --git a/examples/api/java/QuickStart.java b/examples/api/java/QuickStart.java
+index 9fbcd368c..ddcba6654 100644
+--- a/examples/api/java/QuickStart.java
++++ b/examples/api/java/QuickStart.java
+@@ -24,15 +24,21 @@ public class QuickStart
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
++    // Create a term manager
++    //! [docs-java-quickstart-0 start]
++    TermManager tm = new TermManager();
++    //! [docs-java-quickstart-0 end]
+     // Create a solver
+-    Solver solver = new Solver();
++    //! [docs-java-quickstart-1 start]
++    Solver solver = new Solver(tm);
++    //! [docs-java-quickstart-1 end]
+     {
+       // We will ask the solver to produce models and unsat cores,
+       // hence these options should be turned on.
+-      //! [docs-java-quickstart-1 start]
++      //! [docs-java-quickstart-2 start]
+       solver.setOption("produce-models", "true");
+       solver.setOption("produce-unsat-cores", "true");
+-      //! [docs-java-quickstart-1 end]
++      //! [docs-java-quickstart-2 end]
+ 
+       // The simplest way to set a logic for the solver is to choose "ALL".
+       // This enables all logics in the solver.
+@@ -41,26 +47,26 @@ public class QuickStart
+       // use the logic name, e.g. "QF_BV" or "QF_AUFBV".
+ 
+       // Set the logic
+-      //! [docs-java-quickstart-2 start]
++      //! [docs-java-quickstart-3 start]
+       solver.setLogic("ALL");
+-      //! [docs-java-quickstart-2 end]
++      //! [docs-java-quickstart-3 end]
+ 
+       // In this example, we will define constraints over reals and integers.
+       // Hence, we first obtain the corresponding sorts.
+-      //! [docs-java-quickstart-3 start]
+-      Sort realSort = solver.getRealSort();
+-      Sort intSort = solver.getIntegerSort();
+-      //! [docs-java-quickstart-3 end]
++      //! [docs-java-quickstart-4 start]
++      Sort realSort = tm.getRealSort();
++      Sort intSort = tm.getIntegerSort();
++      //! [docs-java-quickstart-4 end]
+ 
+       // x and y will be real variables, while a and b will be integer variables.
+       // Formally, their cpp type is Term,
+       // and they are called "constants" in SMT jargon:
+-      //! [docs-java-quickstart-4 start]
+-      Term x = solver.mkConst(realSort, "x");
+-      Term y = solver.mkConst(realSort, "y");
+-      Term a = solver.mkConst(intSort, "a");
+-      Term b = solver.mkConst(intSort, "b");
+-      //! [docs-java-quickstart-4 end]
++      //! [docs-java-quickstart-5 start]
++      Term x = tm.mkConst(realSort, "x");
++      Term y = tm.mkConst(realSort, "y");
++      Term a = tm.mkConst(intSort, "a");
++      Term b = tm.mkConst(intSort, "b");
++      //! [docs-java-quickstart-5 end]
+ 
+       // Our constraints regarding x and y will be:
+       //
+@@ -70,62 +76,62 @@ public class QuickStart
+       //   (4)  x <= y
+       //
+ 
+-      //! [docs-java-quickstart-5 start]
++      //! [docs-java-quickstart-6 start]
+       // Formally, constraints are also terms. Their sort is Boolean.
+       // We will construct these constraints gradually,
+       // by defining each of their components.
+       // We start with the constant numerals 0 and 1:
+-      Term zero = solver.mkReal(0);
+-      Term one = solver.mkReal(1);
++      Term zero = tm.mkReal(0);
++      Term one = tm.mkReal(1);
+ 
+       // Next, we construct the term x + y
+-      Term xPlusY = solver.mkTerm(Kind.ADD, x, y);
++      Term xPlusY = tm.mkTerm(Kind.ADD, x, y);
+ 
+       // Now we can define the constraints.
+       // They use the operators +, <=, and <.
+       // In the API, these are denoted by ADD, LEQ, and LT.
+       // A list of available operators is available in:
+       // src/api/cpp/cvc5_kind.h
+-      Term constraint1 = solver.mkTerm(Kind.LT, zero, x);
+-      Term constraint2 = solver.mkTerm(Kind.LT, zero, y);
+-      Term constraint3 = solver.mkTerm(Kind.LT, xPlusY, one);
+-      Term constraint4 = solver.mkTerm(Kind.LEQ, x, y);
++      Term constraint1 = tm.mkTerm(Kind.LT, zero, x);
++      Term constraint2 = tm.mkTerm(Kind.LT, zero, y);
++      Term constraint3 = tm.mkTerm(Kind.LT, xPlusY, one);
++      Term constraint4 = tm.mkTerm(Kind.LEQ, x, y);
+ 
+       // Now we assert the constraints to the solver.
+       solver.assertFormula(constraint1);
+       solver.assertFormula(constraint2);
+       solver.assertFormula(constraint3);
+       solver.assertFormula(constraint4);
+-      //! [docs-java-quickstart-5 end]
++      //! [docs-java-quickstart-6 end]
+ 
+       // Check if the formula is satisfiable, that is,
+       // are there real values for x and y that satisfy all the constraints?
+-      //! [docs-java-quickstart-6 start]
++      //! [docs-java-quickstart-7 start]
+       Result r1 = solver.checkSat();
+-      //! [docs-java-quickstart-6 end]
++      //! [docs-java-quickstart-7 end]
+ 
+       // The result is either SAT, UNSAT, or UNKNOWN.
+       // In this case, it is SAT.
+-      //! [docs-java-quickstart-7 start]
++      //! [docs-java-quickstart-8 start]
+       System.out.println("expected: sat");
+       System.out.println("result: " + r1);
+-      //! [docs-java-quickstart-7 end]
++      //! [docs-java-quickstart-8 end]
+ 
+       // We can get the values for x and y that satisfy the constraints.
+-      //! [docs-java-quickstart-8 start]
++      //! [docs-java-quickstart-9 start]
+       Term xVal = solver.getValue(x);
+       Term yVal = solver.getValue(y);
+-      //! [docs-java-quickstart-8 end]
++      //! [docs-java-quickstart-9 end]
+ 
+       // It is also possible to get values for compound terms,
+       // even if those did not appear in the original formula.
+-      //! [docs-java-quickstart-9 start]
+-      Term xMinusY = solver.mkTerm(Kind.SUB, x, y);
++      //! [docs-java-quickstart-10 start]
++      Term xMinusY = tm.mkTerm(Kind.SUB, x, y);
+       Term xMinusYVal = solver.getValue(xMinusY);
+-      //! [docs-java-quickstart-9 end]
++      //! [docs-java-quickstart-10 end]
+ 
+       // Further, we can convert the values to java types
+-      //! [docs-java-quickstart-10 start]
++      //! [docs-java-quickstart-11 start]
+       Pair<BigInteger, BigInteger> xPair = xVal.getRealValue();
+       Pair<BigInteger, BigInteger> yPair = yVal.getRealValue();
+       Pair<BigInteger, BigInteger> xMinusYPair = xMinusYVal.getRealValue();
+@@ -133,18 +139,18 @@ public class QuickStart
+       System.out.println("value for x: " + xPair.first + "/" + xPair.second);
+       System.out.println("value for y: " + yPair.first + "/" + yPair.second);
+       System.out.println("value for x - y: " + xMinusYPair.first + "/" + xMinusYPair.second);
+-      //! [docs-java-quickstart-10 end]
++      //! [docs-java-quickstart-11 end]
+ 
+       // Another way to independently compute the value of x - y would be
+       // to perform the (rational) arithmetic manually.
+       // However, for more complex terms,
+       // it is easier to let the solver do the evaluation.
+-      //! [docs-java-quickstart-11 start]
++      //! [docs-java-quickstart-12 start]
+       Pair<BigInteger, BigInteger> xMinusYComputed =
+-          new Pair(xPair.first.multiply(yPair.second).subtract(xPair.second.multiply(yPair.first)),
++          new Pair<>(xPair.first.multiply(yPair.second).subtract(xPair.second.multiply(yPair.first)),
+               xPair.second.multiply(yPair.second));
+       BigInteger g = xMinusYComputed.first.gcd(xMinusYComputed.second);
+-      xMinusYComputed = new Pair(xMinusYComputed.first.divide(g), xMinusYComputed.second.divide(g));
++      xMinusYComputed = new Pair<>(xMinusYComputed.first.divide(g), xMinusYComputed.second.divide(g));
+       if (xMinusYComputed.equals(xMinusYPair))
+       {
+         System.out.println("computed correctly");
+@@ -153,39 +159,39 @@ public class QuickStart
+       {
+         System.out.println("computed incorrectly");
+       }
+-      //! [docs-java-quickstart-11 end]
++      //! [docs-java-quickstart-12 end]
+ 
+       // Next, we will check satisfiability of the same formula,
+       // only this time over integer variables a and b.
+ 
+       // We start by resetting assertions added to the solver.
+-      //! [docs-java-quickstart-12 start]
++      //! [docs-java-quickstart-13 start]
+       solver.resetAssertions();
+-      //! [docs-java-quickstart-12 end]
++      //! [docs-java-quickstart-13 end]
+ 
+       // Next, we assert the same assertions above with integers.
+       // This time, we inline the construction of terms
+       // to the assertion command.
+-      //! [docs-java-quickstart-13 start]
+-      solver.assertFormula(solver.mkTerm(Kind.LT, solver.mkInteger(0), a));
+-      solver.assertFormula(solver.mkTerm(Kind.LT, solver.mkInteger(0), b));
++      //! [docs-java-quickstart-14 start]
++      solver.assertFormula(tm.mkTerm(Kind.LT, tm.mkInteger(0), a));
++      solver.assertFormula(tm.mkTerm(Kind.LT, tm.mkInteger(0), b));
+       solver.assertFormula(
+-          solver.mkTerm(Kind.LT, solver.mkTerm(Kind.ADD, a, b), solver.mkInteger(1)));
+-      solver.assertFormula(solver.mkTerm(Kind.LEQ, a, b));
+-      //! [docs-java-quickstart-13 end]
++          tm.mkTerm(Kind.LT, tm.mkTerm(Kind.ADD, a, b), tm.mkInteger(1)));
++      solver.assertFormula(tm.mkTerm(Kind.LEQ, a, b));
++      //! [docs-java-quickstart-14 end]
+ 
+       // We check whether the revised assertion is satisfiable.
+-      //! [docs-java-quickstart-14 start]
++      //! [docs-java-quickstart-15 start]
+       Result r2 = solver.checkSat();
+ 
+       // This time the formula is unsatisfiable
+       System.out.println("expected: unsat");
+       System.out.println("result: " + r2);
+-      //! [docs-java-quickstart-14 end]
++      //! [docs-java-quickstart-15 end]
+ 
+       // We can query the solver for an unsatisfiable core, i.e., a subset
+       // of the assertions that is already unsatisfiable.
+-      //! [docs-java-quickstart-15 start]
++      //! [docs-java-quickstart-16 start]
+       List<Term> unsatCore = Arrays.asList(solver.getUnsatCore());
+       System.out.println("unsat core size: " + unsatCore.size());
+       System.out.println("unsat core: ");
+@@ -193,7 +199,7 @@ public class QuickStart
+       {
+         System.out.println(t);
+       }
+-      //! [docs-java-quickstart-15 end]
++      //! [docs-java-quickstart-16 end]
+     }
+     Context.deletePointers();
+   }
+diff --git a/examples/api/java/Relations.java b/examples/api/java/Relations.java
+index 5046d016e..bc68da895 100644
+--- a/examples/api/java/Relations.java
++++ b/examples/api/java/Relations.java
+@@ -21,7 +21,8 @@ public class Relations
+ {
+   public static void main(String[] args) throws CVC5ApiException
+   {
+-    Solver solver = new Solver();
++    TermManager tm = new TermManager();
++    Solver solver = new Solver(tm);
+     {
+       // Set the logic
+       solver.setLogic("ALL");
+@@ -35,90 +36,89 @@ public class Relations
+       solver.setOption("sets-ext", "true");
+ 
+       // (declare-sort Person 0)
+-      Sort personSort = solver.mkUninterpretedSort("Person");
++      Sort personSort = tm.mkUninterpretedSort("Person");
+ 
+       // (Tuple Person)
+-      Sort tupleArity1 = solver.mkTupleSort(new Sort[] {personSort});
++      Sort tupleArity1 = tm.mkTupleSort(new Sort[] {personSort});
+       // (Relation Person)
+-      Sort relationArity1 = solver.mkSetSort(tupleArity1);
++      Sort relationArity1 = tm.mkSetSort(tupleArity1);
+ 
+       // (Tuple Person Person)
+-      Sort tupleArity2 = solver.mkTupleSort(new Sort[] {personSort, personSort});
++      Sort tupleArity2 = tm.mkTupleSort(new Sort[] {personSort, personSort});
+       // (Relation Person Person)
+-      Sort relationArity2 = solver.mkSetSort(tupleArity2);
++      Sort relationArity2 = tm.mkSetSort(tupleArity2);
+ 
+       // empty set
+-      Term emptySetTerm = solver.mkEmptySet(relationArity1);
++      Term emptySetTerm = tm.mkEmptySet(relationArity1);
+ 
+       // empty relation
+-      Term emptyRelationTerm = solver.mkEmptySet(relationArity2);
++      Term emptyRelationTerm = tm.mkEmptySet(relationArity2);
+ 
+       // universe set
+-      Term universeSet = solver.mkUniverseSet(relationArity1);
++      Term universeSet = tm.mkUniverseSet(relationArity1);
+ 
+       // variables
+-      Term people = solver.mkConst(relationArity1, "people");
+-      Term males = solver.mkConst(relationArity1, "males");
+-      Term females = solver.mkConst(relationArity1, "females");
+-      Term father = solver.mkConst(relationArity2, "father");
+-      Term mother = solver.mkConst(relationArity2, "mother");
+-      Term parent = solver.mkConst(relationArity2, "parent");
+-      Term ancestor = solver.mkConst(relationArity2, "ancestor");
+-      Term descendant = solver.mkConst(relationArity2, "descendant");
+-
+-      Term isEmpty1 = solver.mkTerm(EQUAL, males, emptySetTerm);
+-      Term isEmpty2 = solver.mkTerm(EQUAL, females, emptySetTerm);
++      Term people = tm.mkConst(relationArity1, "people");
++      Term males = tm.mkConst(relationArity1, "males");
++      Term females = tm.mkConst(relationArity1, "females");
++      Term father = tm.mkConst(relationArity2, "father");
++      Term mother = tm.mkConst(relationArity2, "mother");
++      Term parent = tm.mkConst(relationArity2, "parent");
++      Term ancestor = tm.mkConst(relationArity2, "ancestor");
++      Term descendant = tm.mkConst(relationArity2, "descendant");
++
++      Term isEmpty1 = tm.mkTerm(EQUAL, males, emptySetTerm);
++      Term isEmpty2 = tm.mkTerm(EQUAL, females, emptySetTerm);
+ 
+       // (assert (= people (as set.universe (Relation Person))))
+-      Term peopleAreTheUniverse = solver.mkTerm(EQUAL, people, universeSet);
++      Term peopleAreTheUniverse = tm.mkTerm(EQUAL, people, universeSet);
+       // (assert (not (= males (as set.empty (Relation Person)))))
+-      Term maleSetIsNotEmpty = solver.mkTerm(NOT, isEmpty1);
++      Term maleSetIsNotEmpty = tm.mkTerm(NOT, isEmpty1);
+       // (assert (not (= females (as set.empty (Relation Person)))))
+-      Term femaleSetIsNotEmpty = solver.mkTerm(NOT, isEmpty2);
++      Term femaleSetIsNotEmpty = tm.mkTerm(NOT, isEmpty2);
+ 
+       // (assert (= (set.inter males females)
+       //            (as set.empty (Relation Person))))
+-      Term malesFemalesIntersection = solver.mkTerm(SET_INTER, males, females);
+-      Term malesAndFemalesAreDisjoint =
+-          solver.mkTerm(EQUAL, malesFemalesIntersection, emptySetTerm);
++      Term malesFemalesIntersection = tm.mkTerm(SET_INTER, males, females);
++      Term malesAndFemalesAreDisjoint = tm.mkTerm(EQUAL, malesFemalesIntersection, emptySetTerm);
+ 
+       // (assert (not (= father (as set.empty (Relation Person Person)))))
+       // (assert (not (= mother (as set.empty (Relation Person Person)))))
+-      Term isEmpty3 = solver.mkTerm(EQUAL, father, emptyRelationTerm);
+-      Term isEmpty4 = solver.mkTerm(EQUAL, mother, emptyRelationTerm);
+-      Term fatherIsNotEmpty = solver.mkTerm(NOT, isEmpty3);
+-      Term motherIsNotEmpty = solver.mkTerm(NOT, isEmpty4);
++      Term isEmpty3 = tm.mkTerm(EQUAL, father, emptyRelationTerm);
++      Term isEmpty4 = tm.mkTerm(EQUAL, mother, emptyRelationTerm);
++      Term fatherIsNotEmpty = tm.mkTerm(NOT, isEmpty3);
++      Term motherIsNotEmpty = tm.mkTerm(NOT, isEmpty4);
+ 
+       // fathers are males
+       // (assert (set.subset (rel.join father people) males))
+-      Term fathers = solver.mkTerm(RELATION_JOIN, father, people);
+-      Term fathersAreMales = solver.mkTerm(SET_SUBSET, fathers, males);
++      Term fathers = tm.mkTerm(RELATION_JOIN, father, people);
++      Term fathersAreMales = tm.mkTerm(SET_SUBSET, fathers, males);
+ 
+       // mothers are females
+       // (assert (set.subset (rel.join mother people) females))
+-      Term mothers = solver.mkTerm(RELATION_JOIN, mother, people);
+-      Term mothersAreFemales = solver.mkTerm(SET_SUBSET, mothers, females);
++      Term mothers = tm.mkTerm(RELATION_JOIN, mother, people);
++      Term mothersAreFemales = tm.mkTerm(SET_SUBSET, mothers, females);
+ 
+       // (assert (= parent (set.union father mother)))
+-      Term unionFatherMother = solver.mkTerm(SET_UNION, father, mother);
+-      Term parentIsFatherOrMother = solver.mkTerm(EQUAL, parent, unionFatherMother);
++      Term unionFatherMother = tm.mkTerm(SET_UNION, father, mother);
++      Term parentIsFatherOrMother = tm.mkTerm(EQUAL, parent, unionFatherMother);
+ 
+       // (assert (= ancestor (rel.tclosure parent)))
+-      Term transitiveClosure = solver.mkTerm(RELATION_TCLOSURE, parent);
+-      Term ancestorFormula = solver.mkTerm(EQUAL, ancestor, transitiveClosure);
++      Term transitiveClosure = tm.mkTerm(RELATION_TCLOSURE, parent);
++      Term ancestorFormula = tm.mkTerm(EQUAL, ancestor, transitiveClosure);
+ 
+       // (assert (= descendant (rel.transpose ancestor)))
+-      Term transpose = solver.mkTerm(RELATION_TRANSPOSE, ancestor);
+-      Term descendantFormula = solver.mkTerm(EQUAL, descendant, transpose);
++      Term transpose = tm.mkTerm(RELATION_TRANSPOSE, ancestor);
++      Term descendantFormula = tm.mkTerm(EQUAL, descendant, transpose);
+ 
+       // (assert (forall ((x Person)) (not (set.member (tuple x x) ancestor))))
+-      Term x = solver.mkVar(personSort, "x");
+-      Term xxTuple = solver.mkTuple(new Term[] {x, x});
+-      Term member = solver.mkTerm(SET_MEMBER, xxTuple, ancestor);
+-      Term notMember = solver.mkTerm(NOT, member);
++      Term x = tm.mkVar(personSort, "x");
++      Term xxTuple = tm.mkTuple(new Term[] {x, x});
++      Term member = tm.mkTerm(SET_MEMBER, xxTuple, ancestor);
++      Term notMember = tm.mkTerm(NOT, member);
+ 
+-      Term quantifiedVariables = solver.mkTerm(VARIABLE_LIST, x);
+-      Term noSelfAncestor = solver.mkTerm(FORALL, quantifiedVariables, notMember);
++      Term quantifiedVariables = tm.mkTerm(VARIABLE_LIST, x);
++      Term noSelfAncestor = tm.mkTerm(FORALL, quantifiedVariables, notMember);
+ 
+       // formulas
+       solver.assertFormula(peopleAreTheUniverse);
+diff --git a/examples/api/java/Sequences.java b/examples/api/java/Sequences.java
+index 1b99ce7c2..2a921715f 100644
+--- a/examples/api/java/Sequences.java
++++ b/examples/api/java/Sequences.java
+@@ -21,7 +21,8 @@ public class Sequences
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       // Set the logic
+       slv.setLogic("QF_SLIA");
+@@ -33,27 +34,27 @@ public class Sequences
+       slv.setOption("output-language", "smt2");
+ 
+       // Sequence sort
+-      Sort intSeq = slv.mkSequenceSort(slv.getIntegerSort());
++      Sort intSeq = tm.mkSequenceSort(tm.getIntegerSort());
+ 
+       // Sequence variables
+-      Term x = slv.mkConst(intSeq, "x");
+-      Term y = slv.mkConst(intSeq, "y");
++      Term x = tm.mkConst(intSeq, "x");
++      Term y = tm.mkConst(intSeq, "y");
+ 
+       // Empty sequence
+-      Term empty = slv.mkEmptySequence(slv.getIntegerSort());
++      Term empty = tm.mkEmptySequence(tm.getIntegerSort());
+       // Sequence concatenation: x.y.empty
+-      Term concat = slv.mkTerm(SEQ_CONCAT, x, y, empty);
++      Term concat = tm.mkTerm(SEQ_CONCAT, x, y, empty);
+       // Sequence length: |x.y.empty|
+-      Term concat_len = slv.mkTerm(SEQ_LENGTH, concat);
++      Term concat_len = tm.mkTerm(SEQ_LENGTH, concat);
+       // |x.y.empty| > 1
+-      Term formula1 = slv.mkTerm(GT, concat_len, slv.mkInteger(1));
++      Term formula1 = tm.mkTerm(GT, concat_len, tm.mkInteger(1));
+       // Sequence unit: seq(1)
+-      Term unit = slv.mkTerm(SEQ_UNIT, slv.mkInteger(1));
++      Term unit = tm.mkTerm(SEQ_UNIT, tm.mkInteger(1));
+       // x = seq(1)
+-      Term formula2 = slv.mkTerm(EQUAL, x, unit);
++      Term formula2 = tm.mkTerm(EQUAL, x, unit);
+ 
+       // Make a query
+-      Term q = slv.mkTerm(AND, formula1, formula2);
++      Term q = tm.mkTerm(AND, formula1, formula2);
+ 
+       // check sat
+       Result result = slv.checkSatAssuming(q);
+diff --git a/examples/api/java/Sets.java b/examples/api/java/Sets.java
+index 09b0ff184..66dae112c 100644
+--- a/examples/api/java/Sets.java
++++ b/examples/api/java/Sets.java
+@@ -21,7 +21,8 @@ public class Sets
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       // Optionally, set the logic. We need at least UF for equality predicate,
+       // integers (LIA) and sets (FS).
+@@ -31,24 +32,24 @@ public class Sets
+       slv.setOption("produce-models", "true");
+       slv.setOption("output-language", "smt2");
+ 
+-      Sort integer = slv.getIntegerSort();
+-      Sort set = slv.mkSetSort(integer);
++      Sort integer = tm.getIntegerSort();
++      Sort set = tm.mkSetSort(integer);
+ 
+       // Verify union distributions over intersection
+       // (A union B) intersection C = (A intersection C) union (B intersection C)
+       {
+-        Term A = slv.mkConst(set, "A");
+-        Term B = slv.mkConst(set, "B");
+-        Term C = slv.mkConst(set, "C");
++        Term A = tm.mkConst(set, "A");
++        Term B = tm.mkConst(set, "B");
++        Term C = tm.mkConst(set, "C");
+ 
+-        Term unionAB = slv.mkTerm(SET_UNION, A, B);
+-        Term lhs = slv.mkTerm(SET_INTER, unionAB, C);
++        Term unionAB = tm.mkTerm(SET_UNION, A, B);
++        Term lhs = tm.mkTerm(SET_INTER, unionAB, C);
+ 
+-        Term intersectionAC = slv.mkTerm(SET_INTER, A, C);
+-        Term intersectionBC = slv.mkTerm(SET_INTER, B, C);
+-        Term rhs = slv.mkTerm(SET_UNION, intersectionAC, intersectionBC);
++        Term intersectionAC = tm.mkTerm(SET_INTER, A, C);
++        Term intersectionBC = tm.mkTerm(SET_INTER, B, C);
++        Term rhs = tm.mkTerm(SET_UNION, intersectionAC, intersectionBC);
+ 
+-        Term theorem = slv.mkTerm(EQUAL, lhs, rhs);
++        Term theorem = tm.mkTerm(EQUAL, lhs, rhs);
+ 
+         System.out.println(
+             "cvc5 reports: " + theorem + " is " + slv.checkSatAssuming(theorem.notTerm()) + ".");
+@@ -56,10 +57,10 @@ public class Sets
+ 
+       // Verify set.empty is a subset of any set
+       {
+-        Term A = slv.mkConst(set, "A");
+-        Term emptyset = slv.mkEmptySet(set);
++        Term A = tm.mkConst(set, "A");
++        Term emptyset = tm.mkEmptySet(set);
+ 
+-        Term theorem = slv.mkTerm(SET_SUBSET, emptyset, A);
++        Term theorem = tm.mkTerm(SET_SUBSET, emptyset, A);
+ 
+         System.out.println(
+             "cvc5 reports: " + theorem + " is " + slv.checkSatAssuming(theorem.notTerm()) + ".");
+@@ -67,20 +68,20 @@ public class Sets
+ 
+       // Find me an element in {1, 2} intersection {2, 3}, if there is one.
+       {
+-        Term one = slv.mkInteger(1);
+-        Term two = slv.mkInteger(2);
+-        Term three = slv.mkInteger(3);
++        Term one = tm.mkInteger(1);
++        Term two = tm.mkInteger(2);
++        Term three = tm.mkInteger(3);
+ 
+-        Term singleton_one = slv.mkTerm(SET_SINGLETON, one);
+-        Term singleton_two = slv.mkTerm(SET_SINGLETON, two);
+-        Term singleton_three = slv.mkTerm(SET_SINGLETON, three);
+-        Term one_two = slv.mkTerm(SET_UNION, singleton_one, singleton_two);
+-        Term two_three = slv.mkTerm(SET_UNION, singleton_two, singleton_three);
+-        Term intersection = slv.mkTerm(SET_INTER, one_two, two_three);
++        Term singleton_one = tm.mkTerm(SET_SINGLETON, one);
++        Term singleton_two = tm.mkTerm(SET_SINGLETON, two);
++        Term singleton_three = tm.mkTerm(SET_SINGLETON, three);
++        Term one_two = tm.mkTerm(SET_UNION, singleton_one, singleton_two);
++        Term two_three = tm.mkTerm(SET_UNION, singleton_two, singleton_three);
++        Term intersection = tm.mkTerm(SET_INTER, one_two, two_three);
+ 
+-        Term x = slv.mkConst(integer, "x");
++        Term x = tm.mkConst(integer, "x");
+ 
+-        Term e = slv.mkTerm(SET_MEMBER, x, intersection);
++        Term e = tm.mkTerm(SET_MEMBER, x, intersection);
+ 
+         Result result = slv.checkSatAssuming(e);
+         System.out.println("cvc5 reports: " + e + " is " + result + ".");
+diff --git a/examples/api/java/Statistics.java b/examples/api/java/Statistics.java
+index 3b20918f0..26d04da12 100644
+--- a/examples/api/java/Statistics.java
++++ b/examples/api/java/Statistics.java
+@@ -23,7 +23,8 @@ public class Statistics
+ {
+   public static void main(String[] args)
+   {
+-    Solver solver = new Solver();
++    TermManager tm = new TermManager();
++    Solver solver = new Solver(tm);
+     {
+       // Get the statistics from the `Solver` and iterate over them. The
+       // `Statistics` class implements the `Iterable<Pair<String, Stat>>` interface.
+diff --git a/examples/api/java/Strings.java b/examples/api/java/Strings.java
+index 4052d8071..bb8554e36 100644
+--- a/examples/api/java/Strings.java
++++ b/examples/api/java/Strings.java
+@@ -21,7 +21,8 @@ public class Strings
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       // Set the logic
+       slv.setLogic("QF_SLIA");
+@@ -33,51 +34,50 @@ public class Strings
+       slv.setOption("output-language", "smt2");
+ 
+       // String type
+-      Sort string = slv.getStringSort();
++      Sort string = tm.getStringSort();
+ 
+       // std::string
+       String str_ab = "ab";
+       // String constants
+-      Term ab = slv.mkString(str_ab);
+-      Term abc = slv.mkString("abc");
++      Term ab = tm.mkString(str_ab);
++      Term abc = tm.mkString("abc");
+       // String variables
+-      Term x = slv.mkConst(string, "x");
+-      Term y = slv.mkConst(string, "y");
+-      Term z = slv.mkConst(string, "z");
++      Term x = tm.mkConst(string, "x");
++      Term y = tm.mkConst(string, "y");
++      Term z = tm.mkConst(string, "z");
+ 
+       // String concatenation: x.ab.y
+-      Term lhs = slv.mkTerm(STRING_CONCAT, x, ab, y);
++      Term lhs = tm.mkTerm(STRING_CONCAT, x, ab, y);
+       // String concatenation: abc.z
+-      Term rhs = slv.mkTerm(STRING_CONCAT, abc, z);
++      Term rhs = tm.mkTerm(STRING_CONCAT, abc, z);
+       // x.ab.y = abc.z
+-      Term formula1 = slv.mkTerm(EQUAL, lhs, rhs);
++      Term formula1 = tm.mkTerm(EQUAL, lhs, rhs);
+ 
+       // Length of y: |y|
+-      Term leny = slv.mkTerm(STRING_LENGTH, y);
++      Term leny = tm.mkTerm(STRING_LENGTH, y);
+       // |y| >= 0
+-      Term formula2 = slv.mkTerm(GEQ, leny, slv.mkInteger(0));
++      Term formula2 = tm.mkTerm(GEQ, leny, tm.mkInteger(0));
+ 
+       // Regular expression: (ab[c-e]*f)|g|h
+-      Term r = slv.mkTerm(REGEXP_UNION,
+-          slv.mkTerm(REGEXP_CONCAT,
+-              slv.mkTerm(STRING_TO_REGEXP, slv.mkString("ab")),
+-              slv.mkTerm(
+-                  REGEXP_STAR, slv.mkTerm(REGEXP_RANGE, slv.mkString("c"), slv.mkString("e"))),
+-              slv.mkTerm(STRING_TO_REGEXP, slv.mkString("f"))),
+-          slv.mkTerm(STRING_TO_REGEXP, slv.mkString("g")),
+-          slv.mkTerm(STRING_TO_REGEXP, slv.mkString("h")));
++      Term r = tm.mkTerm(REGEXP_UNION,
++          tm.mkTerm(REGEXP_CONCAT,
++              tm.mkTerm(STRING_TO_REGEXP, tm.mkString("ab")),
++              tm.mkTerm(REGEXP_STAR, tm.mkTerm(REGEXP_RANGE, tm.mkString("c"), tm.mkString("e"))),
++              tm.mkTerm(STRING_TO_REGEXP, tm.mkString("f"))),
++          tm.mkTerm(STRING_TO_REGEXP, tm.mkString("g")),
++          tm.mkTerm(STRING_TO_REGEXP, tm.mkString("h")));
+ 
+       // String variables
+-      Term s1 = slv.mkConst(string, "s1");
+-      Term s2 = slv.mkConst(string, "s2");
++      Term s1 = tm.mkConst(string, "s1");
++      Term s2 = tm.mkConst(string, "s2");
+       // String concatenation: s1.s2
+-      Term s = slv.mkTerm(STRING_CONCAT, s1, s2);
++      Term s = tm.mkTerm(STRING_CONCAT, s1, s2);
+ 
+       // s1.s2 in (ab[c-e]*f)|g|h
+-      Term formula3 = slv.mkTerm(STRING_IN_REGEXP, s, r);
++      Term formula3 = tm.mkTerm(STRING_IN_REGEXP, s, r);
+ 
+       // Make a query
+-      Term q = slv.mkTerm(AND, formula1, formula2, formula3);
++      Term q = tm.mkTerm(AND, formula1, formula2, formula3);
+ 
+       // check sat
+       Result result = slv.checkSatAssuming(q);
+diff --git a/examples/api/java/SygusFun.java b/examples/api/java/SygusFun.java
+index f1ea354af..62f84b57a 100644
+--- a/examples/api/java/SygusFun.java
++++ b/examples/api/java/SygusFun.java
+@@ -24,7 +24,8 @@ public class SygusFun
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       // required options
+       slv.setOption("sygus", "true");
+@@ -33,28 +34,28 @@ public class SygusFun
+       // set the logic
+       slv.setLogic("LIA");
+ 
+-      Sort integer = slv.getIntegerSort();
+-      Sort bool = slv.getBooleanSort();
++      Sort integer = tm.getIntegerSort();
++      Sort bool = tm.getBooleanSort();
+ 
+       // declare input variables for the functions-to-synthesize
+-      Term x = slv.mkVar(integer, "x");
+-      Term y = slv.mkVar(integer, "y");
++      Term x = tm.mkVar(integer, "x");
++      Term y = tm.mkVar(integer, "y");
+ 
+       // declare the grammar non-terminals
+-      Term start = slv.mkVar(integer, "Start");
+-      Term start_bool = slv.mkVar(bool, "StartBool");
++      Term start = tm.mkVar(integer, "Start");
++      Term start_bool = tm.mkVar(bool, "StartBool");
+ 
+       // define the rules
+-      Term zero = slv.mkInteger(0);
+-      Term one = slv.mkInteger(1);
++      Term zero = tm.mkInteger(0);
++      Term one = tm.mkInteger(1);
+ 
+-      Term plus = slv.mkTerm(ADD, start, start);
+-      Term minus = slv.mkTerm(SUB, start, start);
+-      Term ite = slv.mkTerm(ITE, start_bool, start, start);
++      Term plus = tm.mkTerm(ADD, start, start);
++      Term minus = tm.mkTerm(SUB, start, start);
++      Term ite = tm.mkTerm(ITE, start_bool, start, start);
+ 
+-      Term And = slv.mkTerm(AND, start_bool, start_bool);
+-      Term Not = slv.mkTerm(NOT, start_bool);
+-      Term leq = slv.mkTerm(LEQ, start, start);
++      Term And = tm.mkTerm(AND, start_bool, start_bool);
++      Term Not = tm.mkTerm(NOT, start_bool);
++      Term leq = tm.mkTerm(LEQ, start, start);
+ 
+       // create the grammar object
+       Grammar g = slv.mkGrammar(new Term[] {x, y}, new Term[] {start, start_bool});
+@@ -72,25 +73,25 @@ public class SygusFun
+       Term varX = slv.declareSygusVar("x", integer);
+       Term varY = slv.declareSygusVar("y", integer);
+ 
+-      Term max_x_y = slv.mkTerm(APPLY_UF, max, varX, varY);
+-      Term min_x_y = slv.mkTerm(APPLY_UF, min, varX, varY);
++      Term max_x_y = tm.mkTerm(APPLY_UF, max, varX, varY);
++      Term min_x_y = tm.mkTerm(APPLY_UF, min, varX, varY);
+ 
+       // add semantic constraints
+       // (constraint (>= (max x y) x))
+-      slv.addSygusConstraint(slv.mkTerm(GEQ, max_x_y, varX));
++      slv.addSygusConstraint(tm.mkTerm(GEQ, max_x_y, varX));
+ 
+       // (constraint (>= (max x y) y))
+-      slv.addSygusConstraint(slv.mkTerm(GEQ, max_x_y, varY));
++      slv.addSygusConstraint(tm.mkTerm(GEQ, max_x_y, varY));
+ 
+       // (constraint (or (= x (max x y))
+       //                 (= y (max x y))))
+       slv.addSygusConstraint(
+-          slv.mkTerm(OR, slv.mkTerm(EQUAL, max_x_y, varX), slv.mkTerm(EQUAL, max_x_y, varY)));
++          tm.mkTerm(OR, tm.mkTerm(EQUAL, max_x_y, varX), tm.mkTerm(EQUAL, max_x_y, varY)));
+ 
+       // (constraint (= (+ (max x y) (min x y))
+       //                (+ x y)))
+       slv.addSygusConstraint(
+-          slv.mkTerm(EQUAL, slv.mkTerm(ADD, max_x_y, min_x_y), slv.mkTerm(ADD, varX, varY)));
++          tm.mkTerm(EQUAL, tm.mkTerm(ADD, max_x_y, min_x_y), tm.mkTerm(ADD, varX, varY)));
+ 
+       // print solutions if available
+       if (slv.checkSynth().hasSolution())
+diff --git a/examples/api/java/SygusInv.java b/examples/api/java/SygusInv.java
+index 4e9c1a48f..4795ac346 100644
+--- a/examples/api/java/SygusInv.java
++++ b/examples/api/java/SygusInv.java
+@@ -24,7 +24,8 @@ public class SygusInv
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       // required options
+       slv.setOption("sygus", "true");
+@@ -33,27 +34,27 @@ public class SygusInv
+       // set the logic
+       slv.setLogic("LIA");
+ 
+-      Sort integer = slv.getIntegerSort();
+-      Sort bool = slv.getBooleanSort();
++      Sort integer = tm.getIntegerSort();
++      Sort bool = tm.getBooleanSort();
+ 
+-      Term zero = slv.mkInteger(0);
+-      Term one = slv.mkInteger(1);
+-      Term ten = slv.mkInteger(10);
++      Term zero = tm.mkInteger(0);
++      Term one = tm.mkInteger(1);
++      Term ten = tm.mkInteger(10);
+ 
+       // declare input variables for functions
+-      Term x = slv.mkVar(integer, "x");
+-      Term xp = slv.mkVar(integer, "xp");
++      Term x = tm.mkVar(integer, "x");
++      Term xp = tm.mkVar(integer, "xp");
+ 
+       // (ite (< x 10) (= xp (+ x 1)) (= xp x))
+-      Term ite = slv.mkTerm(ITE,
+-          slv.mkTerm(LT, x, ten),
+-          slv.mkTerm(EQUAL, xp, slv.mkTerm(ADD, x, one)),
+-          slv.mkTerm(EQUAL, xp, x));
++      Term ite = tm.mkTerm(ITE,
++          tm.mkTerm(LT, x, ten),
++          tm.mkTerm(EQUAL, xp, tm.mkTerm(ADD, x, one)),
++          tm.mkTerm(EQUAL, xp, x));
+ 
+       // define the pre-conditions, transition relations, and post-conditions
+-      Term pre_f = slv.defineFun("pre-f", new Term[] {x}, bool, slv.mkTerm(EQUAL, x, zero));
++      Term pre_f = slv.defineFun("pre-f", new Term[] {x}, bool, tm.mkTerm(EQUAL, x, zero));
+       Term trans_f = slv.defineFun("trans-f", new Term[] {x, xp}, bool, ite);
+-      Term post_f = slv.defineFun("post-f", new Term[] {x}, bool, slv.mkTerm(LEQ, x, ten));
++      Term post_f = slv.defineFun("post-f", new Term[] {x}, bool, tm.mkTerm(LEQ, x, ten));
+ 
+       // declare the invariant-to-synthesize
+       Term inv_f = slv.synthFun("inv-f", new Term[] {x}, bool);
+diff --git a/examples/api/java/Transcendentals.java b/examples/api/java/Transcendentals.java
+index 0100ea1ae..2912e7283 100644
+--- a/examples/api/java/Transcendentals.java
++++ b/examples/api/java/Transcendentals.java
+@@ -21,27 +21,28 @@ public class Transcendentals
+ {
+   public static void main(String args[]) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       slv.setLogic("QF_NRAT");
+ 
+-      Sort real = slv.getRealSort();
++      Sort real = tm.getRealSort();
+ 
+       // Variables
+-      Term x = slv.mkConst(real, "x");
+-      Term y = slv.mkConst(real, "y");
++      Term x = tm.mkConst(real, "x");
++      Term y = tm.mkConst(real, "y");
+ 
+       // Helper terms
+-      Term two = slv.mkReal(2);
+-      Term pi = slv.mkPi();
+-      Term twopi = slv.mkTerm(MULT, two, pi);
+-      Term ysq = slv.mkTerm(MULT, y, y);
+-      Term sinx = slv.mkTerm(SINE, x);
++      Term two = tm.mkReal(2);
++      Term pi = tm.mkPi();
++      Term twopi = tm.mkTerm(MULT, two, pi);
++      Term ysq = tm.mkTerm(MULT, y, y);
++      Term sinx = tm.mkTerm(SINE, x);
+ 
+       // Formulas
+-      Term x_gt_pi = slv.mkTerm(GT, x, pi);
+-      Term x_lt_tpi = slv.mkTerm(LT, x, twopi);
+-      Term ysq_lt_sinx = slv.mkTerm(LT, ysq, sinx);
++      Term x_gt_pi = tm.mkTerm(GT, x, pi);
++      Term x_lt_tpi = tm.mkTerm(LT, x, twopi);
++      Term ysq_lt_sinx = tm.mkTerm(LT, ysq, sinx);
+ 
+       slv.assertFormula(x_gt_pi);
+       slv.assertFormula(x_lt_tpi);
+diff --git a/examples/api/java/Uf.java b/examples/api/java/Uf.java
+index b2cc79d5b..a9bc4e0dc 100644
+--- a/examples/api/java/Uf.java
++++ b/examples/api/java/Uf.java
+@@ -20,38 +20,37 @@ public class Uf
+ {
+   public static void main(String[] args) throws CVC5ApiException
+   {
+-    Solver slv = new Solver();
++    TermManager tm = new TermManager();
++    Solver slv = new Solver(tm);
+     {
+       slv.setLogic("QF_UF");
+ 
+       // Sorts
+-      Sort u = slv.mkUninterpretedSort("U");
+-      Sort bool = slv.getBooleanSort();
+-      Sort uTou = slv.mkFunctionSort(u, u);
+-      Sort uPred = slv.mkFunctionSort(u, bool);
++      Sort u = tm.mkUninterpretedSort("U");
++      Sort bool = tm.getBooleanSort();
++      Sort uTou = tm.mkFunctionSort(u, u);
++      Sort uPred = tm.mkFunctionSort(u, bool);
+ 
+       // Variables
+-      Term x = slv.mkConst(u, "x");
+-      Term y = slv.mkConst(u, "y");
++      Term x = tm.mkConst(u, "x");
++      Term y = tm.mkConst(u, "y");
+ 
+       // Functions
+-      Term f = slv.mkConst(uTou, "f");
+-      Term p = slv.mkConst(uPred, "p");
++      Term f = tm.mkConst(uTou, "f");
++      Term p = tm.mkConst(uPred, "p");
+ 
+       // Terms
+-      Term f_x = slv.mkTerm(Kind.APPLY_UF, f, x);
+-      Term f_y = slv.mkTerm(Kind.APPLY_UF, f, y);
+-      Term p_f_x = slv.mkTerm(Kind.APPLY_UF, p, f_x);
+-      Term p_f_y = slv.mkTerm(Kind.APPLY_UF, p, f_y);
++      Term f_x = tm.mkTerm(Kind.APPLY_UF, f, x);
++      Term f_y = tm.mkTerm(Kind.APPLY_UF, f, y);
++      Term p_f_x = tm.mkTerm(Kind.APPLY_UF, p, f_x);
++      Term p_f_y = tm.mkTerm(Kind.APPLY_UF, p, f_y);
+ 
+       // Construct the assertions
+-      Term assertions = slv.mkTerm(Kind.AND,
+-          new Term[] {
+-              slv.mkTerm(Kind.EQUAL, x, f_x),
+-              slv.mkTerm(Kind.EQUAL, y, f_y),
+-              p_f_x.notTerm(), 
+-              p_f_y 
+-          });
++      Term assertions = tm.mkTerm(Kind.AND,
++          new Term[] {tm.mkTerm(Kind.EQUAL, x, f_x),
++              tm.mkTerm(Kind.EQUAL, y, f_y),
++              p_f_x.notTerm(),
++              p_f_y});
+       slv.assertFormula(assertions);
+ 
+       System.out.println("Call checkSat to show that the assertions are satisfiable. \n"
+diff --git a/examples/api/java/UnsatCores.java b/examples/api/java/UnsatCores.java
+index dcb4b664b..48f52ed78 100644
+--- a/examples/api/java/UnsatCores.java
++++ b/examples/api/java/UnsatCores.java
+@@ -20,19 +20,20 @@ public class UnsatCores
+ {
+   public static void main(String[] args) throws CVC5ApiException
+   {
+-    Solver solver = new Solver();
++    TermManager tm = new TermManager();
++    Solver solver = new Solver(tm);
+     {
+       // Enable the production of unsat cores
+       solver.setOption("produce-unsat-cores", "true");
+ 
+-      Sort boolSort = solver.getBooleanSort();
+-      Term a = solver.mkConst(boolSort, "A");
+-      Term b = solver.mkConst(boolSort, "B");
++      Sort boolSort = tm.getBooleanSort();
++      Term a = tm.mkConst(boolSort, "A");
++      Term b = tm.mkConst(boolSort, "B");
+ 
+       // A ^ B
+-      solver.assertFormula(solver.mkTerm(Kind.AND, a, b));
++      solver.assertFormula(tm.mkTerm(Kind.AND, a, b));
+       // ~(A v B)
+-      solver.assertFormula(solver.mkTerm(Kind.NOT, solver.mkTerm(Kind.OR, a, b)));
++      solver.assertFormula(tm.mkTerm(Kind.NOT, tm.mkTerm(Kind.OR, a, b)));
+ 
+       Result res = solver.checkSat(); // result is unsat
+ 
+-- 
+2.47.1
+

@@ -1,0 +1,249 @@
+From 32b5a543917590ca67f990b6cc7174c6ac29cd92 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 15 Jan 2025 12:46:51 -0600
+Subject: [PATCH 307/312] Eagerly apply-subs + rewrite bodies of define-fun
+ (#11526)
+
+This ensures that we apply top-level substitutions and rewrite bodies of
+define-fun eagerly. This is required for
+https://github.com/cvc5/cvc5/pull/11513.
+
+In particular, currently, due to the fact that variables are *not*
+fresh, and the rewriter does not rewrite inside of operators, beta
+redexes could appear arbtirarily nested in APPLY_UF. As a result, we
+were requiring the fairly sophisticated "shadow elimination" methods for
+handling benchmarks such as:
+```
+(define-fun P ((x Int)) Bool false)
+(define-fun Q ((x Int)) Bool (P x))
+(assert (Q 0))
+(check-sat)
+```
+
+In particular, `Q` would be defined to be the lambda `(lambda ((x Int))
+(@ (lambda ((x Int)) false) x))`, which assuming the rewriter does not
+rewrite inside of operators, leads us to requiring shadow elimination to
+do beta reduction.
+
+We previously made a nested call from within the rewriter to ensure such
+shadowing was resolved prior to beta reduction. The PR
+https://github.com/cvc5/cvc5/pull/11329 refactored this so that beta
+redexes for non-rewritten lambdas were lifted to HO terms so that the
+rewriter could track proofs without being self referential. However, as
+a downside, we now require HO reasoning in first order logics, in
+particular, lambdas could be rewritten and beta reduction could be done
+for HO applications. The PR https://github.com/cvc5/cvc5/pull/11513
+addresses this shortcoming by allowing non-rewritten lambdas to be
+beta-reduced. However, proof elaboration fails since this requires
+arbitrarily nested shadow elimination. In particular, a proof of the
+above benchmark would (unintuitively) introduce shadowing elimination +
+alpha equivalence.
+
+The solution is to apply top-level substitutions + rewriting to *bodies*
+of lambdas as they are defined. this prevents HO rewriting while
+eliminating complications due to shadowing in beta redexes.
+
+We do not rewrite defined constants, since this complication does not
+arise and it better to be lazy based on some benchmarks in SMT-LIB
+(cpachecker in QF_UFLRA).
+
+There are several motivations for this change:
+1. It makes the proofs significantly simpler and resolves all open
+issues related to define-fun (after
+https://github.com/cvc5/cvc5/pull/11513 is merged),
+2. It makes the output of e.g. `-o post-asserts` much more intuitive. In
+particular, prior to this commit, we'd get:
+```
+(set-logic ALL)
+(define-fun Q ((x Int)) Bool (@ (lambda ((x Int)) false) x))
+(define-fun P ((x Int)) Bool false)
+(assert false)
+(check-sat)
+```
+whereas now we get:
+```
+(set-logic ALL)
+(define-fun Q ((x Int)) Bool false)
+(define-fun P ((x Int)) Bool false)
+(assert false)
+(check-sat)
+```
+---
+ src/printer/printer.cpp | 12 +++++---
+ src/smt/assertions.cpp  | 64 +++++++++++++++++++++++++++++++++++++++--
+ src/smt/assertions.h    |  5 ++++
+ src/smt/env.cpp         |  2 ++
+ src/smt/env.h           |  6 ++++
+ 5 files changed, 82 insertions(+), 7 deletions(-)
+
+diff --git a/src/printer/printer.cpp b/src/printer/printer.cpp
+index 981768d4d..a667240f4 100644
+--- a/src/printer/printer.cpp
++++ b/src/printer/printer.cpp
+@@ -26,6 +26,7 @@
+ #include "printer/smt2/smt2_printer.h"
+ #include "proof/unsat_core.h"
+ #include "smt/model.h"
++#include "theory/uf/function_const.h"
+ #include "theory/quantifiers/instantiation_list.h"
+ 
+ using namespace std;
+@@ -303,12 +304,15 @@ void Printer::toStreamCmdDefineFunction(std::ostream& out,
+   std::stringstream vs;
+   vs << v;
+   std::vector<Node> formals;
+-  Node body = lambda;
+   TypeNode rangeType = v.getType();
+-  if (body.getKind() == Kind::LAMBDA)
++  // could be a function constant
++  Node lam = theory::uf::FunctionConst::toLambda(lambda);
++  Node body = lambda;
++  if (!lam.isNull())
+   {
+-    formals.insert(formals.end(), lambda[0].begin(), lambda[0].end());
+-    body = lambda[1];
++    Assert(lam.getKind() == Kind::LAMBDA);
++    formals.insert(formals.end(), lam[0].begin(), lam[0].end());
++    body = lam[1];
+     Assert(rangeType.isFunction());
+     rangeType = rangeType.getRangeType();
+   }
+diff --git a/src/smt/assertions.cpp b/src/smt/assertions.cpp
+index 7ac0ea07e..261966410 100644
+--- a/src/smt/assertions.cpp
++++ b/src/smt/assertions.cpp
+@@ -23,6 +23,8 @@
+ #include "options/expr_options.h"
+ #include "options/language.h"
+ #include "options/smt_options.h"
++#include "proof/lazy_proof.h"
++#include "proof/proof_node_algorithm.h"
+ #include "smt/env.h"
+ #include "theory/trust_substitutions.h"
+ #include "util/result.h"
+@@ -122,10 +124,66 @@ void Assertions::addFormula(TNode n,
+     // if a non-recursive define-fun, just add as a top-level substitution
+     if (n.getKind() == Kind::EQUAL && n[0].isVar())
+     {
+-      // A define-fun is an assumption in the overall proof, thus
+-      // we justify the substitution with ASSUME here.
++      Trace("smt-define-fun")
++          << "Define fun: " << n[0] << " = " << n[1] << std::endl;
++      NodeManager* nm = nodeManager();
++      TrustSubstitutionMap& tsm = d_env.getTopLevelSubstitutions();
++      // If it is a lambda, we rewrite the body, otherwise we rewrite itself.
++      // For lambdas, we prefer rewriting only the body since we don't want
++      // higher-order rewrites (e.g. value normalization) to apply by default.
++      TrustNode defRewBody;
++      // For efficiency, we only do this if it is a lambda.
++      // Note this is important since some benchmarks treat define-fun as a
++      // global let. We should not eagerly rewrite in these cases.
++      if (n[1].getKind() == Kind::LAMBDA)
++      {
++        // Rewrite the body of the lambda.
++        defRewBody = tsm.applyTrusted(n[1][1], d_env.getRewriter());
++      }
++      Node defRew = n[1];
++      // If we rewrote the body
++      if (!defRewBody.isNull())
++      {
++        // The rewritten form is the rewritten body with original variable list.
++        defRew = defRewBody.getNode();
++        defRew = nm->mkNode(Kind::LAMBDA, n[1][0], defRew);
++      }
++      // if we need to track proofs
++      if (d_env.isProofProducing())
++      {
++        // initialize the proof generator if not already done so
++        if (d_defFunRewPf == nullptr)
++        {
++          d_defFunRewPf = std::make_shared<LazyCDProof>(d_env);
++        }
++        // A define-fun is an assumption in the overall proof, thus
++        // we justify the substitution with ASSUME here.
++        d_defFunRewPf->addStep(n, ProofRule::ASSUME, {}, {n});
++        // If changed, prove the rewrite
++        if (defRew != n[1])
++        {
++          Node eqBody = defRewBody.getProven();
++          d_defFunRewPf->addLazyStep(eqBody, defRewBody.getGenerator());
++          Node eqRew = n[1].eqNode(defRew);
++          Assert (n[1].getKind() == Kind::LAMBDA);
++          // congruence over the binder
++          std::vector<Node> cargs;
++          ProofRule cr = expr::getCongRule(n[1], cargs);
++          d_defFunRewPf->addStep(eqRew, cr, {eqBody}, cargs);
++          // Proof is:
++          //                            ------ from tsm
++          //                            t = t'
++          // ------------------ ASSUME  -------------------------- CONG
++          // n = lambda x. t            lambda x. t = lambda x. t'
++          // ------------------------------------------------------ TRANS
++          // n = lambda x. t'
++          Node eqFinal = n[0].eqNode(defRew);
++          d_defFunRewPf->addStep(eqFinal, ProofRule::TRANS, {n, eqRew}, {});
++        }
++      }
++      Trace("smt-define-fun") << "...rewritten to " << defRew << std::endl;
+       d_env.getTopLevelSubstitutions().addSubstitution(
+-          n[0], n[1], ProofRule::ASSUME, {}, {n});
++          n[0], defRew, d_defFunRewPf.get());
+       return;
+     }
+   }
+diff --git a/src/smt/assertions.h b/src/smt/assertions.h
+index b01084b8c..250c126b6 100644
+--- a/src/smt/assertions.h
++++ b/src/smt/assertions.h
+@@ -26,6 +26,9 @@
+ #include "smt/env_obj.h"
+ 
+ namespace cvc5::internal {
++
++class LazyCDProof;
++
+ namespace smt {
+ 
+ class AbstractValues;
+@@ -141,6 +144,8 @@ class Assertions : protected EnvObj
+    * The list of assumptions from the previous call to checkSatisfiability.
+    */
+   std::vector<Node> d_assumptions;
++  /** Proof generator storing proofs of rewriting for defined functions */
++  std::shared_ptr<LazyCDProof> d_defFunRewPf;
+ };
+ 
+ }  // namespace smt
+diff --git a/src/smt/env.cpp b/src/smt/env.cpp
+index 035777e06..d01c22844 100644
+--- a/src/smt/env.cpp
++++ b/src/smt/env.cpp
+@@ -116,6 +116,8 @@ ProofLogger* Env::getProofLogger()
+ 
+ ProofNodeManager* Env::getProofNodeManager() { return d_proofNodeManager; }
+ 
++bool Env::isProofProducing() const { return d_proofNodeManager != nullptr; }
++
+ bool Env::isSatProofProducing() const
+ {
+   return d_proofNodeManager != nullptr
+diff --git a/src/smt/env.h b/src/smt/env.h
+index f003340af..dc7c967d4 100644
+--- a/src/smt/env.h
++++ b/src/smt/env.h
+@@ -108,6 +108,12 @@ class Env
+    */
+   ProofNodeManager* getProofNodeManager();
+ 
++  /**
++   * Check whether proofs are enabled at all, i.e. the proof node manager is
++   * set.
++   */
++  bool isProofProducing() const;
++
+   /**
+    * Check whether the SAT solver should produce proofs. Other than whether
+    * the proof node manager is set, SAT proofs are only generated if the proof
+-- 
+2.47.1
+

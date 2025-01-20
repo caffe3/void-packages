@@ -1,0 +1,213 @@
+From a124e792211e02e58ca53b1fe2df922d8636b10e Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 10 Jan 2025 10:29:38 -0600
+Subject: [PATCH 289/312] Add macro rewrite and RARE rewrite for arrays
+ (#11484)
+
+This covers all remaining rewriting holes for arrays.
+
+Elaboration for the macro rewrite will be added in a followup PR.
+---
+ include/cvc5/cvc5_proof_rule.h               | 15 ++++
+ proofs/eo/cpc/rules/Rewrites.eo              |  5 ++
+ src/api/cpp/cvc5_proof_rule_template.cpp     |  1 +
+ src/theory/arrays/rewrites                   | 15 +++-
+ src/theory/arrays/theory_arrays_rewriter.cpp | 84 ++++++++++++++++++++
+ 5 files changed, 117 insertions(+), 3 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 319ccff2a..683af0c3b 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2498,6 +2498,19 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(ARRAYS_SELECT_CONST),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Arrays -- Macro normalize operation**
++   *
++   * .. math::
++   *   A = B
++   *
++   * where :math:`B` is the result of normalizing the array operation :math:`A`
++   * into a canonical form, based on commutativity of disjoint indices.
++   *
++   * \endverbatim
++   */
++  EVALUE(MACRO_ARRAYS_NORMALIZE_OP),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Arrays -- Macro distinct arrays**
+@@ -3196,6 +3209,8 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(ARRAY_STORE_SELF),
+   /** Auto-generated from RARE rule array-read-over-write-split */
+   EVALUE(ARRAY_READ_OVER_WRITE_SPLIT),
++  /** Auto-generated from RARE rule array-store-swap */
++  EVALUE(ARRAY_STORE_SWAP),
+   /** Auto-generated from RARE rule bool-double-not-elim */
+   EVALUE(BOOL_DOUBLE_NOT_ELIM),
+   /** Auto-generated from RARE rule bool-not-true */
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index 4c4c93f29..c72fdfa1f 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -224,6 +224,11 @@
+   :args (t1 i1 e1 j1)
+   :conclusion (= (select (store t1 j1 e1) i1) (ite (= i1 j1) e1 (select t1 i1)))
+ )
++(declare-rule array-store-swap ((@T0 Type) (@T1 Type) (@T2 Type) (@T3 Type) (@T4 Type) (@T5 Type) (t1 (Array @T0 @T1)) (i1 @T2) (j1 @T3) (e1 @T4) (f1 @T5))
++  :premises ((= (= i1 j1) false))
++  :args (t1 i1 j1 e1 f1)
++  :conclusion (= (store (store t1 i1 e1) j1 f1) (store (store t1 j1 f1) i1 e1))
++)
+ (declare-rule bool-double-not-elim ((t1 Bool))
+   :args (t1)
+   :conclusion (= (not (not t1)) t1)
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index 943d97d78..fc611a725 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -237,6 +237,7 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::BETA_REDUCE: return "beta-reduce";
+     case ProofRewriteRule::LAMBDA_ELIM: return "lambda-elim";
+     case ProofRewriteRule::ARRAYS_SELECT_CONST: return "arrays-select-const";
++    case ProofRewriteRule::MACRO_ARRAYS_NORMALIZE_OP: return "macro-arrays-normalize-op";
+     case ProofRewriteRule::MACRO_ARRAYS_DISTINCT_ARRAYS:
+       return "macro-arrays-distinct-arrays";
+     case ProofRewriteRule::MACRO_ARRAYS_NORMALIZE_CONSTANT:
+diff --git a/src/theory/arrays/rewrites b/src/theory/arrays/rewrites
+index d1c961536..52385f436 100644
+--- a/src/theory/arrays/rewrites
++++ b/src/theory/arrays/rewrites
+@@ -2,7 +2,9 @@
+   (select (store t i e) i) e)
+ 
+ (define-cond-rule array-read-over-write2 ((t ?Array) (i ?) (j ?) (e ?))
+-  (not (= i j)) (select (store t i e) j) (select t j))
++  (not (= i j))
++  (select (store t i e) j)
++  (select t j))
+ 
+ (define-rule array-store-overwrite ((t ?Array) (i ?) (e ?) (f ?))
+   (store (store t i e) i f)
+@@ -12,5 +14,12 @@
+   (store t i (select t i))
+   t)
+ 
+-(define-rule array-read-over-write-split ((t ?Array) (i ?) (e ?) (j ?))
+-  (select (store t j e) i) (ite (= i j) e (select t i)))
++(define-rule* array-read-over-write-split ((t ?Array) (i ?) (e ?) (j ?))
++  (select (store t j e) i)
++  (select t i)
++  (ite (= i j) e _))
++
++(define-cond-rule array-store-swap ((t ?Array) (i ?) (j ?) (e ?) (f ?))
++  (not (= i j)) 
++  (store (store t i e) j f)
++  (store (store t j f) i e))
+diff --git a/src/theory/arrays/theory_arrays_rewriter.cpp b/src/theory/arrays/theory_arrays_rewriter.cpp
+index 2b49cd627..95d0e94a1 100644
+--- a/src/theory/arrays/theory_arrays_rewriter.cpp
++++ b/src/theory/arrays/theory_arrays_rewriter.cpp
+@@ -74,6 +74,8 @@ TheoryArraysRewriter::TheoryArraysRewriter(NodeManager* nm, Rewriter* r)
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::ARRAYS_EQ_RANGE_EXPAND,
+                            TheoryRewriteCtx::PRE_DSL);
++  registerProofRewriteRule(ProofRewriteRule::MACRO_ARRAYS_NORMALIZE_OP,
++                           TheoryRewriteCtx::POST_DSL);
+ }
+ 
+ Node TheoryArraysRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+@@ -120,6 +122,88 @@ Node TheoryArraysRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
++    case ProofRewriteRule::MACRO_ARRAYS_NORMALIZE_OP:
++    {
++      Kind k = n.getKind();
++      if (k != Kind::SELECT && k != Kind::STORE)
++      {
++        return Node::null();
++      }
++      Node index = n[1];
++      bool iconst = index.isConst();
++      Node arr = n[0];
++      std::vector<Node> indices;
++      std::vector<Node> elems;
++      bool success = false;
++      while (arr.getKind() == Kind::STORE)
++      {
++        if (arr[1] == index)
++        {
++          // process being equal:
++          // if store, we are redundant, remove and break
++          // if select, we return the element directly
++          if (k == Kind::STORE)
++          {
++            arr = arr[0];
++          }
++          else
++          {
++            return arr[2];
++          }
++          break;
++        }
++        // store orders indices only
++        if (k == Kind::STORE && arr[1] < index)
++        {
++          break;
++        }
++        // success if we can move past
++        success = false;
++        if (iconst)
++        {
++          success = arr[1].isConst();
++        }
++        else
++        {
++          Node eq = mkEqNode(arr[1], index);
++          success = (eq.isConst() && !eq.getConst<bool>());
++        }
++        if (success)
++        {
++          indices.push_back(arr[1]);
++          elems.push_back(arr[2]);
++          arr = arr[0];
++        }
++        else
++        {
++          break;
++        }
++      }
++      if (indices.empty())
++      {
++        return Node::null();
++      }
++      NodeManager* nm = nodeManager();
++      Node ret;
++      if (k == Kind::STORE)
++      {
++        ret = nm->mkNode(Kind::STORE, arr, n[1], n[2]);
++        // add back those we traversed over
++        while (!indices.empty())
++        {
++          ret = nm->mkNode(Kind::STORE, ret, indices.back(), elems.back());
++          indices.pop_back();
++          elems.pop_back();
++        }
++      }
++      else
++      {
++        Assert(k == Kind::SELECT);
++        ret = nm->mkNode(Kind::SELECT, arr, n[1]);
++      }
++      return ret;
++    }
++    break;
+     default: break;
+   }
+   return Node::null();
+-- 
+2.47.1
+

@@ -1,0 +1,54 @@
+From d0dd737407aa857faf226da1dd4be62ab09fb097 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Thu, 5 Sep 2024 10:00:38 -0500
+Subject: [PATCH 046/312] cmake: Pass path of GMP to CLN when building from
+ source (#11191)
+
+---
+ .github/actions/add-package/action.yml | 4 ++--
+ cmake/FindCLN.cmake                    | 7 ++++++-
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/.github/actions/add-package/action.yml b/.github/actions/add-package/action.yml
+index 8f6f39121..359af0008 100644
+--- a/.github/actions/add-package/action.yml
++++ b/.github/actions/add-package/action.yml
+@@ -57,8 +57,8 @@ runs:
+             if [ -f ./install/lib/libcln.dylib ]; then
+               install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libcln.6.dylib" @rpath/libcln.6.dylib ./install/lib/libcvc5.dylib
+               install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libcln.6.dylib" @rpath/libcln.6.dylib ./install/lib/libcvc5.1.dylib
+-              install_name_tool -change "/usr/local/opt/gmp/lib/libgmp.10.dylib" @rpath/libgmp.10.dylib ./install/lib/libcln.dylib
+-              install_name_tool -change "/usr/local/opt/gmp/lib/libgmp.10.dylib" @rpath/libgmp.10.dylib ./install/lib/libcln.6.dylib
++              install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libgmp.10.dylib" @rpath/libgmp.10.dylib ./install/lib/libcln.dylib
++              install_name_tool -change "${{ inputs.build-dir }}/deps/lib/libgmp.10.dylib" @rpath/libgmp.10.dylib ./install/lib/libcln.6.dylib
+             fi
+           fi
+         fi
+diff --git a/cmake/FindCLN.cmake b/cmake/FindCLN.cmake
+index 8c52222a1..640707a1f 100644
+--- a/cmake/FindCLN.cmake
++++ b/cmake/FindCLN.cmake
+@@ -114,6 +114,11 @@ if(NOT CLN_FOUND_SYSTEM)
+     endif()
+   endif()
+ 
++  set(CLN_WITH_GMP)
++  if(NOT GMP_FOUND_SYSTEM)
++    set(CLN_WITH_GMP "--with-gmp=<INSTALL_DIR>")
++  endif()
++
+   ExternalProject_Add(
+     CLN-EP
+     ${COMMON_EP_CONFIG}
+@@ -122,7 +127,7 @@ if(NOT CLN_FOUND_SYSTEM)
+     DOWNLOAD_NAME cln.tar.bz2
+     CONFIGURE_COMMAND
+       ${CONFIGURE_ENV} ${SHELL} <SOURCE_DIR>/configure
+-        --prefix=<INSTALL_DIR> ${LINK_OPTS} --with-pic
++        --prefix=<INSTALL_DIR> ${LINK_OPTS} --with-pic ${CLN_WITH_GMP}
+         ${CONFIGURE_OPTS}
+     BUILD_BYPRODUCTS ${CLN_BYPRODUCTS}
+   )
+-- 
+2.47.1
+

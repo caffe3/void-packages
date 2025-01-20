@@ -1,0 +1,51 @@
+From cbbeb5158edb89608f1c4aa066b3333ce16a512c Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 20 Dec 2024 08:32:02 -0600
+Subject: [PATCH 257/312] Only try to use basic rewriter to automatically
+ reconstruct trust steps (#11388)
+
+This part of the code attempts to cast trust steps as rewrites, with the
+hope of making DSL rewrite rule elaboration easier.
+
+This PR changes the code so that we only try the basic rewriter, not the
+extended one.
+
+Since the extended rewriter does not have fine-grained proof support,
+reconstructing trust steps in it does not provide much benefit.
+
+Furthermore, it is less overhead to compute basic rewrites.
+---
+ src/smt/proof_post_processor.cpp | 15 +++------------
+ 1 file changed, 3 insertions(+), 12 deletions(-)
+
+diff --git a/src/smt/proof_post_processor.cpp b/src/smt/proof_post_processor.cpp
+index 168abd5ce..6e6ee0d5e 100644
+--- a/src/smt/proof_post_processor.cpp
++++ b/src/smt/proof_post_processor.cpp
+@@ -218,20 +218,11 @@ Node ProofPostprocessCallback::expandMacros(ProofRule id,
+   {
+     TrustId tid;
+     getTrustId(args[0], tid);
+-    // we don't do this for steps that are already extended theory rewrite
+-    // steps, or we would get an infinite loop in reconstruction.
+-    if (tid == TrustId::EXT_THEORY_REWRITE)
+-    {
+-      return Node::null();
+-    }
+-    // maybe we can show it rewrites to true based on (extended) rewriting
++    // maybe we can show it rewrites to true based on rewriting
+     // modulo original forms (MACRO_SR_PRED_INTRO).
+     TheoryProofStepBuffer psb(d_pc);
+-    if (psb.applyPredIntro(res,
+-                           {},
+-                           MethodId::SB_DEFAULT,
+-                           MethodId::SBA_SEQUENTIAL,
+-                           MethodId::RW_EXT_REWRITE))
++    if (psb.applyPredIntro(
++            res, {}, MethodId::SB_DEFAULT, MethodId::SBA_SEQUENTIAL))
+     {
+       cdp->addSteps(psb);
+       return res;
+-- 
+2.47.1
+

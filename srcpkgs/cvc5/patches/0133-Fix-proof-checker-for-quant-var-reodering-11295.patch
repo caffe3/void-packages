@@ -1,0 +1,31 @@
+From 504fcaa57815943cf584ba6130facb3942b3ac96 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 21 Oct 2024 12:46:11 -0500
+Subject: [PATCH 133/312] Fix proof checker for quant var reodering (#11295)
+
+Fixes errors in nightlies.
+
+This corrects the proof checker for QUANT_VAR_REORDERING, which
+currently throws spurious errors due to an incorrect check.
+---
+ src/theory/quantifiers/proof_checker.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/theory/quantifiers/proof_checker.cpp b/src/theory/quantifiers/proof_checker.cpp
+index f120dd49b..b4ac242be 100644
+--- a/src/theory/quantifiers/proof_checker.cpp
++++ b/src/theory/quantifiers/proof_checker.cpp
+@@ -137,8 +137,8 @@ Node QuantifiersProofRuleChecker::checkInternal(
+     std::unordered_set<Node> varSet1(eq[0][0].begin(), eq[0][0].end());
+     std::unordered_set<Node> varSet2(eq[1][0].begin(), eq[1][0].end());
+     // cannot have repetition
+-    if (varSet1.size() != eq[0].getNumChildren()
+-        || varSet2.size() != eq[1].getNumChildren())
++    if (varSet1.size() != eq[0][0].getNumChildren()
++        || varSet2.size() != eq[1][0].getNumChildren())
+     {
+       return Node::null();
+     }
+-- 
+2.47.1
+

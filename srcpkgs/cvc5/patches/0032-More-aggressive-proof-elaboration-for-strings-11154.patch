@@ -1,0 +1,43 @@
+From 70c2d14c441a5a17cc51786cf583576b77b9d138 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 19 Aug 2024 16:49:02 -0500
+Subject: [PATCH 032/312] More aggressive proof elaboration for strings
+ (#11154)
+
+A simpler alternative for https://github.com/cvc5/cvc5/pull/10680 that
+suffices for a problem set of interest.
+---
+ src/theory/strings/infer_proof_cons.cpp | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/src/theory/strings/infer_proof_cons.cpp b/src/theory/strings/infer_proof_cons.cpp
+index 1166ef996..6d83aac85 100644
+--- a/src/theory/strings/infer_proof_cons.cpp
++++ b/src/theory/strings/infer_proof_cons.cpp
+@@ -228,6 +228,23 @@ void InferProofCons::convert(InferenceId infer,
+         {
+           useBuffer = true;
+         }
++        else
++        {
++          // More aggressive: lift to original form and use extended rewriting.
++          // A common case that this covers is arithmetic bound conflicts like
++          // (= (str.len @purifyN) 5) where @purifyN is the purification skolem
++          // for (str.++ "ABCDEF" x).
++          Node psrco = SkolemManager::getOriginalForm(psrc);
++          if (psb.applyPredTransform(psrco,
++                                     conc,
++                                     exps,
++                                     MethodId::SB_DEFAULT,
++                                     MethodId::SBA_SEQUENTIAL,
++                                     MethodId::RW_EXT_REWRITE))
++          {
++            useBuffer = psb.applyPredTransform(psrc, psrco, {});
++          }
++        }
+       }
+       else
+       {
+-- 
+2.47.1
+

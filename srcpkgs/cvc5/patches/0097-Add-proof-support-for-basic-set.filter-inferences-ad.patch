@@ -1,0 +1,362 @@
+From e7f7ec61f54639b5a7f47a4a93ce00147dbb43b9 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 2 Oct 2024 12:36:55 -0500
+Subject: [PATCH 097/312] Add proof support for basic set.filter inferences,
+ add to CPC signature (#11249)
+
+Adds proof support for the components responsible for the unsoundness
+discovered in https://github.com/cvc5/cvc5/pull/11244.
+
+Also adds missing proof support for sets proof rules in CPC signature.
+
+Also fixes cases where proof reconstruction failed for some core sets
+inferences, fixes https://github.com/cvc5/cvc5-wishues/issues/155.
+
+---------
+
+Co-authored-by: mudathirmahgoub <mudathirmahgoub@gmail.com>
+---
+ include/cvc5/cvc5_proof_rule.h                | 23 +++++++
+ proofs/eo/cpc/rules/Sets.eo                   | 50 +++++++++++++++
+ src/api/cpp/cvc5_proof_rule_template.cpp      |  2 +
+ src/proof/alf/alf_node_converter.cpp          |  1 +
+ src/proof/alf/alf_printer.cpp                 |  4 ++
+ src/theory/sets/infer_proof_cons.cpp          | 62 +++++++++++++++++--
+ src/theory/sets/proof_checker.cpp             | 29 +++++++++
+ src/theory/sets/theory_sets_private.cpp       | 10 +--
+ src/theory/sets/theory_sets_private.h         |  5 +-
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/sets/filter-up-unsat.smt2    | 12 ++++
+ 11 files changed, 185 insertions(+), 14 deletions(-)
+ create mode 100644 test/regress/cli/regress0/sets/filter-up-unsat.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index e15534fe1..a6cf5ca7f 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -1373,6 +1373,29 @@ enum ENUM(ProofRule)
+    * \endverbatim
+    */
+   EVALUE(SETS_EXT),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Sets -- Sets filter up**
++   *
++   * .. math::
++   *
++   *   \inferrule{\mathit{set.member}(x,a)\mid P}
++   *   {\mathit{set.member}(x, \mathit{set.filter}(P, a)) = P(x)}
++   *
++   * \endverbatim
++   */
++  EVALUE(SETS_FILTER_UP),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Sets -- Sets filter down**
++   *
++   * .. math::
++   *
++   *   \inferrule{\mathit{set.member}(x,\mathit{set.filter}(P, a))\mid -}
++   *   {\mathit{set.member}(x,a) \wedge P(x)}
++   * \endverbatim
++   */
++  EVALUE(SETS_FILTER_DOWN),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Strings -- Core rules -- Concatenation equality**
+diff --git a/proofs/eo/cpc/rules/Sets.eo b/proofs/eo/cpc/rules/Sets.eo
+index b63300ba7..168ead31e 100644
+--- a/proofs/eo/cpc/rules/Sets.eo
++++ b/proofs/eo/cpc/rules/Sets.eo
+@@ -30,3 +30,53 @@
+   :requires ((($set_is_empty_eval t) b))
+   :conclusion (= (set.is_empty t) b)
+ )
++
++; rule: sets_singleton_inj
++; implements: ProofRule::SETS_SINGLETON_INJ
++; premises:
++; - deq: An equality between singleton sets.
++; conclusion: The elements of the singleton sets are equal.
++(declare-rule sets_singleton_inj ((T Type) (a T) (b T))
++  :premises ((= (set.singleton a) (set.singleton b)))
++  :conclusion (= a b)
++)
++
++; rule: sets_ext
++; implements: ProofRule::SETS_EXT
++; premises:
++; - deq: A disequality between sets.
++; conclusion: >
++;   The sets are disequal for a witness element, as given by the skolem
++;   (@set_deq_diff a b).
++(declare-rule sets_ext ((T Type) (a (Set T)) (b (Set T)))
++  :premises ((not (= a b)))
++  :conclusion (not (= (set.member (@sets_deq_diff a b) a) (set.member (@sets_deq_diff a b) b)))
++)
++
++
++; rule: sets_filter_down
++; implements: ProofRewriteRule::SETS_FILTER_DOWN
++; premises:
++; - mem: A membership of element x into a set filter term.
++; conclusion: >
++;   The membership holds for the set for which we are filtering, and the
++;   predicate is true for x.
++(declare-rule sets_filter_down ((T Type) (P (-> T Bool)) (x T) (S (Set T)))
++  :premises ((set.member x (set.filter P S)))
++  :conclusion (and (set.member x S) (P x))
++)
++
++; rule: sets_filter_up
++; implements: ProofRewriteRule::SETS_FILTER_UP
++; args:
++; - P (-> T Bool): The predicate to filter on.
++; premises:
++; - mem: A membership of element x into a set term.
++; conclusion: >
++;   The membership into the same set, filtered by P, holds if and only if the
++;   predicate is true for x.
++(declare-rule sets_filter_up ((T Type) (P (-> T Bool)) (x T) (S (Set T)))
++  :premises ((set.member x S))
++  :args (P)
++  :conclusion (= (set.member x (set.filter P S)) (P x))
++)
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index 073972feb..4a63ba0c1 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -131,6 +131,8 @@ const char* toString(ProofRule rule)
+     //================================================= Sets rules
+     case ProofRule::SETS_SINGLETON_INJ: return "SETS_SINGLETON_INJ";
+     case ProofRule::SETS_EXT: return "SETS_EXT";
++    case ProofRule::SETS_FILTER_DOWN: return "SETS_FILTER_DOWN";
++    case ProofRule::SETS_FILTER_UP: return "SETS_FILTER_UP";
+     //================================================= String rules
+     case ProofRule::CONCAT_EQ: return "CONCAT_EQ";
+     case ProofRule::CONCAT_UNIFY: return "CONCAT_UNIFY";
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index 522d260d9..c1b18a367 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -678,6 +678,7 @@ bool AlfNodeConverter::isHandledSkolemId(SkolemId id)
+     case SkolemId::TRANSCENDENTAL_PURIFY:
+     case SkolemId::TRANSCENDENTAL_PURIFY_ARG:
+     case SkolemId::QUANTIFIERS_SKOLEMIZE:
++    case SkolemId::SETS_DEQ_DIFF:
+     case SkolemId::STRINGS_NUM_OCCUR:
+     case SkolemId::STRINGS_NUM_OCCUR_RE:
+     case SkolemId::STRINGS_OCCUR_INDEX:
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index e0dc03df1..84ebdb7af 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -135,6 +135,10 @@ bool AlfPrinter::isHandled(const ProofNode* pfn) const
+     case ProofRule::INT_TIGHT_LB:
+     case ProofRule::INT_TIGHT_UB:
+     case ProofRule::SKOLEM_INTRO:
++    case ProofRule::SETS_SINGLETON_INJ:
++    case ProofRule::SETS_EXT:
++    case ProofRule::SETS_FILTER_UP:
++    case ProofRule::SETS_FILTER_DOWN:
+     case ProofRule::CONCAT_EQ:
+     case ProofRule::CONCAT_UNIFY:
+     case ProofRule::CONCAT_CSPLIT:
+diff --git a/src/theory/sets/infer_proof_cons.cpp b/src/theory/sets/infer_proof_cons.cpp
+index d047bd242..db199ead0 100644
+--- a/src/theory/sets/infer_proof_cons.cpp
++++ b/src/theory/sets/infer_proof_cons.cpp
+@@ -153,12 +153,13 @@ bool InferProofCons::convert(CDProof& cdp,
+       // assumption and rewriting.
+       std::vector<Node> exp(assumps.begin() + 1, assumps.end());
+       Node aelim = psb.applyPredElim(assumps[0], exp);
+-      success = CDProof::isSame(aelim, conc);
++      success = true;
++      if (!CDProof::isSame(aelim, conc))
++      {
++        success = psb.applyPredTransform(aelim, conc, {});
++      }
+       // should never fail
+-      // TODO(#155): Enable this assertion after fixing regression
+-      // regress1/sets/all_unsat.smt2
+-      // https://github.com/cvc5/cvc5-wishues/issues/155
+-      // Assert(success);
++      Assert(success);
+     }
+     break;
+     case InferenceId::SETS_UP_CLOSURE:
+@@ -329,6 +330,57 @@ bool InferProofCons::convert(CDProof& cdp,
+       Assert(success);
+     }
+     break;
++    case InferenceId::SETS_FILTER_UP:
++    case InferenceId::SETS_FILTER_DOWN:
++    {
++      Node mem = assumps[0];
++      if (assumps.size() == 2)
++      {
++        // Transform based on the second equality A = B:
++        //
++        //                  ------ REFL
++        //                   x = x               A = B
++        //                  ----------------------------------- CONG
++        // (set.member x A) (set.member x A) = (set.member x B)
++        // ---------------------------------------------------- EQ_RESOLVE
++        // (set.member x B)
++        Assert(assumps[0].getKind() == Kind::SET_MEMBER);
++        Assert(assumps[1].getKind() == Kind::EQUAL);
++        Node refl = psb.tryStep(ProofRule::REFL, {}, {assumps[0][0]});
++        std::vector<Node> cargs;
++        ProofRule cr = expr::getCongRule(assumps[0], cargs);
++        Node aeq = assumps[1];
++        if (aeq[1] == assumps[0][1])
++        {
++          // flip?
++          aeq = aeq[1].eqNode(aeq[0]);
++          psb.tryStep(ProofRule::SYMM, {assumps[1]}, {});
++        }
++        Node eq = psb.tryStep(cr, {refl, aeq}, cargs);
++        Trace("sets-ipc") << "...via CONG is " << eq << ", now try with " << mem
++                          << std::endl;
++        mem = psb.tryStep(ProofRule::EQ_RESOLVE, {mem, eq}, {});
++        Assert(!mem.isNull());
++      }
++      ProofRule pr = (id == InferenceId::SETS_FILTER_UP)
++                         ? ProofRule::SETS_FILTER_UP
++                         : ProofRule::SETS_FILTER_DOWN;
++      std::vector<Node> pfArgs;
++      if (id == InferenceId::SETS_FILTER_UP)
++      {
++        Assert(conc.getKind() == Kind::EQUAL
++               && conc[0].getKind() == Kind::SET_MEMBER
++               && conc[0][1].getKind() == Kind::SET_FILTER);
++        Node pred = conc[0][1][0];
++        pfArgs.push_back(pred);
++      }
++      Node res = psb.tryStep(pr, {mem}, pfArgs);
++      Trace("sets-ipc") << "Filter rule " << id << " returns " << res
++                        << ", expects " << conc << std::endl;
++      success = CDProof::isSame(res, conc);
++      Assert(success);
++    }
++    break;
+     case InferenceId::SETS_EQ_CONFLICT:
+     case InferenceId::SETS_EQ_MEM_CONFLICT:
+     case InferenceId::SETS_EQ_MEM:
+diff --git a/src/theory/sets/proof_checker.cpp b/src/theory/sets/proof_checker.cpp
+index 850a582ba..119e74d6a 100644
+--- a/src/theory/sets/proof_checker.cpp
++++ b/src/theory/sets/proof_checker.cpp
+@@ -30,6 +30,8 @@ void SetsProofRuleChecker::registerTo(ProofChecker* pc)
+ {
+   pc->registerChecker(ProofRule::SETS_SINGLETON_INJ, this);
+   pc->registerChecker(ProofRule::SETS_EXT, this);
++  pc->registerChecker(ProofRule::SETS_FILTER_UP, this);
++  pc->registerChecker(ProofRule::SETS_FILTER_DOWN, this);
+ }
+ 
+ Node SetsProofRuleChecker::checkInternal(ProofRule id,
+@@ -67,6 +69,33 @@ Node SetsProofRuleChecker::checkInternal(ProofRule id,
+     Node bs = nm->mkNode(Kind::SET_MEMBER, k, b);
+     return as.eqNode(bs).notNode();
+   }
++  else if (id == ProofRule::SETS_FILTER_UP)
++  {
++    Assert(children.size() == 1);
++    Assert(args.size() == 1);
++    Node mem = children[0];
++    if (mem.getKind() != Kind::SET_MEMBER)
++    {
++      return Node::null();
++    }
++    Node pred = nm->mkNode(Kind::APPLY_UF, args[0], mem[0]);
++    Node filter = nm->mkNode(Kind::SET_FILTER, args[0], mem[1]);
++    Node nmem = nm->mkNode(Kind::SET_MEMBER, mem[0], filter);
++    return nmem.eqNode(pred);
++  }
++  else if (id == ProofRule::SETS_FILTER_DOWN)
++  {
++    Assert(children.size() == 1);
++    Node mem = children[0];
++    if (mem.getKind() != Kind::SET_MEMBER
++        || mem[1].getKind() != Kind::SET_FILTER)
++    {
++      return Node::null();
++    }
++    Node nmem = nm->mkNode(Kind::SET_MEMBER, mem[0], mem[1][1]);
++    Node pred = nm->mkNode(Kind::APPLY_UF, mem[1][0], mem[0]);
++    return nm->mkNode(Kind::AND, nmem, pred);
++  }
+   // no rule
+   return Node::null();
+ }
+diff --git a/src/theory/sets/theory_sets_private.cpp b/src/theory/sets/theory_sets_private.cpp
+index 9be02b17d..b8f27f80e 100644
+--- a/src/theory/sets/theory_sets_private.cpp
++++ b/src/theory/sets/theory_sets_private.cpp
+@@ -730,11 +730,11 @@ void TheorySetsPrivate::checkFilterUp()
+       Node p_x = nm->mkNode(Kind::APPLY_UF, p, x);
+       Node skolem = d_treg.getProxy(term);
+       Node memberFilter = nm->mkNode(Kind::SET_MEMBER, x, skolem);
+-      Node not_p_x = p_x.notNode();
+-      Node not_memberFilter = memberFilter.notNode();
+-      Node orNode =
+-          p_x.andNode(memberFilter).orNode(not_p_x.andNode(not_memberFilter));
+-      d_im.assertInference(orNode, InferenceId::SETS_FILTER_UP, exp);
++      // (set.member x A)
++      // ---------------------------------------
++      // (set.member x (set.filter P A)) = (P x)
++      Node conclusion = memberFilter.eqNode(p_x);
++      d_im.assertInference(conclusion, InferenceId::SETS_FILTER_UP, exp);
+       if (d_state.isInConflict())
+       {
+         return;
+diff --git a/src/theory/sets/theory_sets_private.h b/src/theory/sets/theory_sets_private.h
+index 61908cef6..6ed1fa5df 100644
+--- a/src/theory/sets/theory_sets_private.h
++++ b/src/theory/sets/theory_sets_private.h
+@@ -79,10 +79,7 @@ class TheorySetsPrivate : protected EnvObj
+    * Apply the following rule for filter terms (set.filter p A):
+    * (=>
+    *   (and (set.member x B) (= A B))
+-   *   (or
+-   *    (and (p x) (set.member x (set.filter p A)))
+-   *    (and (not (p x)) (not (set.member x (set.filter p A))))
+-   *   )
++   *   (= (set.member x (set.filter p A)) (p x))
+    * )
+    */
+   void checkFilterUp();
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index d8c61bc99..c8b92079c 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1693,6 +1693,7 @@ set(regress_0_tests
+   regress0/sets/eqtest.smt2
+   regress0/sets/error1.smt2
+   regress0/sets/error2.smt2
++  regress0/sets/filter-up-unsat.smt2
+   regress0/sets/filter-qe-simple.smt2
+   regress0/sets/filter-qe-simple-bv.smt2
+   regress0/sets/insert.smt2
+diff --git a/test/regress/cli/regress0/sets/filter-up-unsat.smt2 b/test/regress/cli/regress0/sets/filter-up-unsat.smt2
+new file mode 100644
+index 000000000..9d9194ccc
+--- /dev/null
++++ b/test/regress/cli/regress0/sets/filter-up-unsat.smt2
+@@ -0,0 +1,12 @@
++(set-logic HO_ALL)
++(set-info :status unsat)
++(declare-fun A () (Set Int))
++(declare-fun B () (Set Int))
++(declare-fun C () (Set Int))
++(declare-fun P (Int) Bool)
++(assert (set.member 0 A))
++(assert (not (set.member 0 (set.filter P B))))
++(assert (not (set.member 0 (set.filter P C))))
++(assert (or (= A B) (= A C)))
++(assert (P 0))
++(check-sat)
+-- 
+2.47.1
+

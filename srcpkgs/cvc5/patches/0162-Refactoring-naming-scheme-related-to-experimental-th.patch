@@ -1,0 +1,289 @@
+From 6ba9aa3561518d4cb48e60046a7cdfdbc5ba7c7d Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 6 Nov 2024 11:43:27 -0600
+Subject: [PATCH 162/312] Refactoring naming scheme related to experimental
+ theories, include FP (#11337)
+
+---
+ src/options/bags_options.toml             |  6 +++---
+ src/options/datatypes_options.toml        |  4 ++--
+ src/options/ff_options.toml               |  6 +++---
+ src/options/fp_options.toml               |  8 ++++++++
+ src/options/sep_options.toml              |  6 +++---
+ src/options/uf_options.toml               |  8 ++++----
+ src/smt/set_defaults.cpp                  | 19 ++++++++++---------
+ src/theory/bags/theory_bags.cpp           |  4 ++--
+ src/theory/datatypes/theory_datatypes.cpp |  6 +++---
+ src/theory/ff/theory_ff.cpp               |  5 ++---
+ src/theory/fp/theory_fp.cpp               |  7 +++++++
+ src/theory/sep/theory_sep.cpp             |  4 ++--
+ src/theory/uf/theory_uf.cpp               |  6 +++---
+ 13 files changed, 52 insertions(+), 37 deletions(-)
+
+diff --git a/src/options/bags_options.toml b/src/options/bags_options.toml
+index ef3812465..73d65da70 100644
+--- a/src/options/bags_options.toml
++++ b/src/options/bags_options.toml
+@@ -2,9 +2,9 @@ id     = "BAGS"
+ name   = "Bags Theory"
+ 
+ [[option]]
+-  name       = "bagsExp"
++  name       = "bags"
+   category   = "expert"
+-  long       = "bags-exp"
++  long       = "bags"
+   type       = "bool"
+   default    = "true"
+-  help       = "enables the bags solver"
++  help       = "enables the bags solver in applicable logics"
+diff --git a/src/options/datatypes_options.toml b/src/options/datatypes_options.toml
+index 29c32aa5b..f4b3251b5 100644
+--- a/src/options/datatypes_options.toml
++++ b/src/options/datatypes_options.toml
+@@ -166,9 +166,9 @@ name   = "Datatypes Theory"
+   help       = "tells enumerative sygus to only consider solutions up to term size N (-1 == no limit, default)"
+ 
+ [[option]]
+-  name       = "codatatypesExp"
++  name       = "datatypesExp"
+   category   = "expert"
+-  long       = "co-dt-exp"
++  long       = "datatypes-exp"
+   type       = "bool"
+   default    = "true"
+   help       = "enables reasoning about codatatypes"
+diff --git a/src/options/ff_options.toml b/src/options/ff_options.toml
+index 0c92f66c3..f62b3f077 100644
+--- a/src/options/ff_options.toml
++++ b/src/options/ff_options.toml
+@@ -49,9 +49,9 @@ name   = "Finite Field Theory"
+   help = "use multiple groebner bases for partitions of the system"
+ 
+ [[option]]
+-  name       = "ffExp"
++  name       = "ff"
+   category   = "expert"
+-  long       = "ff-exp"
++  long       = "ff"
+   type       = "bool"
+   default    = "true"
+-  help       = "enables the finite field solver"
++  help       = "enables the finite field solver in applicable logics"
+diff --git a/src/options/fp_options.toml b/src/options/fp_options.toml
+index bebac4be3..c9557af69 100644
+--- a/src/options/fp_options.toml
++++ b/src/options/fp_options.toml
+@@ -1,6 +1,14 @@
+ id     = "FP"
+ name   = "Floating-Point"
+ 
++[[option]]
++  name       = "fp"
++  category   = "expert"
++  long       = "fp"
++  type       = "bool"
++  default    = "true"
++  help       = "enables the floating point theory in applicable logics"
++
+ [[option]]
+   name       = "fpExp"
+   category   = "expert"
+diff --git a/src/options/sep_options.toml b/src/options/sep_options.toml
+index 4c1b2571a..f401f9861 100644
+--- a/src/options/sep_options.toml
++++ b/src/options/sep_options.toml
+@@ -18,9 +18,9 @@ name   = "Separation Logic Theory"
+   help       = "eliminate emp constraint at preprocess time"
+ 
+ [[option]]
+-  name       = "sepExp"
++  name       = "sep"
+   category   = "expert"
+-  long       = "sep-exp"
++  long       = "sep"
+   type       = "bool"
+   default    = "true"
+-  help       = "enables the separation logic solver"
++  help       = "enables the separation logic solver in applicable logics"
+diff --git a/src/options/uf_options.toml b/src/options/uf_options.toml
+index 086edf4f2..b040e9b45 100644
+--- a/src/options/uf_options.toml
++++ b/src/options/uf_options.toml
+@@ -92,15 +92,15 @@ name   = "Uninterpreted Functions Theory"
+   help       = "model-based inferences for bit-vector to arithmetic conversions"
+ 
+ [[option]]
+-  name       = "hoExp"
++  name       = "ufHoExp"
+   category   = "expert"
+-  long       = "ho-exp"
++  long       = "uf-ho-exp"
+   type       = "bool"
+   default    = "true"
+-  help       = "enables the higher-order logic solver"
++  help       = "enables the higher-order logic solver in applicable logics"
+ 
+ [[option]]
+-  name       = "cardExp"
++  name       = "ufCardExp"
+   category   = "expert"
+   long       = "uf-card-exp"
+   type       = "bool"
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index 98ab0ffda..12f3b9ec4 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -125,20 +125,21 @@ void SetDefaults::setDefaultsPre(Options& opts)
+   {
+     // all "experimental" theories that are enabled by default should be
+     // disabled here
+-    SET_AND_NOTIFY_IF_NOT_USER(uf, hoExp, false, "safe options");
+-    SET_AND_NOTIFY_IF_NOT_USER(uf, cardExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(sep, sep, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(bags, bags, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(ff, ff, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(fp, fp, false, "safe options");
++    // expert extensions to theories
++    SET_AND_NOTIFY_IF_NOT_USER(uf, ufHoExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(uf, ufCardExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(datatypes, datatypesExp, false, "safe options");
+     SET_AND_NOTIFY_IF_NOT_USER(arith, arithExp, false, "safe options");
+-    SET_AND_NOTIFY_IF_NOT_USER(sep, sepExp, false, "safe options");
+-    SET_AND_NOTIFY_IF_NOT_USER(bags, bagsExp, false, "safe options");
+-    SET_AND_NOTIFY_IF_NOT_USER(ff, ffExp, false, "safe options");
+-    SET_AND_NOTIFY_IF_NOT_USER(
+-        datatypes, codatatypesExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(sets, relsExp, false, "safe options");
++    SET_AND_NOTIFY_IF_NOT_USER(sets, setsCardExp, false, "safe options");
+     // these are disabled by default but are listed here in case they are
+     // enabled by default later
+     SET_AND_NOTIFY_IF_NOT_USER(fp, fpExp, false, "safe options");
+     SET_AND_NOTIFY_IF_NOT_USER(sets, setsExp, false, "safe options");
+-    SET_AND_NOTIFY_IF_NOT_USER(sets, relsExp, false, "safe options");
+-    SET_AND_NOTIFY_IF_NOT_USER(sets, setsCardExp, false, "safe options");
+   }
+   // implied options
+   if (opts.smt.debugCheckModels)
+diff --git a/src/theory/bags/theory_bags.cpp b/src/theory/bags/theory_bags.cpp
+index b95029659..8e6e9597a 100644
+--- a/src/theory/bags/theory_bags.cpp
++++ b/src/theory/bags/theory_bags.cpp
+@@ -427,10 +427,10 @@ Node TheoryBags::getCandidateModelValue(TNode node) { return Node::null(); }
+ 
+ void TheoryBags::preRegisterTerm(TNode n)
+ {
+-  if (!options().bags.bagsExp)
++  if (!options().bags.bags)
+   {
+     std::stringstream ss;
+-    ss << "Bags not available in this configuration, try --bags-exp.";
++    ss << "Bags not available in this configuration, try --bags.";
+     throw LogicException(ss.str());
+   }
+   Trace("bags") << "TheoryBags::preRegisterTerm(" << n << ")" << std::endl;
+diff --git a/src/theory/datatypes/theory_datatypes.cpp b/src/theory/datatypes/theory_datatypes.cpp
+index 87ab64e56..cd3b7ca24 100644
+--- a/src/theory/datatypes/theory_datatypes.cpp
++++ b/src/theory/datatypes/theory_datatypes.cpp
+@@ -325,13 +325,13 @@ void TheoryDatatypes::preRegisterTerm(TNode n)
+       }
+       Trace("dt-expand") << "...nested recursion ok" << std::endl;
+     }
+-    if (!options().datatypes.codatatypesExp)
++    if (dt.isCodatatype())
+     {
+-      if (dt.isCodatatype())
++      if (!options().datatypes.datatypesExp)
+       {
+         std::stringstream ss;
+         ss << "Codatatypes not available in this configuration, try "
+-              "--co-dt-exp.";
++              "--datatypes-exp.";
+         throw LogicException(ss.str());
+       }
+     }
+diff --git a/src/theory/ff/theory_ff.cpp b/src/theory/ff/theory_ff.cpp
+index 1910aecdb..b3ec2b3cf 100644
+--- a/src/theory/ff/theory_ff.cpp
++++ b/src/theory/ff/theory_ff.cpp
+@@ -176,11 +176,10 @@ void TheoryFiniteFields::preRegisterTerm(TNode node)
+     Assert(node.getKind() == Kind::EQUAL);
+     fieldTy = node[0].getType();
+   }
+-  else if (!options().ff.ffExp)
++  else if (!options().ff.ff)
+   {
+     std::stringstream ss;
+-    ss << "Finite fields not available in this configuration, try "
+-          "--ff-exp.";
++    ss << "Finite fields not available in this configuration, try --ff.";
+     throw LogicException(ss.str());
+   }
+   if (d_subTheories.count(fieldTy) == 0)
+diff --git a/src/theory/fp/theory_fp.cpp b/src/theory/fp/theory_fp.cpp
+index f72d134d1..61dd361bb 100644
+--- a/src/theory/fp/theory_fp.cpp
++++ b/src/theory/fp/theory_fp.cpp
+@@ -577,6 +577,13 @@ bool TheoryFp::isRegistered(TNode node)
+ 
+ void TheoryFp::preRegisterTerm(TNode node)
+ {
++  if (!options().fp.fp)
++  {
++    std::stringstream ss;
++    ss << "Floating points not available in this configuration, try "
++          "--fp.";
++    throw LogicException(ss.str());
++  }
+   if (!options().fp.fpExp)
+   {
+     TypeNode tn = node.getType();
+diff --git a/src/theory/sep/theory_sep.cpp b/src/theory/sep/theory_sep.cpp
+index 443b80625..a3086b4d8 100644
+--- a/src/theory/sep/theory_sep.cpp
++++ b/src/theory/sep/theory_sep.cpp
+@@ -122,11 +122,11 @@ void TheorySep::preRegisterTerm(TNode n)
+   if (k == Kind::SEP_PTO || k == Kind::SEP_EMP || k == Kind::SEP_STAR
+       || k == Kind::SEP_WAND)
+   {
+-    if (!options().sep.sepExp)
++    if (!options().sep.sep)
+     {
+       std::stringstream ss;
+       ss << "Separation logic not available in this configuration, try "
+-            "--sep-exp.";
++            "--sep.";
+       throw LogicException(ss.str());
+     }
+     ensureHeapTypesFor(n);
+diff --git a/src/theory/uf/theory_uf.cpp b/src/theory/uf/theory_uf.cpp
+index 0cb7a5d92..a10a47728 100644
+--- a/src/theory/uf/theory_uf.cpp
++++ b/src/theory/uf/theory_uf.cpp
+@@ -93,7 +93,7 @@ void TheoryUF::finishInit() {
+   d_valuation.setUnevaluatedKind(Kind::COMBINED_CARDINALITY_CONSTRAINT);
+   if (logicInfo().hasCardinalityConstraints())
+   {
+-    if (!options().uf.cardExp)
++    if (!options().uf.ufCardExp)
+     {
+       std::stringstream ss;
+       ss << "Logic with cardinality constraints not available in this "
+@@ -114,11 +114,11 @@ void TheoryUF::finishInit() {
+   d_equalityEngine->addFunctionKind(Kind::APPLY_UF, false, isHo);
+   if (isHo)
+   {
+-    if (!options().uf.hoExp)
++    if (!options().uf.ufHoExp)
+     {
+       std::stringstream ss;
+       ss << "Higher-order logic not available in this configuration, try "
+-            "--ho-exp.";
++            "--uf-ho-exp.";
+       throw LogicException(ss.str());
+     }
+     d_equalityEngine->addFunctionKind(Kind::HO_APPLY);
+-- 
+2.47.1
+

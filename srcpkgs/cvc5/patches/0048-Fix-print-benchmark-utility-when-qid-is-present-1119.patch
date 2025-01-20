@@ -1,0 +1,117 @@
+From 598ee7341a6ac164f25dafd90bfea79afad62c98 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 9 Sep 2024 14:36:33 -0500
+Subject: [PATCH 048/312] Fix print benchmark utility when :qid is present
+ (#11190)
+
+Currently `:qid` makes print benchmark print spurious declarations
+corresponding to quantifier ids.
+---
+ src/smt/print_benchmark.cpp                   | 23 +++++++++++++++++++
+ src/smt/print_benchmark.h                     |  5 ++++
+ .../quantifiers/quantifiers_attributes.cpp    |  5 ++++
+ 3 files changed, 33 insertions(+)
+
+diff --git a/src/smt/print_benchmark.cpp b/src/smt/print_benchmark.cpp
+index 66d97bb77..687f6e01f 100644
+--- a/src/smt/print_benchmark.cpp
++++ b/src/smt/print_benchmark.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include "smt/print_benchmark.h"
+ 
++#include "expr/attribute.h"
+ #include "expr/dtype.h"
+ #include "expr/node_algorithm.h"
+ #include "expr/node_converter.h"
+@@ -25,6 +26,16 @@ using namespace cvc5::internal::kind;
+ namespace cvc5::internal {
+ namespace smt {
+ 
++/**
++ * Attribute true for symbols that should be excluded from the output of this
++ * utility.
++ */
++struct BenchmarkNoPrintAttributeId
++{
++};
++using BenchmarkNoPrintAttribute =
++    expr::Attribute<BenchmarkNoPrintAttributeId, bool>;
++
+ void PrintBenchmark::printDeclarationsFrom(std::ostream& outDecl,
+                                            std::ostream& outDef,
+                                            const std::vector<Node>& defs,
+@@ -188,6 +199,7 @@ void PrintBenchmark::printDeclaredFuns(std::ostream& out,
+                                        const std::unordered_set<Node>& funs,
+                                        std::unordered_set<Node>& alreadyPrinted)
+ {
++  BenchmarkNoPrintAttribute bnpa;
+   for (const Node& f : funs)
+   {
+     Assert(f.isVar());
+@@ -196,6 +208,11 @@ void PrintBenchmark::printDeclaredFuns(std::ostream& out,
+     {
+       continue;
+     }
++    // don't print symbols that have been marked
++    if (f.getAttribute(bnpa))
++    {
++      continue;
++    }
+     if (alreadyPrinted.find(f) == alreadyPrinted.end())
+     {
+       d_printer->toStreamCmdDeclareFunction(out, f);
+@@ -329,5 +346,11 @@ void PrintBenchmark::printBenchmark(std::ostream& out,
+   out << std::endl;
+ }
+ 
++void PrintBenchmark::markNoPrint(Node& sym)
++{
++  BenchmarkNoPrintAttribute bnpa;
++  sym.setAttribute(bnpa, true);
++}
++
+ }  // namespace smt
+ }  // namespace cvc5::internal
+diff --git a/src/smt/print_benchmark.h b/src/smt/print_benchmark.h
+index 0ed9aef8e..d1ffe439f 100644
+--- a/src/smt/print_benchmark.h
++++ b/src/smt/print_benchmark.h
+@@ -87,6 +87,11 @@ class PrintBenchmark
+                       const std::vector<Node>& defs,
+                       const std::vector<Node>& assertions);
+ 
++  /**
++   * Mark that the given symbol should not be printed in benchmark outputs.
++   */
++  static void markNoPrint(Node& sym);
++
+  private:
+   /**
+    * print declared symbols in funs but not processed; updates processed to
+diff --git a/src/theory/quantifiers/quantifiers_attributes.cpp b/src/theory/quantifiers/quantifiers_attributes.cpp
+index d194a6fa3..d5b8d6b28 100644
+--- a/src/theory/quantifiers/quantifiers_attributes.cpp
++++ b/src/theory/quantifiers/quantifiers_attributes.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "expr/skolem_manager.h"
+ #include "options/quantifiers_options.h"
++#include "smt/print_benchmark.h"
+ #include "theory/arith/arith_msum.h"
+ #include "theory/quantifiers/fmf/bounded_integers.h"
+ #include "theory/quantifiers/sygus/synth_engine.h"
+@@ -270,6 +271,10 @@ void QuantAttributes::computeQuantAttributes( Node q, QAttributes& qa ){
+           if (q[2][i].getNumChildren() > 1)
+           {
+             std::string name = q[2][i][1].getName();
++            // mark that this symbol should not be printed with the print
++            // benchmark utility
++            Node sym = q[2][i][1];
++            smt::PrintBenchmark::markNoPrint(sym);
+             Trace("quant-attr") << "Attribute : quantifier name : " << name
+                                 << " for " << q << std::endl;
+             // assign the name to a variable with the given name (to avoid
+-- 
+2.47.1
+

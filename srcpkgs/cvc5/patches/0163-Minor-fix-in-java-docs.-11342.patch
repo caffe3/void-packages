@@ -1,0 +1,25 @@
+From a3f0848ab256d3cf85ad9863f4bc661d0cf34c7e Mon Sep 17 00:00:00 2001
+From: Aina Niemetz <aina.niemetz@gmail.com>
+Date: Wed, 6 Nov 2024 11:33:16 -0800
+Subject: [PATCH 163/312] Minor fix in java docs. (#11342)
+
+---
+ src/api/java/io/github/cvc5/Solver.java | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/api/java/io/github/cvc5/Solver.java b/src/api/java/io/github/cvc5/Solver.java
+index d4b82eefe..9f7b78484 100644
+--- a/src/api/java/io/github/cvc5/Solver.java
++++ b/src/api/java/io/github/cvc5/Solver.java
+@@ -3129,7 +3129,7 @@ public class Solver extends AbstractPointer
+    *
+    * SMT-LIB:
+    * {@code
+-   * ( get-interpolant <xsymbol> <conj> )
++   * ( get-interpolant <symbol> <conj> )
+    * }
+    *
+    * @api.note In SMT-LIB, {@code <symbol>} assigns a symbol to the interpolant.
+-- 
+2.47.1
+

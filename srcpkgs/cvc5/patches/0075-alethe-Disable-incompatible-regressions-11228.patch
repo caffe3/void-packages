@@ -1,0 +1,40 @@
+From 05b9e72f3ba433e18c3dd62480010e4a8e8df518 Mon Sep 17 00:00:00 2001
+From: Haniel Barbosa <hanielbbarbosa@gmail.com>
+Date: Wed, 25 Sep 2024 13:31:13 -0300
+Subject: [PATCH 075/312] [alethe] Disable incompatible regressions (#11228)
+
+Fix nightlies.
+---
+ test/regress/cli/regress0/use_approx/bug812_approx.smt2         | 2 ++
+ ...csharp-WindowsCard.15.RTE.Terminate_System.Int32_approx.smt2 | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/test/regress/cli/regress0/use_approx/bug812_approx.smt2 b/test/regress/cli/regress0/use_approx/bug812_approx.smt2
+index e0dd8ea20..da0133adb 100644
+--- a/test/regress/cli/regress0/use_approx/bug812_approx.smt2
++++ b/test/regress/cli/regress0/use_approx/bug812_approx.smt2
+@@ -1,6 +1,8 @@
+ ; REQUIRES: glpk
+ ; COMMAND-LINE: --use-approx
+ ; DISABLE-TESTER: cpc
++;; Overloading of functions not supported in Alethe
++; DISABLE-TESTER: alethe
+ (set-logic UFNIA)
+ (set-info :source "Reduced from regression 'bug812.smt2' using ddSMT to exercise GLPK")
+ (set-info :smt-lib-version 2.6)
+diff --git a/test/regress/cli/regress0/use_approx/specsharp-WindowsCard.15.RTE.Terminate_System.Int32_approx.smt2 b/test/regress/cli/regress0/use_approx/specsharp-WindowsCard.15.RTE.Terminate_System.Int32_approx.smt2
+index 6ae950512..5c3f7031a 100644
+--- a/test/regress/cli/regress0/use_approx/specsharp-WindowsCard.15.RTE.Terminate_System.Int32_approx.smt2
++++ b/test/regress/cli/regress0/use_approx/specsharp-WindowsCard.15.RTE.Terminate_System.Int32_approx.smt2
+@@ -2,6 +2,8 @@
+ ; DISABLE-TESTER: unsat-core
+ ; COMMAND-LINE: --use-approx
+ ; EXPECT: unsat
++;; Unary AND is not supported in Alethe
++; DISABLE-TESTER: alethe
+ (set-logic UFNIA)
+ (set-info :source "Reduced from regression 'specsharp-WindowsCard.15.RTE.Terminate_System.Int32.smt2' using ddSMT to exercise GLPK")
+ (set-info :smt-lib-version 2.6)
+-- 
+2.47.1
+

@@ -1,0 +1,27 @@
+From 50d193d5c7f139c6205b91a113d6ddce4bd29e15 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 3 Dec 2024 20:35:11 -0600
+Subject: [PATCH 214/312] Disable cpc on regression (#11405)
+
+Fixes some failures in the nightlies.
+
+This failure is caused by codatatypes not being fully supported in
+Ethos.
+---
+ test/regress/cli/regress1/quantifiers/cdt-0208-to.smt2 | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/test/regress/cli/regress1/quantifiers/cdt-0208-to.smt2 b/test/regress/cli/regress1/quantifiers/cdt-0208-to.smt2
+index 5a04e2394..bd57ad8ad 100644
+--- a/test/regress/cli/regress1/quantifiers/cdt-0208-to.smt2
++++ b/test/regress/cli/regress1/quantifiers/cdt-0208-to.smt2
+@@ -1,5 +1,6 @@
+ ; COMMAND-LINE: --full-saturate-quant
+ ; EXPECT: unsat
++; DISABLE-TESTER: cpc
+ (set-logic ALL)
+ (set-info :status unsat)
+ (declare-sort A$ 0)
+-- 
+2.47.1
+

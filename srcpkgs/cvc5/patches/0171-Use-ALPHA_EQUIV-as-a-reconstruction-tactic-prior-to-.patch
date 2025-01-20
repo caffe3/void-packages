@@ -1,0 +1,250 @@
+From fcc54f0a1bfe9b5121e508e6812ffec5eee0e2a0 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 14 Nov 2024 10:35:12 -0600
+Subject: [PATCH 171/312] Use ALPHA_EQUIV as a reconstruction tactic prior to
+ RARE (#11330)
+
+This generalizes the preprocessing step for when we are trying to prove
+the equivalence between 2 quantified formulas.
+
+In particular, we previously always tried to show equivalence when the 2
+quantified formulas had equivalent binders by showing their body was
+equal. We now also take into account alpha equivalence.
+---
+ src/rewriter/rewrite_db_proof_cons.cpp | 160 ++++++++++++++++++++-----
+ src/rewriter/rewrite_db_proof_cons.h   |  35 ++++++
+ 2 files changed, 162 insertions(+), 33 deletions(-)
+
+diff --git a/src/rewriter/rewrite_db_proof_cons.cpp b/src/rewriter/rewrite_db_proof_cons.cpp
+index 66d9dc139..32c11bc29 100644
+--- a/src/rewriter/rewrite_db_proof_cons.cpp
++++ b/src/rewriter/rewrite_db_proof_cons.cpp
+@@ -73,45 +73,27 @@ bool RewriteDbProofCons::prove(
+   Trace("rpc") << "RewriteDbProofCons::prove: " << a << " == " << b
+                << std::endl;
+   // As a heuristic, always apply CONG if we are an equality between two
+-  // binder terms with the same quantifier prefix.
+-  if (a.isClosure() && a.getKind() == b.getKind() && a[0] == b[0])
++  // binder terms with the same quantifier prefix or ALPHA_EQUIV if they have
++  // a different prefix whose types are the same.
++  if (a.isClosure())
+   {
+-    // Ensure patterns are removed by calling d_rdnc postConvert (single step).
+-    // We do not apply convert recursively here or else it would e.g. convert
+-    // the entire quantifier body to ACI normal form.
+-    Node ai = d_rdnc.postConvert(a);
+-    Node bi = d_rdnc.postConvert(b);
+-    // only apply this to standard binders (those with 2 children)
+-    if (ai.getNumChildren() == 2 && bi.getNumChildren()==2)
++    // Note we apply this to fixed point, which should only occur at most 2
++    // times (first ALPHA_EQUIV, then CONG).
++    Node eqp;
++    do
+     {
+-      Node eqo = eq;
+-      std::vector<Node> transEq;
+-      if (ai!=a)
+-      {
+-        Node aeq = a.eqNode(ai);
+-        cdp->addStep(aeq, ProofRule::ENCODE_EQ_INTRO, {}, {a});
+-        transEq.push_back(aeq);
+-      }
+-      std::vector<Node> cargs;
+-      ProofRule cr = expr::getCongRule(ai, cargs);
+-      eq = ai[1].eqNode(bi[1]);
+-      Node eqConv = ai.eqNode(bi);
+-      cdp->addStep(eqConv, cr, {eq}, cargs);
+-      transEq.push_back(eqConv);
+-      if (bi!=b)
++      eqp = preprocessClosureEq(cdp, eq[0], eq[1]);
++      if (!eqp.isNull())
+       {
+-        Node beq = b.eqNode(bi);
+-        cdp->addStep(beq, ProofRule::ENCODE_EQ_INTRO, {}, {b});
+-        Node beqs = bi.eqNode(b);
+-        cdp->addStep(beqs, ProofRule::SYMM, {beq}, {});
+-        transEq.push_back(beqs);
++        eq = eqp;
++        Trace("rpc") << "- closure-preprocess to " << eq[0] << " == " << eq[1]
++                     << std::endl;
+       }
+-      if (transEq.size()>1)
++      else
+       {
+-        cdp->addStep(eqo, ProofRule::TRANS, transEq, {});
++        Trace("rpc") << "...does not closure-preprocess" << std::endl;
+       }
+-      Trace("rpc") << "- process to " << eq[0] << " == " << eq[1] << std::endl;
+-    }
++    } while (!eqp.isNull() && eqp[0].isClosure());
+   }
+   Trace("rpc-debug") << "- prove basic" << std::endl;
+   // first, try with the basic utility
+@@ -173,6 +155,118 @@ bool RewriteDbProofCons::prove(
+   return success;
+ }
+ 
++Node RewriteDbProofCons::preprocessClosureEq(CDProof* cdp,
++                                             const Node& a,
++                                             const Node& b)
++{
++  // Ensure patterns are removed by calling d_rdnc postConvert (single step),
++  // which also ensures differences e.g. LAMBDA vs FUNCTION_ARRAY_CONST are
++  // resolved. We do not apply convert recursively here.
++  Node ai = d_rdnc.postConvert(a);
++  Node bi = d_rdnc.postConvert(b);
++  // The kinds must match.
++  if (ai.getKind() != bi.getKind())
++  {
++    return Node::null();
++  }
++  // only apply this to standard binders (those with 2 children)
++  if (ai.getNumChildren() != 2 || bi.getNumChildren() != 2)
++  {
++    return Node::null();
++  }
++  Node eq;
++  Node eqConv = ai.eqNode(bi);
++  if (ai[0] == bi[0])
++  {
++    std::vector<Node> cargs;
++    ProofRule cr = expr::getCongRule(ai, cargs);
++    // remains to prove their bodies are equal
++    eq = ai[1].eqNode(bi[1]);
++    cdp->addStep(eqConv, cr, {eq}, cargs);
++  }
++  else if (ai[0].getNumChildren() == bi[0].getNumChildren())
++  {
++    size_t nchild = ai[0].getNumChildren();
++    std::vector<Node> vars;
++    std::vector<Node> subs;
++    std::unordered_set<Node> uvars;
++    for (size_t i = 0; i < nchild; i++)
++    {
++      // rare corner case: don't use if duplicate variables
++      if (!uvars.insert(ai[0][i]).second)
++      {
++        return Node::null();
++      }
++      if (ai[0][i] != bi[0][i])
++      {
++        if (ai[0][i].getType() != bi[0][i].getType())
++        {
++          return Node::null();
++        }
++        vars.emplace_back(ai[0][i]);
++        subs.emplace_back(bi[0][i]);
++      }
++    }
++    if (vars.empty())
++    {
++      return Node::null();
++    }
++    NodeManager* nm = nodeManager();
++    std::vector<Node> aeArgs;
++    aeArgs.push_back(ai);
++    aeArgs.push_back(nm->mkNode(Kind::SEXPR, vars));
++    aeArgs.push_back(nm->mkNode(Kind::SEXPR, subs));
++    ProofChecker* pc = d_env.getProofNodeManager()->getChecker();
++    Node res = pc->checkDebug(ProofRule::ALPHA_EQUIV, {}, aeArgs);
++    if (!res.isNull())
++    {
++      Assert(res.getKind() == Kind::EQUAL);
++      cdp->addStep(res, ProofRule::ALPHA_EQUIV, {}, aeArgs);
++      // Remains to prove that the result of applying alpha equivalence to the
++      // left hand side is equal to the right hand side. This may be a
++      // reflexive equality when ALPHA_EQUIV alone suffices. Note that when this
++      // occurs eq is not a free assumption in cdp. Proof generation will
++      // easily succeed in proving eq by REFL, but this will not be used
++      // in the final proof.
++      eq = res[1].eqNode(bi);
++      if (res != eqConv)
++      {
++        cdp->addStep(eqConv, ProofRule::TRANS, {res, eq}, {});
++      }
++    }
++    else
++    {
++      return Node::null();
++    }
++  }
++  else
++  {
++    return Node::null();
++  }
++  std::vector<Node> transEq;
++  if (ai != a)
++  {
++    Node aeq = a.eqNode(ai);
++    cdp->addStep(aeq, ProofRule::ENCODE_EQ_INTRO, {}, {a});
++    transEq.push_back(aeq);
++  }
++  transEq.push_back(eqConv);
++  if (bi != b)
++  {
++    Node beq = b.eqNode(bi);
++    cdp->addStep(beq, ProofRule::ENCODE_EQ_INTRO, {}, {b});
++    Node beqs = bi.eqNode(b);
++    cdp->addStep(beqs, ProofRule::SYMM, {beq}, {});
++    transEq.push_back(beqs);
++  }
++  if (transEq.size() > 1)
++  {
++    Node eqo = a.eqNode(b);
++    cdp->addStep(eqo, ProofRule::TRANS, transEq, {});
++  }
++  return eq;
++}
++
+ bool RewriteDbProofCons::proveEq(
+     CDProof* cdp,
+     const Node& eq,
+diff --git a/src/rewriter/rewrite_db_proof_cons.h b/src/rewriter/rewrite_db_proof_cons.h
+index 8b3c229c7..05b32533f 100644
+--- a/src/rewriter/rewrite_db_proof_cons.h
++++ b/src/rewriter/rewrite_db_proof_cons.h
+@@ -81,6 +81,41 @@ class RewriteDbProofCons : protected EnvObj
+              TheoryRewriteMode tmode);
+ 
+  private:
++  /**
++   * Preprocess closure equality. This is called at the beginning of prove to
++   * simplify equalities between closures. In particular we apply two possible
++   * simplifications:
++   *
++   * For (forall x P) = (forall x Q), we return P = Q, where a CONG step
++   * is added to transform this step. That is, the proof is:
++   *
++   * P = Q
++   * ----------------------------- CONG
++   * (forall x. P) = (forall x. Q)
++   *
++   * where P = Q is left to prove.
++   *
++   * For (forall x. P) = (forall y. Q), we return
++   * (forall y. P[y/x]) = (forall y. Q). If P[y/x] is not Q, the proof is:
++   *
++   * ----------------------- ALPHA_EQUIV
++   * (forall x. P) = (forall y. P[y/x])   (forall y. P[y/x]) = (forall y. Q)
++   * ----------------------------------------------------------------- TRANS
++   *  (forall x. P) = (forall y. Q)
++   *
++   * where (forall y. P[y/x]) = (forall y. Q) is left to prove. If P[y/x] is Q,
++   * the proof is:
++   *
++   * ----------------------------- ALPHA_EQUIV
++   * (forall x. P) = (forall y. Q)
++   *
++   * where (forall y. Q) = (forall y. Q) is left to prove (trivially).
++   *
++   * In either case, we add a proof of (= a b) whose free assumptions are
++   * either empty (if the returned equality is reflexive), or the returned
++   * equality.
++   */
++  Node preprocessClosureEq(CDProof* cdp, const Node& a, const Node& b);
+   /**
+    * Notify class for the match trie, which is responsible for calling this
+    * class to notify matches for heads of rewrite rules. It is used as a
+-- 
+2.47.1
+

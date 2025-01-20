@@ -1,0 +1,226 @@
+From 08c0639030e7d1de53c614e1e9b331bc0c8bf68b Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 19 Nov 2024 15:30:32 -0600
+Subject: [PATCH 185/312] Add licensing info for gcc-libs and winpthreads
+ (#11365)
+
+This PR clarifies the licensing details for the GCC libraries and the
+winpthreads library, which are included in the Windows package and the
+Windows Python wheel. It also includes the AUTHORS file since it is
+referred to in the COPYING file.
+---
+ .github/actions/add-package/action.yml |  4 +-
+ COPYING                                | 12 +++++
+ licenses/GCC-exception-3.1.txt         | 73 ++++++++++++++++++++++++++
+ licenses/winpthreads-LICENSE           | 57 ++++++++++++++++++++
+ src/api/python/CMakeLists.txt          |  5 ++
+ 5 files changed, 149 insertions(+), 2 deletions(-)
+ create mode 100644 licenses/GCC-exception-3.1.txt
+ create mode 100644 licenses/winpthreads-LICENSE
+
+diff --git a/.github/actions/add-package/action.yml b/.github/actions/add-package/action.yml
+index 7796ef1f6..0bf970628 100644
+--- a/.github/actions/add-package/action.yml
++++ b/.github/actions/add-package/action.yml
+@@ -39,8 +39,8 @@ runs:
+           fi
+         fi
+ 
+-        # Copy COPYING file and licenses directory to install directory
+-        cp COPYING ${{ inputs.build-dir }}/install/
++        # Copy AUTHORS and COPYING files and licenses directory to install directory
++        cp AUTHORS COPYING ${{ inputs.build-dir }}/install/
+         cp -r licenses ${{ inputs.build-dir }}/install/
+ 
+         # Create ZIP file
+diff --git a/COPYING b/COPYING
+index 14553ed82..4386ea482 100644
+--- a/COPYING
++++ b/COPYING
+@@ -74,6 +74,18 @@ The implementation of the floating point solver in cvc5 depends on symfpu
+ See https://raw.githubusercontent.com/martin-cs/symfpu/CVC4/LICENSE for
+ copyright and licensing information.
+ 
++When building with GCC or MinGW-w64, cvc5 links against the libgcc and
++libstdc++ libraries, which are licensed under the GNU GPL v3 with
++the GCC Runtime Library exception. See the files licenses/gpl-3.0.txt and
++licenses/GCC-exception-3.1.txt for a copy of the license and the exception,
++respectively. Note that according to the terms of GPLv3 with the GCC-exception,
++both cvc5's source, and the combined work (cvc5 linked with the libraries) may
++(and do) remain under the more permissive modified BSD license.
++
++On Windows, cvc5 also links against the Winpthreads library from the MinGW-w64
++project (https://github.com/ldx/winpthreads).  See licenses/winpthreads-LICENSE
++for copyright and licensing information.
++
+ cvc5 optionally links against the following libraries:
+ 
+   ABC                (https://bitbucket.org/alanmi/abc)
+diff --git a/licenses/GCC-exception-3.1.txt b/licenses/GCC-exception-3.1.txt
+new file mode 100644
+index 000000000..e1b3c69c1
+--- /dev/null
++++ b/licenses/GCC-exception-3.1.txt
+@@ -0,0 +1,73 @@
++GCC RUNTIME LIBRARY EXCEPTION
++
++Version 3.1, 31 March 2009
++
++Copyright (C) 2009 Free Software Foundation, Inc. <http://fsf.org/>
++
++Everyone is permitted to copy and distribute verbatim copies of this
++license document, but changing it is not allowed.
++
++This GCC Runtime Library Exception ("Exception") is an additional
++permission under section 7 of the GNU General Public License, version
++3 ("GPLv3"). It applies to a given file (the "Runtime Library") that
++bears a notice placed by the copyright holder of the file stating that
++the file is governed by GPLv3 along with this Exception.
++
++When you use GCC to compile a program, GCC may combine portions of
++certain GCC header files and runtime libraries with the compiled
++program. The purpose of this Exception is to allow compilation of
++non-GPL (including proprietary) programs to use, in this way, the
++header files and runtime libraries covered by this Exception.
++
++0. Definitions.
++
++A file is an "Independent Module" if it either requires the Runtime
++Library for execution after a Compilation Process, or makes use of an
++interface provided by the Runtime Library, but is not otherwise based
++on the Runtime Library.
++
++"GCC" means a version of the GNU Compiler Collection, with or without
++modifications, governed by version 3 (or a specified later version) of
++the GNU General Public License (GPL) with the option of using any
++subsequent versions published by the FSF.
++
++"GPL-compatible Software" is software whose conditions of propagation,
++modification and use would permit combination with GCC in accord with
++the license of GCC.
++
++"Target Code" refers to output from any compiler for a real or virtual
++target processor architecture, in executable form or suitable for
++input to an assembler, loader, linker and/or execution
++phase. Notwithstanding that, Target Code does not include data in any
++format that is used as a compiler intermediate representation, or used
++for producing a compiler intermediate representation.
++
++The "Compilation Process" transforms code entirely represented in
++non-intermediate languages designed for human-written code, and/or in
++Java Virtual Machine byte code, into Target Code. Thus, for example,
++use of source code generators and preprocessors need not be considered
++part of the Compilation Process, since the Compilation Process can be
++understood as starting with the output of the generators or
++preprocessors.
++
++A Compilation Process is "Eligible" if it is done using GCC, alone or
++with other GPL-compatible software, or if it is done without using any
++work based on GCC. For example, using non-GPL-compatible Software to
++optimize any GCC intermediate representations would not qualify as an
++Eligible Compilation Process.
++
++1. Grant of Additional Permission.
++
++You have permission to propagate a work of Target Code formed by
++combining the Runtime Library with Independent Modules, even if such
++propagation would otherwise violate the terms of GPLv3, provided that
++all Target Code was generated by Eligible Compilation Processes. You
++may then convey such a combination under terms of your choice,
++consistent with the licensing of the Independent Modules.
++
++2. No Weakening of GCC Copyleft.
++
++The availability of this Exception does not imply any general
++presumption that third-party software is unaffected by the copyleft
++requirements of the license of GCC.
++
+diff --git a/licenses/winpthreads-LICENSE b/licenses/winpthreads-LICENSE
+new file mode 100644
+index 000000000..350770123
+--- /dev/null
++++ b/licenses/winpthreads-LICENSE
+@@ -0,0 +1,57 @@
++Copyright (c) 2011 mingw-w64 project
++
++Permission is hereby granted, free of charge, to any person obtaining a
++copy of this software and associated documentation files (the "Software"),
++to deal in the Software without restriction, including without limitation
++the rights to use, copy, modify, merge, publish, distribute, sublicense,
++and/or sell copies of the Software, and to permit persons to whom the
++Software is furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in
++all copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++DEALINGS IN THE SOFTWARE.
++
++
++/*
++ * Parts of this library are derived by:
++ *
++ * Posix Threads library for Microsoft Windows
++ *
++ * Use at own risk, there is no implied warranty to this code.
++ * It uses undocumented features of Microsoft Windows that can change
++ * at any time in the future.
++ *
++ * (C) 2010 Lockless Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without modification,
++ * are permitted provided that the following conditions are met:
++ *
++ *
++ *  * Redistributions of source code must retain the above copyright notice,
++ *    this list of conditions and the following disclaimer.
++ *  * Redistributions in binary form must reproduce the above copyright notice,
++ *    this list of conditions and the following disclaimer in the documentation
++ *    and/or other materials provided with the distribution.
++ *  * Neither the name of Lockless Inc. nor the names of its contributors may be
++ *    used to endorse or promote products derived from this software without
++ *    specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AN
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
++ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
++ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
++ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
++ * OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
+diff --git a/src/api/python/CMakeLists.txt b/src/api/python/CMakeLists.txt
+index b1edc015c..0e575939e 100644
+--- a/src/api/python/CMakeLists.txt
++++ b/src/api/python/CMakeLists.txt
+@@ -176,6 +176,7 @@ endif()
+ find_package(CVC5PythonicAPI)
+ 
+ set(LICENSE_FILES
++  "${CMAKE_CURRENT_BINARY_DIR}/AUTHORS"
+   "${CMAKE_CURRENT_BINARY_DIR}/COPYING"
+   "${CMAKE_CURRENT_BINARY_DIR}/licenses/lgpl-3.0.txt"
+   "${CMAKE_CURRENT_BINARY_DIR}/licenses/pythonic-LICENSE"
+@@ -184,6 +185,10 @@ set(LICENSE_FILES
+ add_custom_command(
+   OUTPUT
+     ${LICENSE_FILES}
++  COMMAND
++    ${CMAKE_COMMAND} -E copy
++    "${PROJECT_SOURCE_DIR}/AUTHORS"
++    "${CMAKE_CURRENT_BINARY_DIR}/AUTHORS"
+   COMMAND
+     ${CMAKE_COMMAND} -E copy
+     "${PROJECT_SOURCE_DIR}/COPYING"
+-- 
+2.47.1
+

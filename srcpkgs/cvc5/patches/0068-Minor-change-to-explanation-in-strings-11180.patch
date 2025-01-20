@@ -1,0 +1,35 @@
+From 886e4e93a6103fe09031069ed2ac5ee729a9c72c Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 24 Sep 2024 10:42:07 -0500
+Subject: [PATCH 068/312] Minor change to explanation in strings (#11180)
+
+This reorients equalities `(= c x)` to `(= x c)` where `c` is a constant
+string.
+
+This is helpful in rare cases for proof elaboration in strings
+inferences.
+---
+ src/theory/strings/inference_manager.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/theory/strings/inference_manager.cpp b/src/theory/strings/inference_manager.cpp
+index c40dd7093..a1190f78f 100644
+--- a/src/theory/strings/inference_manager.cpp
++++ b/src/theory/strings/inference_manager.cpp
+@@ -254,6 +254,13 @@ void InferenceManager::addToExplanation(Node a,
+ {
+   if (a != b)
+   {
++    // prefer having constants on the RHS, which helps proof reconstruction
++    if (a.isConst() && !b.isConst())
++    {
++      Node tmp = a;
++      a = b;
++      b = tmp;
++    }
+     Trace("strings-explain")
+         << "Add to explanation : " << a << " == " << b << std::endl;
+     Assert(d_state.areEqual(a, b));
+-- 
+2.47.1
+

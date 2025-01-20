@@ -1,0 +1,332 @@
+From ef0dc50ff9c7008340cb4b619ba1ff6fbd7db729 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Sat, 16 Nov 2024 08:48:16 -0600
+Subject: [PATCH 179/312] Add proof support for missing datatypes inferences
+ (#11304)
+
+Fixes support for DT_UNIF based on sym equalities, adds proof
+reconstruction for exhausted labels, handles missing constructor case
+for DT_INST. Furthermore eliminates DT_UNIF as it is subsumed by
+DT_CONS_EQ.
+
+The only remaining holes in this class should now be DT_CYCLE.
+---
+ include/cvc5/cvc5_proof_rule.h            |  13 --
+ src/api/cpp/cvc5_proof_rule_template.cpp  |   1 -
+ src/theory/datatypes/infer_proof_cons.cpp | 153 ++++++++++++++++------
+ src/theory/datatypes/infer_proof_cons.h   |   8 ++
+ src/theory/datatypes/proof_checker.cpp    |  23 +---
+ 5 files changed, 125 insertions(+), 73 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index 2ef2de512..0fc353115 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -1249,19 +1249,6 @@ enum ENUM(ProofRule)
+    * \endverbatim
+    */
+   EVALUE(BV_EAGER_ATOM),
+-
+-  /**
+-   * \verbatim embed:rst:leading-asterisk
+-   * **Datatypes -- Unification**
+-   *
+-   * .. math::
+-   *
+-   *   \inferrule{C(t_1,\dots,t_n)= C(s_1,\dots,s_n)\mid i}{t_1 = s_i}
+-   *
+-   * where :math:`C` is a constructor.
+-   * \endverbatim
+-   */
+-  EVALUE(DT_UNIF),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Datatypes -- Split**
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index a7a95b64c..441b186e2 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -120,7 +120,6 @@ const char* toString(ProofRule rule)
+     case ProofRule::BV_BITBLAST_STEP: return "BV_BITBLAST_STEP";
+     case ProofRule::BV_EAGER_ATOM: return "BV_EAGER_ATOM";
+     //================================================= Datatype rules
+-    case ProofRule::DT_UNIF: return "DT_UNIF";
+     case ProofRule::DT_SPLIT: return "DT_SPLIT";
+     case ProofRule::DT_CLASH: return "DT_CLASH";
+     //================================================= Quantifiers rules
+diff --git a/src/theory/datatypes/infer_proof_cons.cpp b/src/theory/datatypes/infer_proof_cons.cpp
+index 981d15f19..16bc45bc2 100644
+--- a/src/theory/datatypes/infer_proof_cons.cpp
++++ b/src/theory/datatypes/infer_proof_cons.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "proof/proof.h"
+ #include "proof/proof_checker.h"
++#include "proof/proof_node_manager.h"
+ #include "theory/builtin/proof_checker.h"
+ #include "theory/datatypes/theory_datatypes_utils.h"
+ #include "theory/model_manager.h"
+@@ -81,6 +82,7 @@ void InferProofCons::convert(InferenceId infer, TNode conc, TNode exp, CDProof*
+              && exp[0].getKind() == Kind::APPLY_CONSTRUCTOR
+              && exp[1].getKind() == Kind::APPLY_CONSTRUCTOR
+              && exp[0].getOperator() == exp[1].getOperator());
++      Assert(conc.getKind() == Kind::EQUAL);
+       Node narg;
+       // we may be asked for a proof of (not P) coming from (= P false) or
+       // (= false P), or similarly P from (= P true) or (= true P).
+@@ -90,22 +92,15 @@ void InferProofCons::convert(InferenceId infer, TNode conc, TNode exp, CDProof*
+       for (size_t i = 0, nchild = exp[0].getNumChildren(); i < nchild; i++)
+       {
+         bool argSuccess = false;
+-        if (conc.getKind() == Kind::EQUAL)
++        if (exp[0][i] == conc[0] && exp[1][i] == conc[1])
+         {
+-          argSuccess = (exp[0][i] == conc[0] && exp[1][i] == conc[1]);
++          argSuccess = true;
+         }
+-        else
++        else if (exp[0][i] == conc[1] && exp[1][i] == conc[0])
+         {
+-          for (size_t j = 0; j < 2; j++)
+-          {
+-            if (exp[j][i] == concAtom && exp[1 - j][i].isConst()
+-                && exp[1 - j][i].getConst<bool>() == concPol)
+-            {
+-              argSuccess = true;
+-              unifConc = exp[0][i].eqNode(exp[1][i]);
+-              break;
+-            }
+-          }
++          // it is for the symmetric fact
++          argSuccess = true;
++          unifConc = conc[1].eqNode(conc[0]);
+         }
+         if (argSuccess)
+         {
+@@ -115,39 +110,43 @@ void InferProofCons::convert(InferenceId infer, TNode conc, TNode exp, CDProof*
+       }
+       if (!narg.isNull())
+       {
+-        if (conc.getKind() == Kind::EQUAL)
+-        {
+-          // normal case where we conclude an equality
+-          cdp->addStep(conc, ProofRule::DT_UNIF, {exp}, {narg});
+-        }
+-        else
+-        {
+-          // must use true or false elim to prove the final
+-          cdp->addStep(unifConc, ProofRule::DT_UNIF, {exp}, {narg});
+-          // may use symmetry
+-          Node eq = concAtom.eqNode(nm->mkConst(concPol));
+-          cdp->addStep(conc,
+-                       concPol ? ProofRule::TRUE_ELIM : ProofRule::FALSE_ELIM,
+-                       {eq},
+-                       {});
+-        }
++        addDtUnif(cdp, unifConc, exp, narg);
+         success = true;
+       }
+     }
+     break;
+     case InferenceId::DATATYPES_INST:
+     {
+-      if (expv.size() == 1)
++      Assert(conc.getKind() == Kind::EQUAL);
++      Node tst;
++      if (expv.empty())
++      {
++        // In rare cases, this rule is applied to a constructor without an
++        // explanation and introduces purification variables. In this case, it
++        // can be shown by MACRO_SR_PRED_INTRO. An example of this would be:
++        //   C(a) = C(s(@purify(C(a))))
++        // which requires converting to original form and rewriting.
++        ProofChecker* pc = d_env.getProofNodeManager()->getChecker();
++        Node concc =
++            pc->checkDebug(ProofRule::MACRO_SR_PRED_INTRO, {}, {conc}, conc);
++        if (concc == conc)
++        {
++          cdp->addStep(conc, ProofRule::MACRO_SR_PRED_INTRO, {}, {conc});
++          success = true;
++        }
++      }
++      else if (expv.size() == 1)
+       {
+-        Assert(conc.getKind() == Kind::EQUAL);
+-        int n = utils::isTester(exp);
++        tst = exp;
++      }
++      if (!tst.isNull())
++      {
++        int n = utils::isTester(tst);
+         if (n >= 0)
+         {
+-          Node t = exp[0];
+-          Node nn = nm->mkConstInt(Rational(n));
+-          Node eq = exp.eqNode(conc);
++          Node eq = tst.eqNode(conc);
+           cdp->addTheoryRewriteStep(eq, ProofRewriteRule::DT_INST);
+-          cdp->addStep(conc, ProofRule::EQ_RESOLVE, {exp, eq}, {});
++          cdp->addStep(conc, ProofRule::EQ_RESOLVE, {tst, eq}, {});
+           success = true;
+         }
+       }
+@@ -264,8 +263,61 @@ void InferProofCons::convert(InferenceId infer, TNode conc, TNode exp, CDProof*
+       success = true;
+     }
+     break;
+-    // inferences currently not supported
+     case InferenceId::DATATYPES_LABEL_EXH:
++    {
++      // Exhausted labels. For example, this proves ~is-cons(x) => is-nil(x)
++      // We prove this by:
++      // ------------------------ DT_SPLIT
++      // is-cons(x) or is-nil(x)            ~is-cons(x)
++      // ---------------------------------------------- CHAIN_RESOLUTION
++      // is-nil(x)
++      Node tst = expv[0];
++      Assert(tst.getKind() == Kind::NOT
++             && tst[0].getKind() == Kind::APPLY_TESTER);
++      Node t = tst[0][0];
++      ProofChecker* pc = d_env.getProofNodeManager()->getChecker();
++      Node sconc = pc->checkDebug(ProofRule::DT_SPLIT, {}, {t});
++      if (!sconc.isNull())
++      {
++        Trace("dt-ipc") << "...conclude " << sconc << " by split" << std::endl;
++        cdp->addStep(sconc, ProofRule::DT_SPLIT, {}, {t});
++        Node truen = nm->mkConst(true);
++        Node curr = sconc;
++        std::vector<Node> premises;
++        premises.push_back(sconc);
++        std::vector<Node> pols;
++        std::vector<Node> lits;
++        for (const Node& e : expv)
++        {
++          if (e.getKind() != Kind::NOT || e[0].getKind() != Kind::APPLY_TESTER)
++          {
++            curr = Node::null();
++            break;
++          }
++          premises.push_back(e);
++          pols.emplace_back(truen);
++          lits.emplace_back(e[0]);
++        }
++        if (!curr.isNull())
++        {
++          std::vector<Node> args;
++          args.push_back(nm->mkNode(Kind::SEXPR, pols));
++          args.push_back(nm->mkNode(Kind::SEXPR, lits));
++          curr = pc->checkDebug(ProofRule::CHAIN_RESOLUTION, premises, args);
++          if (!curr.isNull())
++          {
++            Trace("dt-ipc")
++                << "...conclude " << curr << " by chain resolution via "
++                << premises << std::endl;
++            cdp->addStep(curr, ProofRule::CHAIN_RESOLUTION, premises, args);
++          }
++        }
++        success = (curr == conc);
++        Assert(success);
++      }
++    }
++    break;
++    // inferences currently not supported
+     case InferenceId::DATATYPES_BISIMILAR:
+     case InferenceId::DATATYPES_CYCLE:
+     default:
+@@ -286,6 +338,33 @@ void InferProofCons::convert(InferenceId infer, TNode conc, TNode exp, CDProof*
+   }
+ }
+ 
++void InferProofCons::addDtUnif(CDProof* cdp,
++                               const Node& conc,
++                               const Node& exp,
++                               const Node& narg)
++{
++  //                         ---------------------------------------- DT_CONS_EQ
++  // C(t1...tn) = C(s1...sn) (C(t1..tn) = C(s1..sn)) = (and t1 = s1 ... tn = sn)
++  // ---------------------------------------------------------------- EQ_RESOLVE
++  // (and t1 = s1 ... tn = sn)
++  // ------------------------ AND_ELIM
++  // ti = si
++  Node consEq =
++      d_env.getRewriter()->rewriteViaRule(ProofRewriteRule::DT_CONS_EQ, exp);
++  Assert(!consEq.isNull());
++  Node ceq = exp.eqNode(consEq);
++  cdp->addTheoryRewriteStep(ceq, ProofRewriteRule::DT_CONS_EQ);
++  cdp->addStep(consEq, ProofRule::EQ_RESOLVE, {exp, ceq}, {});
++  if (consEq.getKind() == Kind::AND)
++  {
++    cdp->addStep(conc, ProofRule::AND_ELIM, {consEq}, {narg});
++  }
++  else
++  {
++    AlwaysAssert(consEq == conc);
++  }
++}
++
+ std::shared_ptr<ProofNode> InferProofCons::getProofFor(Node fact)
+ {
+   Trace("dt-ipc") << "dt-ipc: Ask proof for " << fact << std::endl;
+diff --git a/src/theory/datatypes/infer_proof_cons.h b/src/theory/datatypes/infer_proof_cons.h
+index 875710c66..bbaf817d2 100644
+--- a/src/theory/datatypes/infer_proof_cons.h
++++ b/src/theory/datatypes/infer_proof_cons.h
+@@ -85,6 +85,14 @@ class InferProofCons : protected EnvObj, public ProofGenerator
+    * information is stored in cdp.
+    */
+   void convert(InferenceId infer, TNode conc, TNode exp, CDProof* cdp);
++  /**
++   * Adds a step concluding t_i = s_i from C(t_1 ... t_n) = C(s_1 ... s_n),
++   * where i is stored in the node narg.
++   */
++  void addDtUnif(CDProof* cdp,
++                 const Node& conc,
++                 const Node& exp,
++                 const Node& narg);
+   /** A dummy context used by this class if none is provided */
+   context::Context d_context;
+   /** The lazy fact map */
+diff --git a/src/theory/datatypes/proof_checker.cpp b/src/theory/datatypes/proof_checker.cpp
+index 7576b76d9..623f5e0d2 100644
+--- a/src/theory/datatypes/proof_checker.cpp
++++ b/src/theory/datatypes/proof_checker.cpp
+@@ -31,7 +31,6 @@ DatatypesProofRuleChecker::DatatypesProofRuleChecker(NodeManager* nm,
+ 
+ void DatatypesProofRuleChecker::registerTo(ProofChecker* pc)
+ {
+-  pc->registerChecker(ProofRule::DT_UNIF, this);
+   pc->registerChecker(ProofRule::DT_SPLIT, this);
+   pc->registerChecker(ProofRule::DT_CLASH, this);
+ }
+@@ -41,27 +40,7 @@ Node DatatypesProofRuleChecker::checkInternal(ProofRule id,
+                                               const std::vector<Node>& args)
+ {
+   NodeManager* nm = nodeManager();
+-  if (id == ProofRule::DT_UNIF)
+-  {
+-    Assert(children.size() == 1);
+-    Assert(args.size() == 1);
+-    uint32_t i;
+-    if (children[0].getKind() != Kind::EQUAL
+-        || children[0][0].getKind() != Kind::APPLY_CONSTRUCTOR
+-        || children[0][1].getKind() != Kind::APPLY_CONSTRUCTOR
+-        || children[0][0].getOperator() != children[0][1].getOperator()
+-        || !getUInt32(args[0], i))
+-    {
+-      return Node::null();
+-    }
+-    if (i >= children[0][0].getNumChildren())
+-    {
+-      return Node::null();
+-    }
+-    Assert(children[0][0].getNumChildren() == children[0][1].getNumChildren());
+-    return children[0][0][i].eqNode(children[0][1][i]);
+-  }
+-  else if (id == ProofRule::DT_SPLIT)
++  if (id == ProofRule::DT_SPLIT)
+   {
+     Assert(children.empty());
+     Assert(args.size() == 1);
+-- 
+2.47.1
+

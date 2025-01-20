@@ -1,0 +1,1372 @@
+From bd2d37404b7b3ed19ce5131b7fbc518f03467832 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Hans-J=C3=B6rg?= <hansjoergschurr@users.noreply.github.com>
+Date: Tue, 13 Aug 2024 04:24:21 -0500
+Subject: [PATCH 021/312] =?UTF-8?q?Change=20author=20name=20from=20"Hans-J?=
+ =?UTF-8?q?=C3=B6rg"=20to=20"Hans-Joerg"=20(#11155)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The later uses only ASCII letters instead of Unicode characters. This
+currently leads to a build issue with the Java headers on FreeBSD:
+https://github.com/cvc5/cvc5/issues/11145
+---
+ contrib/get-authors                                         | 2 +-
+ src/api/cpp/cvc5_proof_rule_template.cpp                    | 2 +-
+ src/api/java/CMakeLists.txt                                 | 2 +-
+ src/api/java/genenums.py.in                                 | 2 +-
+ src/api/java/io/github/cvc5/Proof.java                      | 2 +-
+ src/api/java/io/github/cvc5/Utils.java                      | 2 +-
+ src/api/java/jni/proof.cpp                                  | 2 +-
+ src/proof/conv_proof_generator.cpp                          | 2 +-
+ src/proof/conv_proof_generator.h                            | 2 +-
+ src/proof/eager_proof_generator.cpp                         | 2 +-
+ src/proof/eager_proof_generator.h                           | 2 +-
+ src/proof/lazy_proof.cpp                                    | 2 +-
+ src/proof/lazy_tree_proof_generator.cpp                     | 2 +-
+ src/proof/lazy_tree_proof_generator.h                       | 2 +-
+ src/proof/lfsc/lfsc_post_processor.h                        | 2 +-
+ src/proof/lfsc/lfsc_print_channel.cpp                       | 2 +-
+ src/proof/lfsc/lfsc_print_channel.h                         | 2 +-
+ src/proof/lfsc/lfsc_printer.cpp                             | 2 +-
+ src/proof/lfsc/lfsc_printer.h                               | 2 +-
+ src/proof/lfsc/lfsc_util.cpp                                | 2 +-
+ src/proof/lfsc/lfsc_util.h                                  | 2 +-
+ src/proof/proof.cpp                                         | 2 +-
+ src/proof/proof.h                                           | 2 +-
+ src/proof/proof_checker.cpp                                 | 2 +-
+ src/proof/proof_checker.h                                   | 2 +-
+ src/proof/proof_letify.cpp                                  | 2 +-
+ src/proof/proof_node.cpp                                    | 2 +-
+ src/proof/proof_node.h                                      | 2 +-
+ src/proof/proof_node_algorithm.cpp                          | 2 +-
+ src/proof/proof_node_manager.cpp                            | 2 +-
+ src/proof/proof_node_manager.h                              | 2 +-
+ src/proof/proof_node_to_sexpr.cpp                           | 2 +-
+ src/proof/proof_node_to_sexpr.h                             | 2 +-
+ src/proof/proof_node_updater.cpp                            | 2 +-
+ src/proof/proof_rule_checker.cpp                            | 2 +-
+ src/proof/proof_rule_checker.h                              | 2 +-
+ src/proof/proof_step_buffer.cpp                             | 2 +-
+ src/proof/proof_step_buffer.h                               | 2 +-
+ src/proof/theory_proof_step_buffer.cpp                      | 2 +-
+ src/prop/proof_post_processor.cpp                           | 2 +-
+ src/rewriter/basic_rewrite_rcons.cpp                        | 2 +-
+ src/rewriter/basic_rewrite_rcons.h                          | 2 +-
+ src/rewriter/rewrite_db.cpp                                 | 2 +-
+ src/rewriter/rewrite_db.h                                   | 2 +-
+ src/rewriter/rewrite_proof_rule.cpp                         | 2 +-
+ src/rewriter/rewrite_proof_rule.h                           | 2 +-
+ src/rewriter/rewrites.h                                     | 2 +-
+ src/rewriter/rewrites_template.cpp                          | 2 +-
+ src/smt/difficulty_post_processor.cpp                       | 2 +-
+ src/smt/preprocess_proof_generator.cpp                      | 2 +-
+ src/smt/proof_final_callback.cpp                            | 2 +-
+ src/smt/proof_final_callback.h                              | 2 +-
+ src/smt/proof_post_processor.cpp                            | 2 +-
+ src/smt/proof_post_processor.h                              | 2 +-
+ src/smt/term_formula_removal.cpp                            | 2 +-
+ src/smt/witness_form.cpp                                    | 2 +-
+ src/theory/arith/arith_poly_norm.h                          | 2 +-
+ src/theory/arith/branch_and_bound.cpp                       | 2 +-
+ src/theory/arith/nl/coverings/proof_checker.cpp             | 2 +-
+ src/theory/arith/nl/coverings/proof_checker.h               | 2 +-
+ src/theory/arith/nl/coverings/proof_generator.cpp           | 2 +-
+ src/theory/arith/nl/ext/factoring_check.cpp                 | 2 +-
+ src/theory/arith/nl/ext/proof_checker.cpp                   | 2 +-
+ src/theory/arith/nl/ext/proof_checker.h                     | 2 +-
+ src/theory/arith/nl/ext/split_zero_check.cpp                | 2 +-
+ src/theory/arith/nl/transcendental/exponential_solver.cpp   | 2 +-
+ src/theory/arith/nl/transcendental/proof_checker.cpp        | 2 +-
+ src/theory/arith/nl/transcendental/proof_checker.h          | 2 +-
+ src/theory/arith/nl/transcendental/transcendental_state.cpp | 2 +-
+ src/theory/arrays/inference_manager.cpp                     | 2 +-
+ src/theory/arrays/inference_manager.h                       | 2 +-
+ src/theory/arrays/proof_checker.cpp                         | 2 +-
+ src/theory/arrays/proof_checker.h                           | 2 +-
+ src/theory/booleans/proof_checker.cpp                       | 2 +-
+ src/theory/booleans/proof_checker.h                         | 2 +-
+ src/theory/booleans/proof_circuit_propagator.cpp            | 2 +-
+ src/theory/booleans/proof_circuit_propagator.h              | 2 +-
+ src/theory/builtin/proof_checker.cpp                        | 2 +-
+ src/theory/bv/bitblast/bitblast_proof_generator.cpp         | 2 +-
+ src/theory/bv/proof_checker.cpp                             | 2 +-
+ src/theory/bv/proof_checker.h                               | 2 +-
+ src/theory/datatypes/infer_proof_cons.cpp                   | 2 +-
+ src/theory/datatypes/proof_checker.cpp                      | 2 +-
+ src/theory/datatypes/proof_checker.h                        | 2 +-
+ src/theory/quantifiers/alpha_equivalence.cpp                | 2 +-
+ src/theory/quantifiers/proof_checker.cpp                    | 2 +-
+ src/theory/quantifiers/proof_checker.h                      | 2 +-
+ src/theory/strings/proof_checker.cpp                        | 2 +-
+ src/theory/strings/proof_checker.h                          | 2 +-
+ src/theory/theory_inference_manager.cpp                     | 2 +-
+ src/theory/theory_preprocessor.cpp                          | 2 +-
+ src/theory/trust_substitutions.cpp                          | 2 +-
+ src/theory/trust_substitutions.h                            | 2 +-
+ src/theory/uf/eq_proof.cpp                                  | 2 +-
+ src/theory/uf/lambda_lift.cpp                               | 2 +-
+ src/theory/uf/proof_checker.cpp                             | 2 +-
+ src/theory/uf/proof_checker.h                               | 2 +-
+ src/theory/uf/proof_equality_engine.cpp                     | 2 +-
+ src/theory/uf/proof_equality_engine.h                       | 2 +-
+ test/unit/api/cpp/api_proof_black.cpp                       | 2 +-
+ test/unit/api/cpp/api_proof_rule_black.cpp                  | 2 +-
+ test/unit/api/java/ProofTest.java                           | 2 +-
+ test/unit/api/python/test_proof.py                          | 2 +-
+ test/unit/util/stats_black.cpp                              | 2 +-
+ 104 files changed, 104 insertions(+), 104 deletions(-)
+
+diff --git a/contrib/get-authors b/contrib/get-authors
+index ec8277972..e53154bdb 100755
+--- a/contrib/get-authors
++++ b/contrib/get-authors
+@@ -78,7 +78,7 @@ while [ $# -gt 0 ]; do
+     sed 's/vinciusb/Vinícius Braga Freire/' | \
+     sed 's/sorawee/Sorawee Porncharoenwase/' | \
+     sed 's/Sarkoxed/Alex Sokolov/' | \
+-    sed 's/Hans-Jörg/Hans-Jörg Schurr/' | \
++    sed 's/Hans-Jörg/Hans-Joerg Schurr/' | \
+ 
+     # Determine top three contributors
+     sort | uniq -c | sort -rn | head -n3 | \
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index d4a5f7bce..073972feb 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Hans-Jörg Schurr, Andrew Reynolds
++ *   Hans-Joerg Schurr, Andrew Reynolds
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/api/java/CMakeLists.txt b/src/api/java/CMakeLists.txt
+index 2737014a9..474a263a2 100644
+--- a/src/api/java/CMakeLists.txt
++++ b/src/api/java/CMakeLists.txt
+@@ -1,6 +1,6 @@
+ ###############################################################################
+ # Top contributors (to current version):
+-#   Mudathir Mohamed, Andres Noetzli, Hans-Jörg Schurr
++#   Mudathir Mohamed, Andres Noetzli, Hans-Joerg Schurr
+ #
+ # This file is part of the cvc5 project.
+ #
+diff --git a/src/api/java/genenums.py.in b/src/api/java/genenums.py.in
+index 2c2a1b2f6..7c7983106 100644
+--- a/src/api/java/genenums.py.in
++++ b/src/api/java/genenums.py.in
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env python
+ ###############################################################################
+ # Top contributors (to current version):
+-#   Hans-Jörg Schurr, Andres Noetzli, Mudathir Mohamed
++#   Hans-Joerg Schurr, Andres Noetzli, Mudathir Mohamed
+ #
+ # This file is part of the cvc5 project.
+ #
+diff --git a/src/api/java/io/github/cvc5/Proof.java b/src/api/java/io/github/cvc5/Proof.java
+index 48a1c07d0..196d9b1fc 100644
+--- a/src/api/java/io/github/cvc5/Proof.java
++++ b/src/api/java/io/github/cvc5/Proof.java
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Hans-Jörg Schurr, Mudathir Mohamed, Andres Noetzli
++ *   Hans-Joerg Schurr, Mudathir Mohamed, Andres Noetzli
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/api/java/io/github/cvc5/Utils.java b/src/api/java/io/github/cvc5/Utils.java
+index a010d1cb9..ee4803ced 100644
+--- a/src/api/java/io/github/cvc5/Utils.java
++++ b/src/api/java/io/github/cvc5/Utils.java
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Mudathir Mohamed, Aina Niemetz, Hans-Jörg Schurr
++ *   Mudathir Mohamed, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/api/java/jni/proof.cpp b/src/api/java/jni/proof.cpp
+index 9f9be1da3..42c85423c 100644
+--- a/src/api/java/jni/proof.cpp
++++ b/src/api/java/jni/proof.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Hans-Jörg Schurr, Mudathir Mohamed
++ *   Hans-Joerg Schurr, Mudathir Mohamed
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/conv_proof_generator.cpp b/src/proof/conv_proof_generator.cpp
+index 3a4a03b8e..2db8a60d6 100644
+--- a/src/proof/conv_proof_generator.cpp
++++ b/src/proof/conv_proof_generator.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/conv_proof_generator.h b/src/proof/conv_proof_generator.h
+index 25e2216c0..1b7b428aa 100644
+--- a/src/proof/conv_proof_generator.h
++++ b/src/proof/conv_proof_generator.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Gereon Kremer
++ *   Andrew Reynolds, Hans-Joerg Schurr, Gereon Kremer
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/eager_proof_generator.cpp b/src/proof/eager_proof_generator.cpp
+index f474703d2..f3dd3f1ad 100644
+--- a/src/proof/eager_proof_generator.cpp
++++ b/src/proof/eager_proof_generator.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Alex Ozdemir
++ *   Andrew Reynolds, Hans-Joerg Schurr, Alex Ozdemir
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/eager_proof_generator.h b/src/proof/eager_proof_generator.h
+index 51bd086e5..7f4f58019 100644
+--- a/src/proof/eager_proof_generator.h
++++ b/src/proof/eager_proof_generator.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Alex Ozdemir, Hans-Jörg Schurr
++ *   Andrew Reynolds, Alex Ozdemir, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lazy_proof.cpp b/src/proof/lazy_proof.cpp
+index a04e679bf..bf82bf113 100644
+--- a/src/proof/lazy_proof.cpp
++++ b/src/proof/lazy_proof.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Haniel Barbosa
++ *   Andrew Reynolds, Hans-Joerg Schurr, Haniel Barbosa
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lazy_tree_proof_generator.cpp b/src/proof/lazy_tree_proof_generator.cpp
+index 4856119e3..ddd23abc6 100644
+--- a/src/proof/lazy_tree_proof_generator.cpp
++++ b/src/proof/lazy_tree_proof_generator.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Andrew Reynolds, Hans-Jörg Schurr
++ *   Gereon Kremer, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lazy_tree_proof_generator.h b/src/proof/lazy_tree_proof_generator.h
+index d09e635b4..5660e0567 100644
+--- a/src/proof/lazy_tree_proof_generator.h
++++ b/src/proof/lazy_tree_proof_generator.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Andrew Reynolds, Hans-Jörg Schurr
++ *   Gereon Kremer, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lfsc/lfsc_post_processor.h b/src/proof/lfsc/lfsc_post_processor.h
+index 5fde9f606..7e913fc49 100644
+--- a/src/proof/lfsc/lfsc_post_processor.h
++++ b/src/proof/lfsc/lfsc_post_processor.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Abdalrhman Mohamed, Hans-Jörg Schurr
++ *   Andrew Reynolds, Abdalrhman Mohamed, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lfsc/lfsc_print_channel.cpp b/src/proof/lfsc/lfsc_print_channel.cpp
+index bbbb6c039..f0c0303f8 100644
+--- a/src/proof/lfsc/lfsc_print_channel.cpp
++++ b/src/proof/lfsc/lfsc_print_channel.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Gereon Kremer
++ *   Andrew Reynolds, Hans-Joerg Schurr, Gereon Kremer
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lfsc/lfsc_print_channel.h b/src/proof/lfsc/lfsc_print_channel.h
+index 82d1de9cf..3d6362839 100644
+--- a/src/proof/lfsc/lfsc_print_channel.h
++++ b/src/proof/lfsc/lfsc_print_channel.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr
++ *   Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lfsc/lfsc_printer.cpp b/src/proof/lfsc/lfsc_printer.cpp
+index 8ed9cf0c2..0b2762eb5 100644
+--- a/src/proof/lfsc/lfsc_printer.cpp
++++ b/src/proof/lfsc/lfsc_printer.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Abdalrhman Mohamed
++ *   Andrew Reynolds, Hans-Joerg Schurr, Abdalrhman Mohamed
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lfsc/lfsc_printer.h b/src/proof/lfsc/lfsc_printer.h
+index a9445d65d..5fc3ed1e3 100644
+--- a/src/proof/lfsc/lfsc_printer.h
++++ b/src/proof/lfsc/lfsc_printer.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Abdalrhman Mohamed
++ *   Andrew Reynolds, Hans-Joerg Schurr, Abdalrhman Mohamed
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lfsc/lfsc_util.cpp b/src/proof/lfsc/lfsc_util.cpp
+index 6bff26d6b..2fbc91126 100644
+--- a/src/proof/lfsc/lfsc_util.cpp
++++ b/src/proof/lfsc/lfsc_util.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Mathias Preiner
++ *   Andrew Reynolds, Hans-Joerg Schurr, Mathias Preiner
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/lfsc/lfsc_util.h b/src/proof/lfsc/lfsc_util.h
+index 445133f2b..4f4109518 100644
+--- a/src/proof/lfsc/lfsc_util.h
++++ b/src/proof/lfsc/lfsc_util.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Abdalrhman Mohamed, Hans-Jörg Schurr
++ *   Andrew Reynolds, Abdalrhman Mohamed, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof.cpp b/src/proof/proof.cpp
+index d9027d2ad..50bfff12b 100644
+--- a/src/proof/proof.cpp
++++ b/src/proof/proof.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof.h b/src/proof/proof.h
+index df87e7ddf..ff3708dcf 100644
+--- a/src/proof/proof.h
++++ b/src/proof/proof.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Haniel Barbosa
++ *   Andrew Reynolds, Hans-Joerg Schurr, Haniel Barbosa
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_checker.cpp b/src/proof/proof_checker.cpp
+index 374f78a68..536d5e1ae 100644
+--- a/src/proof/proof_checker.cpp
++++ b/src/proof/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Gereon Kremer
++ *   Andrew Reynolds, Hans-Joerg Schurr, Gereon Kremer
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_checker.h b/src/proof/proof_checker.h
+index ed5c5aea2..99995c3a9 100644
+--- a/src/proof/proof_checker.h
++++ b/src/proof/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr
++ *   Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_letify.cpp b/src/proof/proof_letify.cpp
+index 98e970b90..74e3ecd4b 100644
+--- a/src/proof/proof_letify.cpp
++++ b/src/proof/proof_letify.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr
++ *   Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_node.cpp b/src/proof/proof_node.cpp
+index cc67c3a79..db8cfb872 100644
+--- a/src/proof/proof_node.cpp
++++ b/src/proof/proof_node.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Vinícius Braga Freire, Hans-Jörg Schurr
++ *   Andrew Reynolds, Vinícius Braga Freire, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_node.h b/src/proof/proof_node.h
+index 1cd1812ef..f54164e78 100644
+--- a/src/proof/proof_node.h
++++ b/src/proof/proof_node.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Haniel Barbosa, Hans-Jörg Schurr
++ *   Andrew Reynolds, Haniel Barbosa, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_node_algorithm.cpp b/src/proof/proof_node_algorithm.cpp
+index 48d0e81c7..5608dd3f5 100644
+--- a/src/proof/proof_node_algorithm.cpp
++++ b/src/proof/proof_node_algorithm.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Haniel Barbosa, Hans-Jörg Schurr
++ *   Andrew Reynolds, Haniel Barbosa, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_node_manager.cpp b/src/proof/proof_node_manager.cpp
+index b67cc509d..2e0a6583f 100644
+--- a/src/proof/proof_node_manager.cpp
++++ b/src/proof/proof_node_manager.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Haniel Barbosa
++ *   Andrew Reynolds, Hans-Joerg Schurr, Haniel Barbosa
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_node_manager.h b/src/proof/proof_node_manager.h
+index cd3db66da..c4bc683da 100644
+--- a/src/proof/proof_node_manager.h
++++ b/src/proof/proof_node_manager.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Haniel Barbosa
++ *   Andrew Reynolds, Hans-Joerg Schurr, Haniel Barbosa
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_node_to_sexpr.cpp b/src/proof/proof_node_to_sexpr.cpp
+index c3961c3bd..69e1d0537 100644
+--- a/src/proof/proof_node_to_sexpr.cpp
++++ b/src/proof/proof_node_to_sexpr.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Haniel Barbosa
++ *   Andrew Reynolds, Hans-Joerg Schurr, Haniel Barbosa
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_node_to_sexpr.h b/src/proof/proof_node_to_sexpr.h
+index 96b51f8b8..a96f0d812 100644
+--- a/src/proof/proof_node_to_sexpr.h
++++ b/src/proof/proof_node_to_sexpr.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Haniel Barbosa
++ *   Andrew Reynolds, Hans-Joerg Schurr, Haniel Barbosa
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_node_updater.cpp b/src/proof/proof_node_updater.cpp
+index f44e15156..cbbb08073 100644
+--- a/src/proof/proof_node_updater.cpp
++++ b/src/proof/proof_node_updater.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Haniel Barbosa, Hans-Jörg Schurr
++ *   Andrew Reynolds, Haniel Barbosa, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_rule_checker.cpp b/src/proof/proof_rule_checker.cpp
+index dff44c34e..4e8251b00 100644
+--- a/src/proof/proof_rule_checker.cpp
++++ b/src/proof/proof_rule_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Mathias Preiner, Hans-Jörg Schurr
++ *   Andrew Reynolds, Mathias Preiner, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_rule_checker.h b/src/proof/proof_rule_checker.h
+index af2fd8599..6a5dbf66b 100644
+--- a/src/proof/proof_rule_checker.h
++++ b/src/proof/proof_rule_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Gereon Kremer
++ *   Andrew Reynolds, Hans-Joerg Schurr, Gereon Kremer
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_step_buffer.cpp b/src/proof/proof_step_buffer.cpp
+index c64d628b5..4d48a6b42 100644
+--- a/src/proof/proof_step_buffer.cpp
++++ b/src/proof/proof_step_buffer.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Mathias Preiner
++ *   Andrew Reynolds, Hans-Joerg Schurr, Mathias Preiner
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/proof_step_buffer.h b/src/proof/proof_step_buffer.h
+index c9340e30f..0bca32524 100644
+--- a/src/proof/proof_step_buffer.h
++++ b/src/proof/proof_step_buffer.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Gereon Kremer
++ *   Andrew Reynolds, Hans-Joerg Schurr, Gereon Kremer
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/proof/theory_proof_step_buffer.cpp b/src/proof/theory_proof_step_buffer.cpp
+index ecf7cfe57..0a9f361d8 100644
+--- a/src/proof/theory_proof_step_buffer.cpp
++++ b/src/proof/theory_proof_step_buffer.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Haniel Barbosa, Hans-Jörg Schurr
++ *   Andrew Reynolds, Haniel Barbosa, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/prop/proof_post_processor.cpp b/src/prop/proof_post_processor.cpp
+index 5f3d8863d..ecb245e24 100644
+--- a/src/prop/proof_post_processor.cpp
++++ b/src/prop/proof_post_processor.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Haniel Barbosa, Andrew Reynolds, Hans-Jörg Schurr
++ *   Haniel Barbosa, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index c80659ab4..9d369fb70 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/rewriter/basic_rewrite_rcons.h b/src/rewriter/basic_rewrite_rcons.h
+index 9a8c2b2a1..9e0567220 100644
+--- a/src/rewriter/basic_rewrite_rcons.h
++++ b/src/rewriter/basic_rewrite_rcons.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr
++ *   Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/rewriter/rewrite_db.cpp b/src/rewriter/rewrite_db.cpp
+index 23ff38a68..51e4e116c 100644
+--- a/src/rewriter/rewrite_db.cpp
++++ b/src/rewriter/rewrite_db.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/rewriter/rewrite_db.h b/src/rewriter/rewrite_db.h
+index 33e40cb7a..72aeb19de 100644
+--- a/src/rewriter/rewrite_db.h
++++ b/src/rewriter/rewrite_db.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr
++ *   Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/rewriter/rewrite_proof_rule.cpp b/src/rewriter/rewrite_proof_rule.cpp
+index 6469e39cf..2593deb88 100644
+--- a/src/rewriter/rewrite_proof_rule.cpp
++++ b/src/rewriter/rewrite_proof_rule.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/rewriter/rewrite_proof_rule.h b/src/rewriter/rewrite_proof_rule.h
+index cd882a426..5d06a5366 100644
+--- a/src/rewriter/rewrite_proof_rule.h
++++ b/src/rewriter/rewrite_proof_rule.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr
++ *   Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/rewriter/rewrites.h b/src/rewriter/rewrites.h
+index 53ec5b7b9..8c18435ea 100644
+--- a/src/rewriter/rewrites.h
++++ b/src/rewriter/rewrites.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr
++ *   Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/rewriter/rewrites_template.cpp b/src/rewriter/rewrites_template.cpp
+index 281077f59..2f674a786 100644
+--- a/src/rewriter/rewrites_template.cpp
++++ b/src/rewriter/rewrites_template.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Leni Aniva
++ *   Andrew Reynolds, Hans-Joerg Schurr, Leni Aniva
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/smt/difficulty_post_processor.cpp b/src/smt/difficulty_post_processor.cpp
+index bec830c88..cb9e7f95a 100644
+--- a/src/smt/difficulty_post_processor.cpp
++++ b/src/smt/difficulty_post_processor.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Mathias Preiner
++ *   Andrew Reynolds, Hans-Joerg Schurr, Mathias Preiner
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/smt/preprocess_proof_generator.cpp b/src/smt/preprocess_proof_generator.cpp
+index 07d585d72..949eda21a 100644
+--- a/src/smt/preprocess_proof_generator.cpp
++++ b/src/smt/preprocess_proof_generator.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Gereon Kremer, Hans-Jörg Schurr
++ *   Andrew Reynolds, Gereon Kremer, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/smt/proof_final_callback.cpp b/src/smt/proof_final_callback.cpp
+index 85fa6a83e..f4f72e8bf 100644
+--- a/src/smt/proof_final_callback.cpp
++++ b/src/smt/proof_final_callback.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Mathias Preiner
++ *   Andrew Reynolds, Hans-Joerg Schurr, Mathias Preiner
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/smt/proof_final_callback.h b/src/smt/proof_final_callback.h
+index b370f726f..7e80a346b 100644
+--- a/src/smt/proof_final_callback.h
++++ b/src/smt/proof_final_callback.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Haniel Barbosa
++ *   Andrew Reynolds, Hans-Joerg Schurr, Haniel Barbosa
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/smt/proof_post_processor.cpp b/src/smt/proof_post_processor.cpp
+index e0a9fddb6..3bd6a0f44 100644
+--- a/src/smt/proof_post_processor.cpp
++++ b/src/smt/proof_post_processor.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Haniel Barbosa, Hans-Jörg Schurr
++ *   Andrew Reynolds, Haniel Barbosa, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/smt/proof_post_processor.h b/src/smt/proof_post_processor.h
+index c71945f86..eff4ff9e7 100644
+--- a/src/smt/proof_post_processor.h
++++ b/src/smt/proof_post_processor.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Haniel Barbosa, Hans-Jörg Schurr
++ *   Andrew Reynolds, Haniel Barbosa, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/smt/term_formula_removal.cpp b/src/smt/term_formula_removal.cpp
+index 1fcf45a6d..be9abd6d6 100644
+--- a/src/smt/term_formula_removal.cpp
++++ b/src/smt/term_formula_removal.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Dejan Jovanovic, Hans-Jörg Schurr
++ *   Andrew Reynolds, Dejan Jovanovic, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/smt/witness_form.cpp b/src/smt/witness_form.cpp
+index 5a2e60921..b9c2b84ef 100644
+--- a/src/smt/witness_form.cpp
++++ b/src/smt/witness_form.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Mathias Preiner, Hans-Jörg Schurr
++ *   Andrew Reynolds, Mathias Preiner, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/arith_poly_norm.h b/src/theory/arith/arith_poly_norm.h
+index 1eea7c06f..b8495f4e9 100644
+--- a/src/theory/arith/arith_poly_norm.h
++++ b/src/theory/arith/arith_poly_norm.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr
++ *   Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/branch_and_bound.cpp b/src/theory/arith/branch_and_bound.cpp
+index 31896d583..99cb50007 100644
+--- a/src/theory/arith/branch_and_bound.cpp
++++ b/src/theory/arith/branch_and_bound.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/coverings/proof_checker.cpp b/src/theory/arith/nl/coverings/proof_checker.cpp
+index f24bf6ba3..d4ad0a554 100644
+--- a/src/theory/arith/nl/coverings/proof_checker.cpp
++++ b/src/theory/arith/nl/coverings/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Hans-Jörg Schurr, Mathias Preiner
++ *   Gereon Kremer, Hans-Joerg Schurr, Mathias Preiner
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/coverings/proof_checker.h b/src/theory/arith/nl/coverings/proof_checker.h
+index 820784352..9fcc6459a 100644
+--- a/src/theory/arith/nl/coverings/proof_checker.h
++++ b/src/theory/arith/nl/coverings/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Hans-Jörg Schurr, Aina Niemetz
++ *   Gereon Kremer, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/coverings/proof_generator.cpp b/src/theory/arith/nl/coverings/proof_generator.cpp
+index 4b497c771..0f714f1cc 100644
+--- a/src/theory/arith/nl/coverings/proof_generator.cpp
++++ b/src/theory/arith/nl/coverings/proof_generator.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Hans-Jörg Schurr, Andrew Reynolds
++ *   Gereon Kremer, Hans-Joerg Schurr, Andrew Reynolds
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/ext/factoring_check.cpp b/src/theory/arith/nl/ext/factoring_check.cpp
+index f11c51592..3f3ae364b 100644
+--- a/src/theory/arith/nl/ext/factoring_check.cpp
++++ b/src/theory/arith/nl/ext/factoring_check.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Gereon Kremer, Hans-Jörg Schurr
++ *   Andrew Reynolds, Gereon Kremer, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/ext/proof_checker.cpp b/src/theory/arith/nl/ext/proof_checker.cpp
+index 7115438ca..714661a24 100644
+--- a/src/theory/arith/nl/ext/proof_checker.cpp
++++ b/src/theory/arith/nl/ext/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Andrew Reynolds, Hans-Jörg Schurr
++ *   Gereon Kremer, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/ext/proof_checker.h b/src/theory/arith/nl/ext/proof_checker.h
+index 29efa9fb0..e7c2b67f5 100644
+--- a/src/theory/arith/nl/ext/proof_checker.h
++++ b/src/theory/arith/nl/ext/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Aina Niemetz, Hans-Jörg Schurr
++ *   Gereon Kremer, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/ext/split_zero_check.cpp b/src/theory/arith/nl/ext/split_zero_check.cpp
+index a35b60850..4a3509992 100644
+--- a/src/theory/arith/nl/ext/split_zero_check.cpp
++++ b/src/theory/arith/nl/ext/split_zero_check.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Andrew Reynolds, Hans-Jörg Schurr
++ *   Gereon Kremer, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/transcendental/exponential_solver.cpp b/src/theory/arith/nl/transcendental/exponential_solver.cpp
+index fb1b0558d..5ae7d4827 100644
+--- a/src/theory/arith/nl/transcendental/exponential_solver.cpp
++++ b/src/theory/arith/nl/transcendental/exponential_solver.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Andrew Reynolds, Hans-Jörg Schurr
++ *   Gereon Kremer, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/transcendental/proof_checker.cpp b/src/theory/arith/nl/transcendental/proof_checker.cpp
+index 1276b74f4..1a39406a6 100644
+--- a/src/theory/arith/nl/transcendental/proof_checker.cpp
++++ b/src/theory/arith/nl/transcendental/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Andrew Reynolds, Hans-Jörg Schurr
++ *   Gereon Kremer, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/transcendental/proof_checker.h b/src/theory/arith/nl/transcendental/proof_checker.h
+index 042b3dfbc..e50b3f247 100644
+--- a/src/theory/arith/nl/transcendental/proof_checker.h
++++ b/src/theory/arith/nl/transcendental/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Aina Niemetz, Hans-Jörg Schurr
++ *   Gereon Kremer, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arith/nl/transcendental/transcendental_state.cpp b/src/theory/arith/nl/transcendental/transcendental_state.cpp
+index 49beecd41..8bb73f33f 100644
+--- a/src/theory/arith/nl/transcendental/transcendental_state.cpp
++++ b/src/theory/arith/nl/transcendental/transcendental_state.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Andrew Reynolds, Hans-Jörg Schurr
++ *   Gereon Kremer, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arrays/inference_manager.cpp b/src/theory/arrays/inference_manager.cpp
+index 711cbedab..0298b36e3 100644
+--- a/src/theory/arrays/inference_manager.cpp
++++ b/src/theory/arrays/inference_manager.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Gereon Kremer
++ *   Andrew Reynolds, Hans-Joerg Schurr, Gereon Kremer
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arrays/inference_manager.h b/src/theory/arrays/inference_manager.h
+index 1f48f397d..a17a3bae7 100644
+--- a/src/theory/arrays/inference_manager.h
++++ b/src/theory/arrays/inference_manager.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arrays/proof_checker.cpp b/src/theory/arrays/proof_checker.cpp
+index 8bda0feb0..36295df19 100644
+--- a/src/theory/arrays/proof_checker.cpp
++++ b/src/theory/arrays/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/arrays/proof_checker.h b/src/theory/arrays/proof_checker.h
+index d2160cda4..bdaf6e8ef 100644
+--- a/src/theory/arrays/proof_checker.h
++++ b/src/theory/arrays/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/booleans/proof_checker.cpp b/src/theory/booleans/proof_checker.cpp
+index 9f6e82f8b..94bb73feb 100644
+--- a/src/theory/booleans/proof_checker.cpp
++++ b/src/theory/booleans/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Haniel Barbosa, Hans-Jörg Schurr, Aina Niemetz
++ *   Haniel Barbosa, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/booleans/proof_checker.h b/src/theory/booleans/proof_checker.h
+index e69d2a1d4..6e49c91f8 100644
+--- a/src/theory/booleans/proof_checker.h
++++ b/src/theory/booleans/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Haniel Barbosa, Aina Niemetz, Hans-Jörg Schurr
++ *   Haniel Barbosa, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/booleans/proof_circuit_propagator.cpp b/src/theory/booleans/proof_circuit_propagator.cpp
+index f8050c118..ee9822f19 100644
+--- a/src/theory/booleans/proof_circuit_propagator.cpp
++++ b/src/theory/booleans/proof_circuit_propagator.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Hans-Jörg Schurr, Andrew Reynolds
++ *   Gereon Kremer, Hans-Joerg Schurr, Andrew Reynolds
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/booleans/proof_circuit_propagator.h b/src/theory/booleans/proof_circuit_propagator.h
+index b18aaaf51..56d3d2c48 100644
+--- a/src/theory/booleans/proof_circuit_propagator.h
++++ b/src/theory/booleans/proof_circuit_propagator.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Aina Niemetz, Hans-Jörg Schurr
++ *   Gereon Kremer, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/builtin/proof_checker.cpp b/src/theory/builtin/proof_checker.cpp
+index a7ba5b28d..337a8a81a 100644
+--- a/src/theory/builtin/proof_checker.cpp
++++ b/src/theory/builtin/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Hanna Lachnitt
++ *   Andrew Reynolds, Hans-Joerg Schurr, Hanna Lachnitt
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/bv/bitblast/bitblast_proof_generator.cpp b/src/theory/bv/bitblast/bitblast_proof_generator.cpp
+index 4b520de09..30414b035 100644
+--- a/src/theory/bv/bitblast/bitblast_proof_generator.cpp
++++ b/src/theory/bv/bitblast/bitblast_proof_generator.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Mathias Preiner, Andrew Reynolds, Hans-Jörg Schurr
++ *   Mathias Preiner, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/bv/proof_checker.cpp b/src/theory/bv/proof_checker.cpp
+index 98a434f25..4374361f6 100644
+--- a/src/theory/bv/proof_checker.cpp
++++ b/src/theory/bv/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Mathias Preiner, Aina Niemetz, Hans-Jörg Schurr
++ *   Mathias Preiner, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/bv/proof_checker.h b/src/theory/bv/proof_checker.h
+index 4417f9da1..cd1f902c4 100644
+--- a/src/theory/bv/proof_checker.h
++++ b/src/theory/bv/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Mathias Preiner, Aina Niemetz, Hans-Jörg Schurr
++ *   Mathias Preiner, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/datatypes/infer_proof_cons.cpp b/src/theory/datatypes/infer_proof_cons.cpp
+index 6d66ae020..981d15f19 100644
+--- a/src/theory/datatypes/infer_proof_cons.cpp
++++ b/src/theory/datatypes/infer_proof_cons.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/datatypes/proof_checker.cpp b/src/theory/datatypes/proof_checker.cpp
+index 58a3a4c41..7576b76d9 100644
+--- a/src/theory/datatypes/proof_checker.cpp
++++ b/src/theory/datatypes/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/datatypes/proof_checker.h b/src/theory/datatypes/proof_checker.h
+index e0c2a9dbe..42bab401b 100644
+--- a/src/theory/datatypes/proof_checker.h
++++ b/src/theory/datatypes/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/quantifiers/alpha_equivalence.cpp b/src/theory/quantifiers/alpha_equivalence.cpp
+index 14fc7a398..d9cdd508b 100644
+--- a/src/theory/quantifiers/alpha_equivalence.cpp
++++ b/src/theory/quantifiers/alpha_equivalence.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/quantifiers/proof_checker.cpp b/src/theory/quantifiers/proof_checker.cpp
+index 7e7d5d192..c5254c19a 100644
+--- a/src/theory/quantifiers/proof_checker.cpp
++++ b/src/theory/quantifiers/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/quantifiers/proof_checker.h b/src/theory/quantifiers/proof_checker.h
+index cd36fb32e..51d5c4d2c 100644
+--- a/src/theory/quantifiers/proof_checker.h
++++ b/src/theory/quantifiers/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/strings/proof_checker.cpp b/src/theory/strings/proof_checker.cpp
+index de834f4cc..06dd84b11 100644
+--- a/src/theory/strings/proof_checker.cpp
++++ b/src/theory/strings/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/strings/proof_checker.h b/src/theory/strings/proof_checker.h
+index c5e369b33..07004f506 100644
+--- a/src/theory/strings/proof_checker.h
++++ b/src/theory/strings/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/theory_inference_manager.cpp b/src/theory/theory_inference_manager.cpp
+index 7827c527c..6cb88c9f8 100644
+--- a/src/theory/theory_inference_manager.cpp
++++ b/src/theory/theory_inference_manager.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Gereon Kremer, Hans-Jörg Schurr
++ *   Andrew Reynolds, Gereon Kremer, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/theory_preprocessor.cpp b/src/theory/theory_preprocessor.cpp
+index 31aded64c..f25f219b8 100644
+--- a/src/theory/theory_preprocessor.cpp
++++ b/src/theory/theory_preprocessor.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Mathias Preiner
++ *   Andrew Reynolds, Hans-Joerg Schurr, Mathias Preiner
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/trust_substitutions.cpp b/src/theory/trust_substitutions.cpp
+index 42f39ab3b..5528a222c 100644
+--- a/src/theory/trust_substitutions.cpp
++++ b/src/theory/trust_substitutions.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Aina Niemetz
++ *   Andrew Reynolds, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/trust_substitutions.h b/src/theory/trust_substitutions.h
+index 34a82309e..c18f6d1a1 100644
+--- a/src/theory/trust_substitutions.h
++++ b/src/theory/trust_substitutions.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/uf/eq_proof.cpp b/src/theory/uf/eq_proof.cpp
+index f7fb5b6e9..ea0bc1394 100644
+--- a/src/theory/uf/eq_proof.cpp
++++ b/src/theory/uf/eq_proof.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Haniel Barbosa, Hans-Jörg Schurr, Aina Niemetz
++ *   Haniel Barbosa, Hans-Joerg Schurr, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/uf/lambda_lift.cpp b/src/theory/uf/lambda_lift.cpp
+index 74817a04e..d21fa1d56 100644
+--- a/src/theory/uf/lambda_lift.cpp
++++ b/src/theory/uf/lambda_lift.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/uf/proof_checker.cpp b/src/theory/uf/proof_checker.cpp
+index 50b174299..4b6acaca9 100644
+--- a/src/theory/uf/proof_checker.cpp
++++ b/src/theory/uf/proof_checker.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Haniel Barbosa, Andrew Reynolds, Hans-Jörg Schurr
++ *   Haniel Barbosa, Andrew Reynolds, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/uf/proof_checker.h b/src/theory/uf/proof_checker.h
+index 48e598dd0..0bee7583c 100644
+--- a/src/theory/uf/proof_checker.h
++++ b/src/theory/uf/proof_checker.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Haniel Barbosa, Aina Niemetz, Hans-Jörg Schurr
++ *   Haniel Barbosa, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/uf/proof_equality_engine.cpp b/src/theory/uf/proof_equality_engine.cpp
+index 8eb212c21..b992eb3bb 100644
+--- a/src/theory/uf/proof_equality_engine.cpp
++++ b/src/theory/uf/proof_equality_engine.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Aina Niemetz, Hans-Jörg Schurr
++ *   Andrew Reynolds, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/src/theory/uf/proof_equality_engine.h b/src/theory/uf/proof_equality_engine.h
+index c3d1a3204..ac29ea57c 100644
+--- a/src/theory/uf/proof_equality_engine.h
++++ b/src/theory/uf/proof_equality_engine.h
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Andrew Reynolds, Hans-Jörg Schurr, Gereon Kremer
++ *   Andrew Reynolds, Hans-Joerg Schurr, Gereon Kremer
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/test/unit/api/cpp/api_proof_black.cpp b/test/unit/api/cpp/api_proof_black.cpp
+index 5a0a6f2fc..62ebcd778 100644
+--- a/test/unit/api/cpp/api_proof_black.cpp
++++ b/test/unit/api/cpp/api_proof_black.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Hans-Jörg Schurr, Aina Niemetz, Mudathir Mohamed
++ *   Hans-Joerg Schurr, Aina Niemetz, Mudathir Mohamed
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/test/unit/api/cpp/api_proof_rule_black.cpp b/test/unit/api/cpp/api_proof_rule_black.cpp
+index 7e0b3ae18..411ce4a29 100644
+--- a/test/unit/api/cpp/api_proof_rule_black.cpp
++++ b/test/unit/api/cpp/api_proof_rule_black.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Hans-Jörg Schurr
++ *   Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/test/unit/api/java/ProofTest.java b/test/unit/api/java/ProofTest.java
+index 6804ee128..c08c20c0d 100644
+--- a/test/unit/api/java/ProofTest.java
++++ b/test/unit/api/java/ProofTest.java
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Hans-Jörg Schurr, Mudathir Mohamed, Aina Niemetz
++ *   Hans-Joerg Schurr, Mudathir Mohamed, Aina Niemetz
+  *
+  * This file is part of the cvc5 project.
+  *
+diff --git a/test/unit/api/python/test_proof.py b/test/unit/api/python/test_proof.py
+index 180410e3d..9b565cf57 100644
+--- a/test/unit/api/python/test_proof.py
++++ b/test/unit/api/python/test_proof.py
+@@ -1,6 +1,6 @@
+ ###############################################################################
+ # Top contributors (to current version):
+-#   Hans-Jörg Schurr, Ying Sheng, Aina Niemetz
++#   Hans-Joerg Schurr, Ying Sheng, Aina Niemetz
+ #
+ # This file is part of the cvc5 project.
+ #
+diff --git a/test/unit/util/stats_black.cpp b/test/unit/util/stats_black.cpp
+index 2d9f81cae..1524c92bd 100644
+--- a/test/unit/util/stats_black.cpp
++++ b/test/unit/util/stats_black.cpp
+@@ -1,6 +1,6 @@
+ /******************************************************************************
+  * Top contributors (to current version):
+- *   Gereon Kremer, Aina Niemetz, Hans-Jörg Schurr
++ *   Gereon Kremer, Aina Niemetz, Hans-Joerg Schurr
+  *
+  * This file is part of the cvc5 project.
+  *
+-- 
+2.47.1
+

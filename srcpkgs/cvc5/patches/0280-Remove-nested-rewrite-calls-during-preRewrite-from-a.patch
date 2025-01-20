@@ -1,0 +1,119 @@
+From deb28addc7d9df9c1cc08a911b41d9534bc73ccd Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 8 Jan 2025 12:55:57 -0600
+Subject: [PATCH 280/312] Remove nested rewrite calls during preRewrite from
+ arrays rewriter (#11402)
+
+Invoking the rewriter as an oracle at preRewrite leads to several
+unintuitive proof holes from THEORY_ARRAYS, where we are reasoning about
+the equivalence of unrewritten ITE terms.
+
+It also seems to be bad from a performance perspective, as it is making
+a nested call to the rewriter (e.g. for checking equality of indices).
+---
+ src/theory/arrays/theory_arrays_rewriter.cpp | 26 +++++++++-----------
+ src/theory/arrays/theory_arrays_rewriter.h   |  9 +++++--
+ 2 files changed, 18 insertions(+), 17 deletions(-)
+
+diff --git a/src/theory/arrays/theory_arrays_rewriter.cpp b/src/theory/arrays/theory_arrays_rewriter.cpp
+index 8aaa6c58f..2b49cd627 100644
+--- a/src/theory/arrays/theory_arrays_rewriter.cpp
++++ b/src/theory/arrays/theory_arrays_rewriter.cpp
+@@ -430,7 +430,7 @@ RewriteResponse TheoryArraysRewriter::postRewrite(TNode node)
+         }
+         else
+         {
+-          n = d_rewriter->rewrite(mkEqNode(store[1], index));
++          n = mkEqNode(store[1], index);
+           if (n.getKind() != Kind::CONST_BOOLEAN)
+           {
+             break;
+@@ -502,7 +502,7 @@ RewriteResponse TheoryArraysRewriter::postRewrite(TNode node)
+         }
+         else
+         {
+-          Node eqRewritten = d_rewriter->rewrite(mkEqNode(store[1], index));
++          Node eqRewritten = mkEqNode(store[1], index);
+           if (eqRewritten.getKind() != Kind::CONST_BOOLEAN)
+           {
+             Trace("arrays-postrewrite")
+@@ -542,7 +542,7 @@ RewriteResponse TheoryArraysRewriter::postRewrite(TNode node)
+             }
+             else
+             {
+-              n = d_rewriter->rewrite(mkEqNode(store[1], index));
++              n = mkEqNode(store[1], index);
+               if (n.getKind() != Kind::CONST_BOOLEAN)
+               {
+                 break;
+@@ -639,12 +639,7 @@ RewriteResponse TheoryArraysRewriter::preRewrite(TNode node)
+         }
+         else
+         {
+-          n = d_rewriter->rewrite(mkEqNode(store[1], index));
+-          if (n.getKind() != Kind::CONST_BOOLEAN)
+-          {
+-            break;
+-          }
+-          val = n.getConst<bool>();
++          break;
+         }
+         if (val)
+         {
+@@ -702,12 +697,7 @@ RewriteResponse TheoryArraysRewriter::preRewrite(TNode node)
+         }
+         else
+         {
+-          Node eqRewritten = d_rewriter->rewrite(mkEqNode(store[1], index));
+-          if (eqRewritten.getKind() != Kind::CONST_BOOLEAN)
+-          {
+-            break;
+-          }
+-          val = eqRewritten.getConst<bool>();
++          break;
+         }
+         NodeManager* nm = nodeManager();
+         if (val)
+@@ -754,6 +744,12 @@ Node TheoryArraysRewriter::expandDefinition(Node node)
+   return Node::null();
+ }
+ 
++Node TheoryArraysRewriter::mkEqNode(const Node& a, const Node& b) const
++{
++  Node eq = a.eqNode(b);
++  return d_rewriter->rewrite(eq);
++}
++  
+ }  // namespace arrays
+ }  // namespace theory
+ }  // namespace cvc5::internal
+diff --git a/src/theory/arrays/theory_arrays_rewriter.h b/src/theory/arrays/theory_arrays_rewriter.h
+index 2792d1118..f904ca561 100644
+--- a/src/theory/arrays/theory_arrays_rewriter.h
++++ b/src/theory/arrays/theory_arrays_rewriter.h
+@@ -40,8 +40,6 @@ uint64_t getMostFrequentValueCount(TNode store);
+ void setMostFrequentValue(TNode store, TNode value);
+ void setMostFrequentValueCount(TNode store, uint64_t count);
+ 
+-static inline Node mkEqNode(Node a, Node b) { return a.eqNode(b); }
+-
+ class TheoryArraysRewriter : public TheoryRewriter
+ {
+  public:
+@@ -88,6 +86,13 @@ class TheoryArraysRewriter : public TheoryRewriter
+    * be removed.
+    */
+   Rewriter* d_rewriter;
++  /**
++   * Make rewritten equality.
++   * @param a The first term.
++   * @param b The second term.
++   * @return the rewritten form of the equality between a and b.
++   */
++  Node mkEqNode(const Node& a, const Node& b) const;
+ }; /* class TheoryArraysRewriter */
+ 
+ }  // namespace arrays
+-- 
+2.47.1
+

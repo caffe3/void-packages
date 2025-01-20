@@ -1,0 +1,30 @@
+From 2ab9c8f47aae0012f0b7ce0bfa2cbbab1a04cd7b Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 3 Sep 2024 11:56:44 -0500
+Subject: [PATCH 043/312] Pin setuptools to versions below 72.2.0 for PyPy
+ (#11181)
+
+It avoids issue https://github.com/pypa/distutils/issues/283, which
+currently breaks the PyPI workflow.
+---
+ src/api/python/pyproject.toml | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/api/python/pyproject.toml b/src/api/python/pyproject.toml
+index f32fbb100..c09c8f1ec 100644
+--- a/src/api/python/pyproject.toml
++++ b/src/api/python/pyproject.toml
+@@ -1,7 +1,10 @@
+ [build-system]
+ requires = [
+     "setuptools>=66.1.0",
++    # Avoid issue #268: https://github.com/pypa/distutils/issues/268
+     "setuptools!=70.2.0; os_name == 'nt'",
++    # Avoid issue #283: https://github.com/pypa/distutils/issues/283
++    "setuptools<72.2.0; implementation_name == 'pypy'",
+     "Cython>=3"
+ ]
+ build-backend = "setuptools.build_meta"
+-- 
+2.47.1
+

@@ -1,0 +1,1162 @@
+From 9abbc68300b2f9e94fb2ecc1517dd771f5f947ea Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Wed, 4 Dec 2024 12:28:37 -0600
+Subject: [PATCH 215/312] sygus: Refactor to not use NodeManager::currentNM()
+ (#11394)
+
+---
+ src/preprocessing/passes/synth_rew_rules.cpp  |  2 +-
+ src/smt/abduction_solver.cpp                  |  2 +-
+ src/smt/env.cpp                               |  2 +-
+ src/smt/env.h                                 |  2 +-
+ .../sygus/cegis_core_connective.cpp           | 21 ++---
+ .../quantifiers/sygus/cegis_core_connective.h |  4 +-
+ .../quantifiers/sygus/example_infer.cpp       |  2 +-
+ .../quantifiers/sygus/rcons_obligation.cpp    |  2 +-
+ .../quantifiers/sygus/rcons_type_info.cpp     |  2 +-
+ src/theory/quantifiers/sygus/sygus_abduct.cpp |  4 +-
+ src/theory/quantifiers/sygus/sygus_abduct.h   |  3 +-
+ .../quantifiers/sygus/sygus_explain.cpp       | 13 ++-
+ src/theory/quantifiers/sygus/sygus_explain.h  |  2 +-
+ .../quantifiers/sygus/sygus_grammar_cons.cpp  | 90 ++++++++++---------
+ .../quantifiers/sygus/sygus_grammar_cons.h    |  8 +-
+ .../quantifiers/sygus/sygus_grammar_norm.cpp  | 32 +++----
+ .../quantifiers/sygus/sygus_grammar_norm.h    | 13 ++-
+ .../quantifiers/sygus/sygus_invariance.cpp    |  3 +-
+ .../quantifiers/sygus/sygus_repair_const.cpp  |  2 +-
+ .../quantifiers/sygus/sygus_unif_io.cpp       | 20 +++--
+ src/theory/quantifiers/sygus/sygus_unif_io.h  |  4 +-
+ .../quantifiers/sygus/sygus_unif_rl.cpp       | 17 ++--
+ src/theory/quantifiers/sygus/sygus_utils.cpp  | 15 ++--
+ 23 files changed, 136 insertions(+), 129 deletions(-)
+
+diff --git a/src/preprocessing/passes/synth_rew_rules.cpp b/src/preprocessing/passes/synth_rew_rules.cpp
+index 2ae3edc53..c2b093f12 100644
+--- a/src/preprocessing/passes/synth_rew_rules.cpp
++++ b/src/preprocessing/passes/synth_rew_rules.cpp
+@@ -149,7 +149,7 @@ std::map<TypeNode, TypeNode> SynthRewRulesPass::constructTopLevelGrammar(
+             typesFound[tn] = true;
+             // add the standard constants for this type
+             theory::quantifiers::SygusGrammarCons::mkSygusConstantsForType(
+-                tn, consts[tn]);
++                nm, tn, consts[tn]);
+             // We prepend them so that they come first in the grammar
+             // construction. The motivation is we'd prefer seeing e.g. "true"
+             // instead of (= x x) as a canonical term.
+diff --git a/src/smt/abduction_solver.cpp b/src/smt/abduction_solver.cpp
+index 066221ce6..5fef15470 100644
+--- a/src/smt/abduction_solver.cpp
++++ b/src/smt/abduction_solver.cpp
+@@ -66,7 +66,7 @@ bool AbductionSolver::getAbduct(const std::vector<Node>& axioms,
+   asserts.push_back(conjn);
+   std::string name("__internal_abduct");
+   Node aconj = quantifiers::SygusAbduct::mkAbductionConjecture(
+-      name, asserts, axiomsn, grammarType);
++      nodeManager(), name, asserts, axiomsn, grammarType);
+   // should be a quantified conjecture with one function-to-synthesize
+   Assert(aconj.getKind() == Kind::FORALL && aconj[0].getNumChildren() == 1);
+   // remember the abduct-to-synthesize
+diff --git a/src/smt/env.cpp b/src/smt/env.cpp
+index 38e8d82fe..a117d00c9 100644
+--- a/src/smt/env.cpp
++++ b/src/smt/env.cpp
+@@ -76,7 +76,7 @@ Env::Env(NodeManager* nm, const Options* opts)
+ 
+ Env::~Env() {}
+ 
+-NodeManager* Env::getNodeManager() { return d_nm; }
++NodeManager* Env::getNodeManager() const { return d_nm; }
+ 
+ void Env::finishInit(smt::PfManager* pm)
+ {
+diff --git a/src/smt/env.h b/src/smt/env.h
+index 82ab8ad57..cb8a303a3 100644
+--- a/src/smt/env.h
++++ b/src/smt/env.h
+@@ -81,7 +81,7 @@ class Env
+ 
+   /* Access to members------------------------------------------------------- */
+   /** Get a pointer to the node manager */
+-  NodeManager* getNodeManager();
++  NodeManager* getNodeManager() const;
+ 
+   /** Get a pointer to the Context owned by this Env. */
+   context::Context* getContext();
+diff --git a/src/theory/quantifiers/sygus/cegis_core_connective.cpp b/src/theory/quantifiers/sygus/cegis_core_connective.cpp
+index 8c73c6b93..b7b5cd2bd 100644
+--- a/src/theory/quantifiers/sygus/cegis_core_connective.cpp
++++ b/src/theory/quantifiers/sygus/cegis_core_connective.cpp
+@@ -40,8 +40,8 @@ CegisCoreConnective::CegisCoreConnective(Env& env,
+                                          SynthConjecture* p)
+     : Cegis(env, qs, qim, tds, p)
+ {
+-  d_true = NodeManager::currentNM()->mkConst(true);
+-  d_false = NodeManager::currentNM()->mkConst(false);
++  d_true = nodeManager()->mkConst(true);
++  d_false = nodeManager()->mkConst(false);
+ }
+ 
+ bool CegisCoreConnective::processInitialize(Node conj,
+@@ -108,7 +108,7 @@ bool CegisCoreConnective::processInitialize(Node conj,
+   std::vector<Node> echildren;
+   echildren.push_back(d_candidate);
+   echildren.insert(echildren.end(), d_vars.begin(), d_vars.end());
+-  d_eterm = NodeManager::currentNM()->mkNode(Kind::DT_SYGUS_EVAL, echildren);
++  d_eterm = nodeManager()->mkNode(Kind::DT_SYGUS_EVAL, echildren);
+   Trace("sygus-ccore-init") << "  evaluation term: " << d_eterm << std::endl;
+ 
+   Node prePost[2];
+@@ -229,7 +229,6 @@ bool CegisCoreConnective::processConstructCandidates(
+ 
+   // exclude in the basic way if passive
+   Assert(enums.size() == 1);
+-  NodeManager* nm = NodeManager::currentNM();
+   for (unsigned i = 0, esize = enums.size(); i < esize; i++)
+   {
+     Node e = enums[i];
+@@ -242,7 +241,7 @@ bool CegisCoreConnective::processConstructCandidates(
+     Node g = d_tds->getActiveGuardForEnumerator(e);
+     if (!g.isNull())
+     {
+-      lem = nm->mkNode(Kind::OR, g.negate(), lem);
++      lem = NodeManager::mkNode(Kind::OR, g.negate(), lem);
+     }
+     d_qim.addPendingLemma(lem,
+                           InferenceId::QUANTIFIERS_SYGUS_CEGIS_UCL_EXCLUDE);
+@@ -285,7 +284,6 @@ bool CegisCoreConnective::constructSolution(
+   Node ets = d_eterm.substitute(d_candidate, cval);
+   Node etsr = rewrite(ets);
+   Trace("sygus-ccore-debug") << "...predicate is: " << etsr << std::endl;
+-  NodeManager* nm = NodeManager::currentNM();
+   for (unsigned d = 0; d < 2; d++)
+   {
+     Component& ccheck = d == 0 ? d_pre : d_post;
+@@ -312,7 +310,7 @@ bool CegisCoreConnective::constructSolution(
+         // failed a refinement point
+         continue;
+       }
+-      Node fassert = nm->mkNode(Kind::AND, fpred, etsrn);
++      Node fassert = NodeManager::mkNode(Kind::AND, fpred, etsrn);
+       Trace("sygus-ccore-debug")
+           << "...check filter " << fassert << "..." << std::endl;
+       std::vector<Node> mvs;
+@@ -379,7 +377,6 @@ Node CegisCoreConnective::Component::getSygusSolution(
+   std::sort(conjs.begin(), conjs.end());
+   Node sol;
+   std::map<Node, Node>::const_iterator itu;
+-  NodeManager* nm = NodeManager::currentNM();
+   for (const Node& u : conjs)
+   {
+     itu = d_cpoolToSol.find(u);
+@@ -392,7 +389,7 @@ Node CegisCoreConnective::Component::getSygusSolution(
+     }
+     else
+     {
+-      sol = nm->mkNode(Kind::APPLY_CONSTRUCTOR, d_scons, s, sol);
++      sol = NodeManager::mkNode(Kind::APPLY_CONSTRUCTOR, d_scons, s, sol);
+     }
+   }
+   return sol;
+@@ -565,7 +562,7 @@ bool CegisCoreConnective::Component::addToAsserts(CegisCoreConnective* p,
+   }
+   else
+   {
+-    an = NodeManager::currentNM()->mkNode(Kind::AND, n, an);
++    an = NodeManager::mkNode(Kind::AND, n, an);
+   }
+   return true;
+ }
+@@ -587,7 +584,7 @@ Node CegisCoreConnective::evaluatePt(Node n,
+   Kind nk = n.getKind();
+   if (nk == Kind::AND || nk == Kind::OR)
+   {
+-    NodeManager* nm = NodeManager::currentNM();
++    NodeManager* nm = nodeManager();
+     bool expRes = nk == Kind::OR;
+     bool success = true;
+     // split AND/OR
+@@ -634,7 +631,7 @@ Node CegisCoreConnective::constructSolutionFromPool(Component& ccheck,
+ {
+   // In terms of Variant #2 from the header file, the set D is represented by
+   // asserts. The available set of prediates pool(B) is represented by passerts.
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   Trace("sygus-ccore") << "------ Get initial candidate..." << std::endl;
+   Node an =
+       asserts.empty()
+diff --git a/src/theory/quantifiers/sygus/cegis_core_connective.h b/src/theory/quantifiers/sygus/cegis_core_connective.h
+index 9111c2f51..0efd09d3a 100644
+--- a/src/theory/quantifiers/sygus/cegis_core_connective.h
++++ b/src/theory/quantifiers/sygus/cegis_core_connective.h
+@@ -194,7 +194,9 @@ class CegisCoreConnective : public Cegis
+   class Component
+   {
+    public:
+-    Component() : d_numFalseCores(0), d_numRefPoints(0) {}
++    Component() : d_numFalseCores(0), d_numRefPoints(0)
++    {
++    }
+     /** initialize
+      *
+      * This initializes this component with pre/post condition given by n
+diff --git a/src/theory/quantifiers/sygus/example_infer.cpp b/src/theory/quantifiers/sygus/example_infer.cpp
+index b2e02cb59..463df1d95 100644
+--- a/src/theory/quantifiers/sygus/example_infer.cpp
++++ b/src/theory/quantifiers/sygus/example_infer.cpp
+@@ -96,7 +96,7 @@ bool ExampleInfer::collectExamples(
+     return true;
+   }
+   visited[cacheIndex].insert(n);
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = n.getNodeManager();
+   Node neval;
+   Node n_output;
+   bool neval_is_evalapp = false;
+diff --git a/src/theory/quantifiers/sygus/rcons_obligation.cpp b/src/theory/quantifiers/sygus/rcons_obligation.cpp
+index e39a99f28..b4c722ab1 100644
+--- a/src/theory/quantifiers/sygus/rcons_obligation.cpp
++++ b/src/theory/quantifiers/sygus/rcons_obligation.cpp
+@@ -27,7 +27,7 @@ namespace quantifiers {
+ 
+ RConsObligation::RConsObligation(TypeNode stn, Node t) : d_ts({t})
+ {
+-  SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
++  SkolemManager* sm = t.getNodeManager()->getSkolemManager();
+   d_k = sm->mkDummySkolem("sygus_rcons", stn);
+ }
+ 
+diff --git a/src/theory/quantifiers/sygus/rcons_type_info.cpp b/src/theory/quantifiers/sygus/rcons_type_info.cpp
+index eb05b918b..ad80aafd6 100644
+--- a/src/theory/quantifiers/sygus/rcons_type_info.cpp
++++ b/src/theory/quantifiers/sygus/rcons_type_info.cpp
+@@ -33,7 +33,7 @@ void RConsTypeInfo::initialize(Env& env,
+                                TypeNode stn,
+                                const std::vector<Node>& builtinVars)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = env.getNodeManager();
+   SkolemManager* sm = nm->getSkolemManager();
+   // create a terms enumerator
+   d_enumerators.push_back(
+diff --git a/src/theory/quantifiers/sygus/sygus_abduct.cpp b/src/theory/quantifiers/sygus/sygus_abduct.cpp
+index 17b2dc816..9c38c212c 100644
+--- a/src/theory/quantifiers/sygus/sygus_abduct.cpp
++++ b/src/theory/quantifiers/sygus/sygus_abduct.cpp
+@@ -36,12 +36,12 @@ namespace quantifiers {
+ 
+ SygusAbduct::SygusAbduct() {}
+ 
+-Node SygusAbduct::mkAbductionConjecture(const std::string& name,
++Node SygusAbduct::mkAbductionConjecture(NodeManager* nm,
++                                        const std::string& name,
+                                         const std::vector<Node>& asserts,
+                                         const std::vector<Node>& axioms,
+                                         TypeNode abdGType)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   SkolemManager* sm = nm->getSkolemManager();
+   std::unordered_set<Node> symset;
+   for (size_t i = 0, size = asserts.size(); i < size; i++)
+diff --git a/src/theory/quantifiers/sygus/sygus_abduct.h b/src/theory/quantifiers/sygus/sygus_abduct.h
+index 1cc01271a..4972d3f20 100644
+--- a/src/theory/quantifiers/sygus/sygus_abduct.h
++++ b/src/theory/quantifiers/sygus/sygus_abduct.h
+@@ -78,7 +78,8 @@ class SygusAbduct
+    * term whose free variables are a subset of asserts, is the term
+    * t * { varlist -> SygusVarToTermAttribute(varlist) }.
+    */
+-  static Node mkAbductionConjecture(const std::string& name,
++  static Node mkAbductionConjecture(NodeManager* nm,
++                                    const std::string& name,
+                                     const std::vector<Node>& asserts,
+                                     const std::vector<Node>& axioms,
+                                     TypeNode abdGType);
+diff --git a/src/theory/quantifiers/sygus/sygus_explain.cpp b/src/theory/quantifiers/sygus/sygus_explain.cpp
+index 9bb637d8c..7a54c3c69 100644
+--- a/src/theory/quantifiers/sygus/sygus_explain.cpp
++++ b/src/theory/quantifiers/sygus/sygus_explain.cpp
+@@ -93,7 +93,7 @@ Node TermRecBuild::getChild(unsigned i)
+   return d_children[curr][i + o];
+ }
+ 
+-Node TermRecBuild::build(unsigned d)
++Node TermRecBuild::build(NodeManager* nm, unsigned d)
+ {
+   Assert(d_pos.size() + 1 == d_term.size());
+   Assert(d < d_term.size());
+@@ -105,7 +105,7 @@ Node TermRecBuild::build(unsigned d)
+     Node nc;
+     if (p + o == i)
+     {
+-      nc = build(d + 1);
++      nc = build(nm, d + 1);
+     }
+     else
+     {
+@@ -113,7 +113,7 @@ Node TermRecBuild::build(unsigned d)
+     }
+     children.push_back(nc);
+   }
+-  return NodeManager::currentNM()->mkNode(d_kind[d], children);
++  return nm->mkNode(d_kind[d], children);
+ }
+ 
+ SygusExplain::SygusExplain(Env& env, TermDbSygus* tdb) : EnvObj(env), d_tdb(tdb)
+@@ -176,8 +176,7 @@ Node SygusExplain::getExplanationForEquality(Node n,
+   std::vector<Node> exp;
+   getExplanationForEquality(n, vn, exp, cexc);
+   Assert(!exp.empty());
+-  return exp.size() == 1 ? exp[0]
+-                         : NodeManager::currentNM()->mkNode(Kind::AND, exp);
++  return exp.size() == 1 ? exp[0] : nodeManager()->mkNode(Kind::AND, exp);
+ }
+ 
+ // we have ( n = vn => eval( n ) = bvr ) ^ vn != vnr , returns exp such that exp
+@@ -217,7 +216,7 @@ void SygusExplain::getExplanationFor(TermRecBuild& trb,
+     TypeNode xtn = vn[i].getType();
+     Node x = d_tdb->getFreeVarInc(xtn, var_count);
+     trb.replaceChild(i, x);
+-    Node nvn = trb.build();
++    Node nvn = trb.build(n.getNodeManager());
+     Assert(nvn.getKind() == Kind::APPLY_CONSTRUCTOR);
+     if (et.is_invariant(d_tdb, nvn, x))
+     {
+@@ -247,7 +246,7 @@ void SygusExplain::getExplanationFor(TermRecBuild& trb,
+     if (vnr.getOperator() != vn.getOperator())
+     {
+       vnr = Node::null();
+-      vnr_exp = NodeManager::currentNM()->mkConst(true);
++      vnr_exp = nodeManager()->mkConst(true);
+     }
+   }
+   bool shareSel = options().datatypes.dtSharedSelectors;
+diff --git a/src/theory/quantifiers/sygus/sygus_explain.h b/src/theory/quantifiers/sygus/sygus_explain.h
+index 5ca1a363e..68a8869c7 100644
+--- a/src/theory/quantifiers/sygus/sygus_explain.h
++++ b/src/theory/quantifiers/sygus/sygus_explain.h
+@@ -71,7 +71,7 @@ class TermRecBuild
+   /** build the (modified) version of the term
+    * we initialized via the call to init().
+    */
+-  Node build(unsigned p = 0);
++  Node build(NodeManager* nm, unsigned p = 0);
+ 
+  private:
+   /** stack of active terms */
+diff --git a/src/theory/quantifiers/sygus/sygus_grammar_cons.cpp b/src/theory/quantifiers/sygus/sygus_grammar_cons.cpp
+index f1cd4fa76..fa6cde500 100644
+--- a/src/theory/quantifiers/sygus/sygus_grammar_cons.cpp
++++ b/src/theory/quantifiers/sygus/sygus_grammar_cons.cpp
+@@ -72,7 +72,7 @@ SygusGrammar SygusGrammarCons::mkDefaultGrammar(const Env& env,
+                                                 const Node& bvl,
+                                                 const std::vector<Node>& trules)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = env.getNodeManager();
+   std::map<TypeNode, std::vector<Node>>::iterator it;
+   SygusGrammar g = mkEmptyGrammar(env, range, bvl, trules);
+   std::map<TypeNode, std::vector<Node>> typeToNtSym = getTypeToNtSymMap(g);
+@@ -173,7 +173,7 @@ SygusGrammar SygusGrammarCons::mkEmptyGrammar(const Env& env,
+                                               const Node& bvl,
+                                               const std::vector<Node>& trules)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = env.getNodeManager();
+   // get the variables
+   std::vector<Node> vars;
+   if (!bvl.isNull())
+@@ -190,10 +190,10 @@ SygusGrammar SygusGrammarCons::mkEmptyGrammar(const Env& env,
+     // constants don't contribute anything by themselves
+     if (!r.isConst())
+     {
+-      collectTypes(r.getType(), types);
++      collectTypes(nm, r.getType(), types);
+     }
+   }
+-  collectTypes(range, types);
++  collectTypes(nm, range, types);
+   // always include Boolean
+   TypeNode btype = nm->booleanType();
+   types.insert(btype);
+@@ -266,7 +266,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+ {
+   TypeNode tn = ntSym.getType();
+   std::vector<Node> prevRules = g.getRulesFor(ntSym);
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = env.getNodeManager();
+   options::SygusGrammarConsMode tsgcm =
+       env.getOptions().quantifiers.sygusGrammarConsMode;
+   // add constants
+@@ -291,7 +291,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+       }
+     }
+     std::vector<Node> consts;
+-    mkSygusConstantsForType(tn, consts);
++    mkSygusConstantsForType(nm, tn, consts);
+     if (tsgcm == options::SygusGrammarConsMode::ANY_CONST)
+     {
+       // Use the any constant constructor. Notice that for types that don't
+@@ -332,7 +332,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+         for (Kind kind : kinds)
+         {
+           Trace("sygus-grammar-def") << "...add for " << kind << std::endl;
+-          addRuleTo(g, typeToNtSym, kind, cargsBin);
++          addRuleTo(nm, g, typeToNtSym, kind, cargsBin);
+         }
+         if (tn.isReal())
+         {
+@@ -341,7 +341,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+           TypeNode itype = nm->integerType();
+           std::vector<TypeNode> cargsToReal;
+           cargsToReal.push_back(itype);
+-          addRuleTo(g, typeToNtSym, TO_REAL, cargsToReal);
++          addRuleTo(nm, g, typeToNtSym, TO_REAL, cargsToReal);
+           */
+           Trace("sygus-grammar-def") << "...add for DIVISION" << std::endl;
+           Assert(arithNtSym.size() >= 2);
+@@ -371,7 +371,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+       for (Kind kind : un_kinds)
+       {
+         Trace("sygus-grammar-def") << "...add for " << kind << std::endl;
+-        addRuleTo(g, typeToNtSym, kind, cargsUnary);
++        addRuleTo(nm, g, typeToNtSym, kind, cargsUnary);
+       }
+       // binary ops
+       std::vector<Kind> bin_kinds = {Kind::BITVECTOR_AND,
+@@ -393,7 +393,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+       for (Kind kind : bin_kinds)
+       {
+         Trace("sygus-grammar-def") << "...add for " << kind << std::endl;
+-        addRuleTo(g, typeToNtSym, kind, cargsBinary);
++        addRuleTo(nm, g, typeToNtSym, kind, cargsBinary);
+       }
+     }
+     else if (tn.isFloatingPoint())
+@@ -407,14 +407,14 @@ void SygusGrammarCons::addDefaultRulesTo(
+       for (Kind kind : unary_kinds)
+       {
+         Trace("sygus-grammar-def") << "...add for " << kind << std::endl;
+-        addRuleTo(g, typeToNtSym, kind, cargs);
++        addRuleTo(nm, g, typeToNtSym, kind, cargs);
+       }
+       // binary ops
+       {
+         Kind kind = Kind::FLOATINGPOINT_REM;
+         cargs.push_back(tn);
+         Trace("sygus-grammar-def") << "...add for " << kind << std::endl;
+-        addRuleTo(g, typeToNtSym, kind, cargs);
++        addRuleTo(nm, g, typeToNtSym, kind, cargs);
+       }
+       // binary ops with RM
+       std::vector<Kind> binary_rm_kinds = {
+@@ -426,7 +426,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+       for (Kind kind : binary_rm_kinds)
+       {
+         Trace("sygus-grammar-def") << "...add for " << kind << std::endl;
+-        addRuleTo(g, typeToNtSym, kind, cargs_rm);
++        addRuleTo(nm, g, typeToNtSym, kind, cargs_rm);
+       }
+       // ternary ops with RM
+       std::vector<Kind> ternary_rm_kinds = {
+@@ -439,14 +439,14 @@ void SygusGrammarCons::addDefaultRulesTo(
+       for (Kind kind : ternary_rm_kinds)
+       {
+         Trace("sygus-grammar-def") << "...add for " << kind << std::endl;
+-        addRuleTo(g, typeToNtSym, kind, cargs_rm);
++        addRuleTo(nm, g, typeToNtSym, kind, cargs_rm);
+       }
+       // quaternary ops
+       {
+         cargs_rm.push_back(tn);
+         Kind kind = Kind::FLOATINGPOINT_FMA;
+         Trace("sygus-grammar-def") << "...add for " << kind << std::endl;
+-        addRuleTo(g, typeToNtSym, kind, cargs_rm);
++        addRuleTo(nm, g, typeToNtSym, kind, cargs_rm);
+       }
+     }
+     else if (tn.isStringLike())
+@@ -455,18 +455,18 @@ void SygusGrammarCons::addDefaultRulesTo(
+       std::vector<TypeNode> cargsBinary;
+       cargsBinary.push_back(tn);
+       cargsBinary.push_back(tn);
+-      addRuleTo(g, typeToNtSym, Kind::STRING_CONCAT, cargsBinary);
++      addRuleTo(nm, g, typeToNtSym, Kind::STRING_CONCAT, cargsBinary);
+       // length
+       std::vector<TypeNode> cargsLen;
+       cargsLen.push_back(tn);
+-      addRuleTo(g, typeToNtSym, Kind::STRING_LENGTH, cargsLen);
++      addRuleTo(nm, g, typeToNtSym, Kind::STRING_LENGTH, cargsLen);
+       if (tn.isSequence())
+       {
+         TypeNode etype = tn.getSequenceElementType();
+         Trace("sygus-grammar-def") << "...add for seq.unit" << std::endl;
+         std::vector<TypeNode> cargsSeqUnit;
+         cargsSeqUnit.push_back(etype);
+-        addRuleTo(g, typeToNtSym, Kind::SEQ_UNIT, cargsSeqUnit);
++        addRuleTo(nm, g, typeToNtSym, Kind::SEQ_UNIT, cargsSeqUnit);
+       }
+     }
+     else if (tn.isArray())
+@@ -482,14 +482,14 @@ void SygusGrammarCons::addDefaultRulesTo(
+       cargsStore.push_back(tn);
+       cargsStore.push_back(indexType);
+       cargsStore.push_back(elemType);
+-      addRuleTo(g, typeToNtSym, Kind::STORE, cargsStore);
++      addRuleTo(nm, g, typeToNtSym, Kind::STORE, cargsStore);
+       // add to constituent type : (select ArrayType IndexType)
+       Trace("sygus-grammar-def")
+           << "...add select for constituent type" << elemType << "\n";
+       std::vector<TypeNode> cargsSelect;
+       cargsSelect.push_back(tn);
+       cargsSelect.push_back(indexType);
+-      addRuleTo(g, typeToNtSym, Kind::SELECT, cargsSelect);
++      addRuleTo(nm, g, typeToNtSym, Kind::SELECT, cargsSelect);
+     }
+     else if (tn.isSet())
+     {
+@@ -498,7 +498,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+       Trace("sygus-grammar-def") << "...add for singleton" << std::endl;
+       std::vector<TypeNode> cargsSingleton;
+       cargsSingleton.push_back(etype);
+-      addRuleTo(g, typeToNtSym, Kind::SET_SINGLETON, cargsSingleton);
++      addRuleTo(nm, g, typeToNtSym, Kind::SET_SINGLETON, cargsSingleton);
+       // add for union, difference, intersection
+       std::vector<Kind> bin_kinds = {
+           Kind::SET_UNION, Kind::SET_INTER, Kind::SET_MINUS};
+@@ -508,7 +508,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+       for (Kind kind : bin_kinds)
+       {
+         Trace("sygus-grammar-def") << "...add for " << kind << std::endl;
+-        addRuleTo(g, typeToNtSym, kind, cargsBinary);
++        addRuleTo(nm, g, typeToNtSym, kind, cargsBinary);
+       }
+     }
+     else if (tn.isDatatype())
+@@ -539,9 +539,9 @@ void SygusGrammarCons::addDefaultRulesTo(
+           Trace("sygus-grammar-def") << "...for " << dt[l][j].getName()
+                                      << ", args = " << tn << std::endl;
+           Node sel = dt[l][j].getSelector();
+-          addRuleTo(g, typeToNtSym, Kind::APPLY_SELECTOR, sel, cargsSel);
++          addRuleTo(nm, g, typeToNtSym, Kind::APPLY_SELECTOR, sel, cargsSel);
+         }
+-        addRuleTo(g, typeToNtSym, Kind::APPLY_CONSTRUCTOR, cop, cargsCons);
++        addRuleTo(nm, g, typeToNtSym, Kind::APPLY_CONSTRUCTOR, cop, cargsCons);
+       }
+     }
+     else if (tn.isFunction())
+@@ -550,7 +550,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+       // add APPLY_UF for the previous rules added (i.e. the function variables)
+       for (const Node& r : prevRules)
+       {
+-        addRuleTo(g, typeToNtSym, Kind::APPLY_UF, r, cargs);
++        addRuleTo(nm, g, typeToNtSym, Kind::APPLY_UF, r, cargs);
+       }
+     }
+     else if (tn.isUninterpretedSort() || tn.isRoundingMode() || tn.isBoolean())
+@@ -646,7 +646,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+               g.addRule(ntSym, m);
+             }
+           }
+-          addRuleTo(g, typeToNtSym, Kind::ADD, cargsBin);
++          addRuleTo(nm, g, typeToNtSym, Kind::ADD, cargsBin);
+         }
+         // initialize the any-constant grammar
+         Assert(arithNtSym.size() >= 2);
+@@ -680,7 +680,7 @@ void SygusGrammarCons::addDefaultRulesTo(
+         {
+           cargs.push_back(tn);
+         }
+-        addRuleTo(g, typeToNtSym, k, cargs);
++        addRuleTo(nm, g, typeToNtSym, k, cargs);
+       }
+     }
+ 
+@@ -714,15 +714,15 @@ void SygusGrammarCons::addDefaultRulesTo(
+       cargsIte.push_back(btype);
+       cargsIte.push_back(tn);
+       cargsIte.push_back(tn);
+-      addRuleTo(g, typeToNtSym, Kind::ITE, cargsIte);
++      addRuleTo(nm, g, typeToNtSym, Kind::ITE, cargsIte);
+     }
+   }
+ }
+ 
+-void SygusGrammarCons::collectTypes(const TypeNode& range,
++void SygusGrammarCons::collectTypes(NodeManager* nm,
++                                    const TypeNode& range,
+                                     std::unordered_set<TypeNode>& types)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   if (types.find(range) != types.end())
+   {
+     return;
+@@ -741,7 +741,7 @@ void SygusGrammarCons::collectTypes(const TypeNode& range,
+       std::vector<TypeNode> argTypes = ctn.getArgTypes();
+       for (size_t j = 0, nargs = argTypes.size(); j < nargs; ++j)
+       {
+-        collectTypes(argTypes[j], types);
++        collectTypes(nm, argTypes[j], types);
+       }
+     }
+     return;
+@@ -755,7 +755,7 @@ void SygusGrammarCons::collectTypes(const TypeNode& range,
+   // otherwise, get the component types
+   for (unsigned i = 0, nchild = range.getNumChildren(); i < nchild; i++)
+   {
+-    collectTypes(range[i], types);
++    collectTypes(nm, range[i], types);
+   }
+   // add further types based on theory symbols
+   if (range.isStringLike())
+@@ -779,7 +779,7 @@ void SygusGrammarCons::addDefaultPredicateRulesTo(
+     const Node& ntSymBool,
+     const std::map<TypeNode, std::vector<Node>>& typeToNtSym)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = env.getNodeManager();
+   Assert(!ntSym.getType().isBoolean());
+   Assert(ntSymBool.getType().isBoolean());
+   TypeNode tn = ntSym.getType();
+@@ -810,7 +810,7 @@ void SygusGrammarCons::addDefaultPredicateRulesTo(
+     }
+     else
+     {
+-      addRuleTo(g, typeToNtSym, Kind::EQUAL, cargsBin);
++      addRuleTo(nm, g, typeToNtSym, Kind::EQUAL, cargsBin);
+     }
+   }
+ 
+@@ -827,13 +827,13 @@ void SygusGrammarCons::addDefaultPredicateRulesTo(
+     }
+     else
+     {
+-      addRuleTo(g, typeToNtSym, Kind::LEQ, cargsBin);
++      addRuleTo(nm, g, typeToNtSym, Kind::LEQ, cargsBin);
+     }
+   }
+   else if (tn.isBitVector())
+   {
+     Trace("sygus-grammar-def") << "...add for BV" << std::endl;
+-    addRuleTo(g, typeToNtSym, Kind::BITVECTOR_ULT, cargsBin);
++    addRuleTo(nm, g, typeToNtSym, Kind::BITVECTOR_ULT, cargsBin);
+   }
+   else if (tn.isFloatingPoint())
+   {
+@@ -849,13 +849,13 @@ void SygusGrammarCons::addDefaultPredicateRulesTo(
+     cargsUn.push_back(tn);
+     for (Kind kind : fp_unary_predicates)
+     {
+-      addRuleTo(g, typeToNtSym, kind, cargsUn);
++      addRuleTo(nm, g, typeToNtSym, kind, cargsUn);
+     }
+     std::vector<Kind> fp_binary_predicates = {Kind::FLOATINGPOINT_LEQ,
+                                               Kind::FLOATINGPOINT_LT};
+     for (Kind kind : fp_binary_predicates)
+     {
+-      addRuleTo(g, typeToNtSym, kind, cargsBin);
++      addRuleTo(nm, g, typeToNtSym, kind, cargsBin);
+     }
+   }
+   else if (tn.isDatatype())
+@@ -871,7 +871,7 @@ void SygusGrammarCons::addDefaultPredicateRulesTo(
+       Trace("sygus-grammar-def")
+           << "...for " << dt[kind].getTester() << std::endl;
+       Node t = dt[kind].getTester();
+-      addRuleTo(g, typeToNtSym, Kind::APPLY_TESTER, t, cargsTester);
++      addRuleTo(nm, g, typeToNtSym, Kind::APPLY_TESTER, t, cargsTester);
+     }
+   }
+   else if (tn.isSet())
+@@ -882,14 +882,14 @@ void SygusGrammarCons::addDefaultPredicateRulesTo(
+     cargsMember.push_back(etype);
+     cargsMember.push_back(tn);
+     Trace("sygus-grammar-def") << "...for SET_MEMBER" << std::endl;
+-    addRuleTo(g, typeToNtSym, Kind::SET_MEMBER, cargsMember);
++    addRuleTo(nm, g, typeToNtSym, Kind::SET_MEMBER, cargsMember);
+   }
+ }
+ 
+-void SygusGrammarCons::mkSygusConstantsForType(const TypeNode& type,
++void SygusGrammarCons::mkSygusConstantsForType(NodeManager* nm,
++                                               const TypeNode& type,
+                                                std::vector<Node>& ops)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   if (type.isRealOrInt())
+   {
+     ops.push_back(nm->mkConstRealOrInt(type, Rational(0)));
+@@ -966,16 +966,18 @@ std::map<TypeNode, std::vector<Node>> SygusGrammarCons::getTypeToNtSymMap(
+ }
+ 
+ bool SygusGrammarCons::addRuleTo(
++    NodeManager* nm,
+     SygusGrammar& g,
+     const std::map<TypeNode, std::vector<Node>>& typeToNtSym,
+     Kind k,
+     const std::vector<TypeNode>& args)
+ {
+   Node op;
+-  return addRuleTo(g, typeToNtSym, k, op, args);
++  return addRuleTo(nm, g, typeToNtSym, k, op, args);
+ }
+ 
+ bool SygusGrammarCons::addRuleTo(
++    NodeManager* nm,
+     SygusGrammar& g,
+     const std::map<TypeNode, std::vector<Node>>& typeToNtSym,
+     Kind k,
+@@ -998,7 +1000,7 @@ bool SygusGrammarCons::addRuleTo(
+     Assert(!it->second.empty());
+     children.push_back(it->second[0]);
+   }
+-  Node rule = NodeManager::currentNM()->mkNode(k, children);
++  Node rule = nm->mkNode(k, children);
+   TypeNode rtn = rule.getType();
+   it = typeToNtSym.find(rtn);
+   if (it == typeToNtSym.end())
+diff --git a/src/theory/quantifiers/sygus/sygus_grammar_cons.h b/src/theory/quantifiers/sygus/sygus_grammar_cons.h
+index 894eb8114..53c7eb59f 100644
+--- a/src/theory/quantifiers/sygus/sygus_grammar_cons.h
++++ b/src/theory/quantifiers/sygus/sygus_grammar_cons.h
+@@ -101,7 +101,8 @@ class SygusGrammarCons
+    * @param type The type to add constants for
+    * @param op The vector to add the constants to
+    */
+-  static void mkSygusConstantsForType(const TypeNode& type,
++  static void mkSygusConstantsForType(NodeManager* nm,
++                                      const TypeNode& type,
+                                       std::vector<Node>& ops);
+ 
+  private:
+@@ -124,7 +125,8 @@ class SygusGrammarCons
+    * for the type range. This is the component types of range plus other
+    * auxiliary types for defining operators in its theory.
+    */
+-  static void collectTypes(const TypeNode& range,
++  static void collectTypes(NodeManager* nm,
++                           const TypeNode& range,
+                            std::unordered_set<TypeNode>& types);
+   /**
+    * Adds the default rules for non-terminal ntSym to g, where ntSym is a
+@@ -169,6 +171,7 @@ class SygusGrammarCons
+    * constructed term.
+    */
+   static bool addRuleTo(
++      NodeManager* nm,
+       SygusGrammar& g,
+       const std::map<TypeNode, std::vector<Node>>& typeToNtSym,
+       Kind k,
+@@ -185,6 +188,7 @@ class SygusGrammarCons
+    * constructed term.
+    */
+   static bool addRuleTo(
++      NodeManager* nm,
+       SygusGrammar& g,
+       const std::map<TypeNode, std::vector<Node>>& typeToNtSym,
+       Kind k,
+diff --git a/src/theory/quantifiers/sygus/sygus_grammar_norm.cpp b/src/theory/quantifiers/sygus/sygus_grammar_norm.cpp
+index 6f1bccf75..39ec8ac9d 100644
+--- a/src/theory/quantifiers/sygus/sygus_grammar_norm.cpp
++++ b/src/theory/quantifiers/sygus/sygus_grammar_norm.cpp
+@@ -34,7 +34,8 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace quantifiers {
+ 
+-bool OpPosTrie::getOrMakeType(TypeNode tn,
++bool OpPosTrie::getOrMakeType(NodeManager* nm,
++                              TypeNode tn,
+                               TypeNode& unres_tn,
+                               const std::vector<unsigned>& op_pos,
+                               unsigned ind,
+@@ -61,7 +62,7 @@ bool OpPosTrie::getOrMakeType(TypeNode tn,
+         ss << "_" << std::to_string(op_pos[i]);
+       }
+     }
+-    d_unres_tn = NodeManager::currentNM()->mkUnresolvedDatatypeSort(ss.str());
++    d_unres_tn = nm->mkUnresolvedDatatypeSort(ss.str());
+     Trace("sygus-grammar-normalize-trie")
+         << "\tCreating type " << d_unres_tn << "\n";
+     unres_tn = d_unres_tn;
+@@ -69,7 +70,7 @@ bool OpPosTrie::getOrMakeType(TypeNode tn,
+   }
+   /* Go to next node */
+   return d_children[op_pos[ind]].getOrMakeType(
+-      tn, unres_tn, op_pos, ind + 1, useIndexedName);
++      nm, tn, unres_tn, op_pos, ind + 1, useIndexedName);
+ }
+ 
+ SygusGrammarNorm::SygusGrammarNorm(Env& env, TermDbSygus* tds)
+@@ -147,8 +148,7 @@ void SygusGrammarNorm::TransfDrop::buildType(SygusGrammarNorm* sygus_norm,
+ bool SygusGrammarNorm::TransfChain::isChainable(TypeNode tn, Node op)
+ {
+   /* Checks whether operator occurs chainable for its type */
+-  if (tn.isInteger()
+-      && NodeManager::currentNM()->operatorToKind(op) == Kind::ADD)
++  if (tn.isInteger() && op.getNodeManager()->operatorToKind(op) == Kind::ADD)
+   {
+     return true;
+   }
+@@ -160,8 +160,7 @@ bool SygusGrammarNorm::TransfChain::isChainable(TypeNode tn, Node op)
+    function should realize that it is chainable for integers */
+ bool SygusGrammarNorm::TransfChain::isId(TypeNode tn, Node op, Node n)
+ {
+-  if (tn.isInteger()
+-      && NodeManager::currentNM()->operatorToKind(op) == Kind::ADD
++  if (tn.isInteger() && op.getNodeManager()->operatorToKind(op) == Kind::ADD
+       && n == TermUtil::mkTypeValue(tn, 0))
+   {
+     return true;
+@@ -174,7 +173,7 @@ void SygusGrammarNorm::TransfChain::buildType(SygusGrammarNorm* sygus_norm,
+                                               const DType& dt,
+                                               std::vector<unsigned>& op_pos)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = sygus_norm->d_env.getNodeManager();
+   std::vector<unsigned> claimed(d_elem_pos);
+   claimed.push_back(d_chain_op_pos);
+   unsigned nb_op_pos = op_pos.size();
+@@ -208,7 +207,7 @@ void SygusGrammarNorm::TransfChain::buildType(SygusGrammarNorm* sygus_norm,
+     Trace("sygus-grammar-normalize-chain") << "\n";
+   }
+   /* Build identity operator and empty callback */
+-  Node iden_op = SygusGrammarNorm::getIdOp(dt.getSygusType());
++  Node iden_op = SygusGrammarNorm::getIdOp(nm, dt.getSygusType());
+   /* If all operators are claimed, create a monomial */
+   if (nb_op_pos == d_elem_pos.size() + 1)
+   {
+@@ -282,7 +281,7 @@ std::map<TypeNode, Node> SygusGrammarNorm::d_tn_to_id = {};
+ std::unique_ptr<SygusGrammarNorm::Transf> SygusGrammarNorm::inferTransf(
+     TypeNode tn, const DType& dt, const std::vector<unsigned>& op_pos)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   TypeNode sygus_tn = dt.getSygusType();
+   Trace("sygus-gnorm") << "Infer transf for " << dt.getName() << "..."
+                        << std::endl;
+@@ -398,8 +397,12 @@ TypeNode SygusGrammarNorm::normalizeSygusRec(TypeNode tn,
+   // only need to include indices if we are normalizing the grammar, otherwise
+   // we will not get name clashes since the constructed datatypes are 1-1 with
+   // the original.
+-  if (d_tries[tn].getOrMakeType(
+-          tn, unres_tn, op_pos, 0, options().quantifiers.sygusGrammarNorm))
++  if (d_tries[tn].getOrMakeType(nodeManager(),
++                                tn,
++                                unres_tn,
++                                op_pos,
++                                0,
++                                options().quantifiers.sygusGrammarNorm))
+   {
+     if (TraceIsOn("sygus-grammar-normalize-trie"))
+     {
+@@ -450,7 +453,7 @@ TypeNode SygusGrammarNorm::normalizeSygusRec(TypeNode tn,
+     {
+       // add default constant constructors
+       std::vector<Node> ops;
+-      SygusGrammarCons::mkSygusConstantsForType(sygus_type, ops);
++      SygusGrammarCons::mkSygusConstantsForType(nodeManager(), sygus_type, ops);
+       for (const Node& op : ops)
+       {
+         std::stringstream ss;
+@@ -536,8 +539,7 @@ TypeNode SygusGrammarNorm::normalizeSygusType(TypeNode tn, Node sygus_vars)
+     Trace("sygus-grammar-normalize-build") << "\n";
+   }
+   Assert(d_dt_all.size() == d_unres_t_all.size());
+-  std::vector<TypeNode> types =
+-      NodeManager::currentNM()->mkMutualDatatypeTypes(d_dt_all);
++  std::vector<TypeNode> types = nodeManager()->mkMutualDatatypeTypes(d_dt_all);
+   Assert(types.size() == d_dt_all.size());
+   /* Clear accumulators */
+   d_dt_all.clear();
+diff --git a/src/theory/quantifiers/sygus/sygus_grammar_norm.h b/src/theory/quantifiers/sygus/sygus_grammar_norm.h
+index cc8141896..d9d28cf70 100644
+--- a/src/theory/quantifiers/sygus/sygus_grammar_norm.h
++++ b/src/theory/quantifiers/sygus/sygus_grammar_norm.h
+@@ -85,7 +85,8 @@ class OpPosTrie
+    * @param useIndexedName If true, we include the indices in op_pos in the
+    * name of unres_tn.
+    */
+-  bool getOrMakeType(TypeNode tn,
++  bool getOrMakeType(NodeManager* nm,
++                     TypeNode tn,
+                      TypeNode& unres_tn,
+                      const std::vector<unsigned>& op_pos,
+                      unsigned ind = 0,
+@@ -151,16 +152,14 @@ class SygusGrammarNorm : protected EnvObj
+ 
+   /* Retrives, or, if none, creates, stores and returns, the node for the
+    * identity operator (\lambda x. x) for the given type node */
+-  static inline Node getIdOp(TypeNode tn)
++  static inline Node getIdOp(NodeManager* nm, TypeNode tn)
+   {
+     auto it = d_tn_to_id.find(tn);
+     if (it == d_tn_to_id.end())
+     {
+-      std::vector<Node> vars = {NodeManager::currentNM()->mkBoundVar(tn)};
+-      Node n = NodeManager::currentNM()->mkNode(
+-          Kind::LAMBDA,
+-          NodeManager::currentNM()->mkNode(Kind::BOUND_VAR_LIST, vars),
+-          vars.back());
++      std::vector<Node> vars = {nm->mkBoundVar(tn)};
++      Node n = nm->mkNode(
++          Kind::LAMBDA, nm->mkNode(Kind::BOUND_VAR_LIST, vars), vars.back());
+       d_tn_to_id[tn] = n;
+       return n;
+     }
+diff --git a/src/theory/quantifiers/sygus/sygus_invariance.cpp b/src/theory/quantifiers/sygus/sygus_invariance.cpp
+index 436182259..ba849784b 100644
+--- a/src/theory/quantifiers/sygus/sygus_invariance.cpp
++++ b/src/theory/quantifiers/sygus/sygus_invariance.cpp
+@@ -205,8 +205,7 @@ bool NegContainsSygusInvarianceTest::invariant(TermDbSygus* tds,
+       Assert(ii < d_exo.size());
+       Node nbvre = tds->evaluateBuiltin(tn, nbvr, d_ex[ii]);
+       Node out = d_exo[ii];
+-      Node cont =
+-          NodeManager::currentNM()->mkNode(Kind::STRING_CONTAINS, out, nbvre);
++      Node cont = NodeManager::mkNode(Kind::STRING_CONTAINS, out, nbvre);
+       Trace("sygus-pbe-cterm-debug") << "Check: " << cont << std::endl;
+       Node contr = d_rewriter->extendedRewrite(cont);
+       if (!contr.isConst())
+diff --git a/src/theory/quantifiers/sygus/sygus_repair_const.cpp b/src/theory/quantifiers/sygus/sygus_repair_const.cpp
+index fc1583d0f..3b01d7523 100644
+--- a/src/theory/quantifiers/sygus/sygus_repair_const.cpp
++++ b/src/theory/quantifiers/sygus/sygus_repair_const.cpp
+@@ -319,7 +319,7 @@ Node SygusRepairConst::getSkeleton(Node n,
+                                    std::map<TypeNode, size_t>& free_var_count,
+                                    std::vector<Node>& sk_vars)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   SkolemManager* skm = nm->getSkolemManager();
+   // get the most general candidate skeleton of n
+   std::unordered_map<TNode, Node> visited;
+diff --git a/src/theory/quantifiers/sygus/sygus_unif_io.cpp b/src/theory/quantifiers/sygus/sygus_unif_io.cpp
+index ab9a5737f..da41ef477 100644
+--- a/src/theory/quantifiers/sygus/sygus_unif_io.cpp
++++ b/src/theory/quantifiers/sygus/sygus_unif_io.cpp
+@@ -33,10 +33,11 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace quantifiers {
+ 
+-UnifContextIo::UnifContextIo() : d_curr_role(role_invalid)
++UnifContextIo::UnifContextIo(NodeManager* nm)
++    : d_nm(nm), d_curr_role(role_invalid)
+ {
+-  d_true = NodeManager::currentNM()->mkConst(true);
+-  d_false = NodeManager::currentNM()->mkConst(false);
++  d_true = d_nm->mkConst(true);
++  d_false = d_nm->mkConst(false);
+ }
+ 
+ NodeRole UnifContextIo::getCurrentRole() { return d_curr_role; }
+@@ -515,10 +516,11 @@ SygusUnifIo::SygusUnifIo(Env& env, SynthConjecture* p)
+       d_cond_count(0),
+       d_sol_term_size(0),
+       d_sol_cons_nondet(false),
+-      d_solConsUsingInfoGain(false)
++      d_solConsUsingInfoGain(false),
++      d_context(env.getNodeManager())
+ {
+-  d_true = NodeManager::currentNM()->mkConst(true);
+-  d_false = NodeManager::currentNM()->mkConst(false);
++  d_true = nodeManager()->mkConst(true);
++  d_false = nodeManager()->mkConst(false);
+ }
+ 
+ SygusUnifIo::~SygusUnifIo() {}
+@@ -615,7 +617,7 @@ void SygusUnifIo::notifyEnumeration(Node e, Node v, std::vector<Node>& lemmas)
+       Assert(!exp_exc_vec.empty());
+       exp_exc = exp_exc_vec.size() == 1
+                     ? exp_exc_vec[0]
+-                    : NodeManager::currentNM()->mkNode(Kind::AND, exp_exc_vec);
++                    : nodeManager()->mkNode(Kind::AND, exp_exc_vec);
+     }
+     Trace("sygus-sui-enum")
+         << "  ...fail : term is excluded (domain-specific)" << std::endl;
+@@ -925,7 +927,7 @@ bool SygusUnifIo::getExplanationForEnumeratorExclude(
+     std::vector<Node>& results,
+     std::vector<Node>& exp)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   if (useStrContainsEnumeratorExclude(e))
+   {
+     // This check whether the example evaluates to something that is larger than
+@@ -1495,7 +1497,7 @@ Node SygusUnifIo::constructSol(
+       if (success)
+       {
+         Assert(dt_children_cons.size() == etis->d_sol_templ_args.size());
+-        // ret_dt = NodeManager::currentNM()->mkNode( APPLY_CONSTRUCTOR,
++        // ret_dt = nodeManager()->mkNode( APPLY_CONSTRUCTOR,
+         // dt_children );
+         ret_dt = etis->d_sol_templ;
+         ret_dt = ret_dt.substitute(etis->d_sol_templ_args.begin(),
+diff --git a/src/theory/quantifiers/sygus/sygus_unif_io.h b/src/theory/quantifiers/sygus/sygus_unif_io.h
+index b30941348..5b2829e5d 100644
+--- a/src/theory/quantifiers/sygus/sygus_unif_io.h
++++ b/src/theory/quantifiers/sygus/sygus_unif_io.h
+@@ -36,7 +36,7 @@ class SygusUnifIo;
+ class UnifContextIo : public UnifContext
+ {
+  public:
+-  UnifContextIo();
++  UnifContextIo(NodeManager* nm);
+   /** get current role */
+   NodeRole getCurrentRole() override;
+ 
+@@ -126,6 +126,8 @@ class UnifContextIo : public UnifContext
+   std::map<Node, std::map<NodeRole, bool>> d_visit_role;
+ 
+  private:
++  /** the associated node manager */
++  NodeManager* d_nm;
+   /** true and false nodes */
+   Node d_true;
+   Node d_false;
+diff --git a/src/theory/quantifiers/sygus/sygus_unif_rl.cpp b/src/theory/quantifiers/sygus/sygus_unif_rl.cpp
+index 2468796ce..8c87e53dc 100644
+--- a/src/theory/quantifiers/sygus/sygus_unif_rl.cpp
++++ b/src/theory/quantifiers/sygus/sygus_unif_rl.cpp
+@@ -137,7 +137,7 @@ Node SygusUnifRl::purifyLemma(Node n,
+   // Travese to purify
+   bool childChanged = false;
+   std::vector<Node> children;
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = nodeManager();
+   SkolemManager* sm = nm->getSkolemManager();
+   for (unsigned i = 0; i < size; ++i)
+   {
+@@ -170,7 +170,7 @@ Node SygusUnifRl::purifyLemma(Node n,
+         Trace("sygus-unif-rl-purify-debug") << "...... " << child << "\n";
+       }
+     }
+-    nb = NodeManager::currentNM()->mkNode(k, children);
++    nb = nodeManager()->mkNode(k, children);
+     Trace("sygus-unif-rl-purify")
+         << "PurifyLemma : transformed " << n << " into " << nb << "\n";
+   }
+@@ -226,8 +226,7 @@ Node SygusUnifRl::purifyLemma(Node n,
+   // Add equality between purified fapp and model value
+   if (ensureConst && fapp)
+   {
+-    model_guards.push_back(
+-        NodeManager::currentNM()->mkNode(Kind::EQUAL, nv, nb).negate());
++    model_guards.push_back(NodeManager::mkNode(Kind::EQUAL, nv, nb).negate());
+     nb = nv;
+     Trace("sygus-unif-rl-purify")
+         << "PurifyLemma : adding model eq " << model_guards.back() << "\n";
+@@ -261,7 +260,7 @@ Node SygusUnifRl::addRefLemma(Node lemma,
+   if (!model_guards.empty())
+   {
+     model_guards.push_back(plem);
+-    plem = NodeManager::currentNM()->mkNode(Kind::OR, model_guards);
++    plem = nodeManager()->mkNode(Kind::OR, model_guards);
+   }
+   plem = rewrite(plem);
+   Trace("sygus-unif-rl-purify") << "Purified lemma : " << plem << "\n";
+@@ -516,8 +515,8 @@ void SygusUnifRl::DecisionTreeInfo::initialize(Node cond_enum,
+   d_unif = unif;
+   d_strategy = strategy;
+   d_strategy_index = strategy_index;
+-  d_true = NodeManager::currentNM()->mkConst(true);
+-  d_false = NodeManager::currentNM()->mkConst(false);
++  d_true = cond_enum.getNodeManager()->mkConst(true);
++  d_false = cond_enum.getNodeManager()->mkConst(false);
+   // Retrieve template
+   EnumInfo& eiv = d_strategy->getEnumInfo(d_cond_enum);
+   d_template = NodePair(eiv.d_template, eiv.d_template_arg);
+@@ -644,7 +643,7 @@ Node SygusUnifRl::DecisionTreeInfo::buildSolAllCond(Node cons,
+ Node SygusUnifRl::DecisionTreeInfo::buildSolMinCond(Node cons,
+                                                     std::vector<Node>& lemmas)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = cons.getNodeManager();
+   // model values for evaluation heads
+   std::map<Node, Node> hd_mv;
+   // the current explanation of why there has not yet been a separation conflict
+@@ -935,7 +934,7 @@ Node SygusUnifRl::DecisionTreeInfo::PointSeparator::extractSol(
+     Node cons, std::map<Node, Node>& hd_mv)
+ {
+   // Traverse trie and build ITE with cons
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = cons.getNodeManager();
+   std::map<IndTriePair, Node> cache;
+   std::map<IndTriePair, Node>::iterator it;
+   std::vector<IndTriePair> visit;
+diff --git a/src/theory/quantifiers/sygus/sygus_utils.cpp b/src/theory/quantifiers/sygus/sygus_utils.cpp
+index a7cffb938..5a1168767 100644
+--- a/src/theory/quantifiers/sygus/sygus_utils.cpp
++++ b/src/theory/quantifiers/sygus/sygus_utils.cpp
+@@ -63,7 +63,7 @@ Node SygusUtils::mkSygusConjecture(const std::vector<Node>& fs,
+                                    const std::vector<Node>& iattrs)
+ {
+   Assert(!fs.empty());
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = conj.getNodeManager();
+   SkolemManager* sm = nm->getSkolemManager();
+   SygusAttribute ca;
+   Node sygusVar = sm->mkDummySkolem("sygus", nm->booleanType());
+@@ -87,7 +87,7 @@ Node SygusUtils::mkSygusConjecture(const std::vector<Node>& fs,
+                                    const Subs& solvedf)
+ {
+   Assert(!fs.empty());
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = conj.getNodeManager();
+   SkolemManager* sm = nm->getSkolemManager();
+   std::vector<Node> iattrs;
+   // take existing properties, without the previous solves
+@@ -164,7 +164,7 @@ Node SygusUtils::getOrMkSygusArgumentList(Node f)
+   Node sfvl = f.getAttribute(SygusSynthFunVarListAttribute());
+   if (sfvl.isNull() && f.getType().isFunction())
+   {
+-    NodeManager* nm = NodeManager::currentNM();
++    NodeManager* nm = f.getNodeManager();
+     std::vector<TypeNode> argTypes = f.getType().getArgTypes();
+     // make default variable list if none was specified by input
+     std::vector<Node> bvs;
+@@ -194,7 +194,7 @@ Node SygusUtils::wrapSolution(Node f, Node sol)
+   Node al = getOrMkSygusArgumentList(f);
+   if (!al.isNull())
+   {
+-    sol = NodeManager::currentNM()->mkNode(Kind::LAMBDA, al, sol);
++    sol = NodeManager::mkNode(Kind::LAMBDA, al, sol);
+   }
+   Assert(!expr::hasFreeVar(sol));
+   return sol;
+@@ -204,7 +204,7 @@ void SygusUtils::setSygusType(Node f, const TypeNode& tn)
+ {
+   Assert(!tn.isNull());
+   Assert(getSygusType(f).isNull());
+-  Node sym = NodeManager::currentNM()->mkBoundVar("sfproxy", tn);
++  Node sym = NodeManager::mkBoundVar("sfproxy", tn);
+   // use an attribute to mark its grammar
+   SygusSynthGrammarAttribute ssfga;
+   f.setAttribute(ssfga, sym);
+@@ -222,7 +222,6 @@ TypeNode SygusUtils::getSygusType(const Node& f)
+ 
+ Node SygusUtils::mkSygusTermFor(const Node& f)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   TypeNode tn = getSygusType(f);
+   Node bvl = getOrMkSygusArgumentList(f);
+   if (tn.isNull())
+@@ -233,7 +232,7 @@ Node SygusUtils::mkSygusTermFor(const Node& f)
+       Assert(!bvl.isNull());
+       ret = NodeManager::mkGroundValue(f.getType().getRangeType());
+       // give the appropriate variable list
+-      ret = nm->mkNode(Kind::LAMBDA, bvl, ret);
++      ret = NodeManager::mkNode(Kind::LAMBDA, bvl, ret);
+     }
+     else
+     {
+@@ -246,7 +245,7 @@ Node SygusUtils::mkSygusTermFor(const Node& f)
+   ret = datatypes::utils::sygusToBuiltin(ret, true);
+   if (!bvl.isNull())
+   {
+-    ret = nm->mkNode(Kind::LAMBDA, bvl, ret);
++    ret = NodeManager::mkNode(Kind::LAMBDA, bvl, ret);
+   }
+   return ret;
+ }
+-- 
+2.47.1
+

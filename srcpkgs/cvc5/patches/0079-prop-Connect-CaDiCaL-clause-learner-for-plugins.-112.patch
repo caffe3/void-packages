@@ -1,0 +1,166 @@
+From 6cf3772511f7526c504ec2dbb2363de1806ba2f8 Mon Sep 17 00:00:00 2001
+From: Mathias Preiner <mathias.preiner@gmail.com>
+Date: Thu, 26 Sep 2024 06:49:08 -0700
+Subject: [PATCH 079/312] prop: Connect CaDiCaL clause learner for plugins.
+ (#11226)
+
+---
+ src/prop/cadical.cpp                   | 42 ++++++++++++++++++++++++++
+ src/prop/cadical.h                     |  3 ++
+ src/prop/theory_proxy.cpp              |  9 +++++-
+ test/unit/api/cpp/api_solver_black.cpp | 28 +++++++++++++++++
+ 4 files changed, 81 insertions(+), 1 deletion(-)
+
+diff --git a/src/prop/cadical.cpp b/src/prop/cadical.cpp
+index fa0fcca74..bc07bdf6b 100644
+--- a/src/prop/cadical.cpp
++++ b/src/prop/cadical.cpp
+@@ -20,6 +20,7 @@
+ #include <deque>
+ 
+ #include "base/check.h"
++#include "options/base_options.h"
+ #include "options/main_options.h"
+ #include "options/proof_options.h"
+ #include "prop/theory_proxy.h"
+@@ -949,6 +950,42 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator
+   bool d_in_search = false;
+ };
+ 
++class ClauseLearner : public CaDiCaL::Learner
++{
++ public:
++  ClauseLearner(TheoryProxy& proxy, int32_t clause_size)
++      : d_proxy(proxy), d_max_clause_size(clause_size)
++  {
++  }
++  ~ClauseLearner() override {}
++
++  bool learning(int size) override
++  {
++    return d_max_clause_size == 0 || size <= d_max_clause_size;
++  }
++
++  void learn(int lit) override
++  {
++    if (lit)
++    {
++      SatLiteral slit = toSatLiteral(lit);
++      d_clause.push_back(slit);
++    }
++    else
++    {
++      d_proxy.notifySatClause(d_clause);
++      d_clause.clear();
++    }
++  }
++
++ private:
++  TheoryProxy& d_proxy;
++  /** Intermediate literals buffer. */
++  std::vector<SatLiteral> d_clause;
++  /** Maximum size of clauses to get notified about. */
++  int32_t d_max_clause_size;
++};
++
+ CadicalSolver::CadicalSolver(Env& env,
+                              StatisticsRegistry& registry,
+                              const std::string& name,
+@@ -1190,6 +1227,11 @@ void CadicalSolver::initialize(context::Context* context,
+   d_proxy = theoryProxy;
+   d_propagator.reset(new CadicalPropagator(theoryProxy, context, *d_solver));
+   d_solver->connect_external_propagator(d_propagator.get());
++  if (!d_env.getPlugins().empty())
++  {
++    d_clause_learner.reset(new ClauseLearner(*theoryProxy, 0));
++    d_solver->connect_learner(d_clause_learner.get());
++  }
+ 
+   init();
+ }
+diff --git a/src/prop/cadical.h b/src/prop/cadical.h
+index 5e129fc13..e159128e9 100644
+--- a/src/prop/cadical.h
++++ b/src/prop/cadical.h
+@@ -30,6 +30,7 @@ namespace cvc5::internal {
+ namespace prop {
+ 
+ class CadicalPropagator;
++class ClauseLearner;
+ 
+ class CadicalSolver : public CDCLTSatSolver, protected EnvObj
+ {
+@@ -134,6 +135,8 @@ class CadicalSolver : public CDCLTSatSolver, protected EnvObj
+   prop::TheoryProxy* d_proxy = nullptr;
+   /** The CaDiCaL propagator (for CDCL(T) mode). */
+   std::unique_ptr<CadicalPropagator> d_propagator;
++  /** Clause learner instance for notifications about learned clauses. */
++  std::unique_ptr<ClauseLearner> d_clause_learner;
+ 
+   /**
+    * Stores the current set of assumptions provided via solve() and is used to
+diff --git a/src/prop/theory_proxy.cpp b/src/prop/theory_proxy.cpp
+index 05ad2582b..60f8e277a 100644
+--- a/src/prop/theory_proxy.cpp
++++ b/src/prop/theory_proxy.cpp
+@@ -342,10 +342,17 @@ void TheoryProxy::notifySatClause(const SatClause& clause)
+     return;
+   }
+   // convert to node
++  const auto& nodeCache = d_cnfStream->getNodeCache();
+   std::vector<Node> clauseNodes;
+   for (const SatLiteral& l : clause)
+   {
+-    clauseNodes.push_back(d_cnfStream->getNode(l));
++    auto it = nodeCache.find(l);
++    // This should only return null nodes with CaDiCaL when clauses contain
++    // activation literals, i.e., clauses learned at user level > 0.
++    if (it != nodeCache.end())
++    {
++      clauseNodes.push_back(it->second);
++    }
+   }
+   Node cln = NodeManager::currentNM()->mkOr(clauseNodes);
+   // get the sharable form of cln
+diff --git a/test/unit/api/cpp/api_solver_black.cpp b/test/unit/api/cpp/api_solver_black.cpp
+index 1432f1409..3c56c8760 100644
+--- a/test/unit/api/cpp/api_solver_black.cpp
++++ b/test/unit/api/cpp/api_solver_black.cpp
+@@ -2567,6 +2567,34 @@ TEST_F(TestApiBlackSolver, pluginListen)
+   ASSERT_TRUE(pl.hasSeenSatClause());
+ }
+ 
++TEST_F(TestApiBlackSolver, pluginListenCadical)
++{
++  cvc5::Solver solver(d_tm);
++  solver.setOption("sat-solver", "cadical");
++  solver.setOption("plugin-notify-sat-clause-in-solve", "true");
++  PluginListen pl(d_tm);
++  solver.addPlugin(pl);
++  Sort bv1 = d_tm.mkBitVectorSort(8);
++  Sort bv16 = d_tm.mkBitVectorSort(8);
++  Term x = d_tm.mkConst(d_bool, "x");
++  Term z16 = d_tm.mkBitVector(16, 0);
++  Term o16 = d_tm.mkBitVector(16, 1);
++  Term z1 = d_tm.mkBitVector(1, 0);
++  Term o1 = d_tm.mkBitVector(1, 1);
++
++  Term ite1 = d_tm.mkTerm(Kind::ITE, {x, z16, o16});
++  Term add = d_tm.mkTerm(Kind::BITVECTOR_ADD, {o16, ite1});
++  Term eq1 = d_tm.mkTerm(Kind::EQUAL, {z16, add});
++  Term ite2 = d_tm.mkTerm(Kind::ITE, {eq1, o1, z1});
++  Term eq2 =
++      d_tm.mkTerm(Kind::EQUAL, {z1, d_tm.mkTerm(Kind::BITVECTOR_NOT, {ite2})});
++  solver.assertFormula(eq2);
++  ASSERT_TRUE(solver.checkSat().isUnsat());
++  // above input formulas should induce a theory lemma and SAT clause learning
++  ASSERT_TRUE(pl.hasSeenTheoryLemma());
++  ASSERT_TRUE(pl.hasSeenSatClause());
++}
++
+ TEST_F(TestApiBlackSolver, verticalBars)
+ {
+   Term a = d_solver->declareFun("|a |", {}, d_real);
+-- 
+2.47.1
+

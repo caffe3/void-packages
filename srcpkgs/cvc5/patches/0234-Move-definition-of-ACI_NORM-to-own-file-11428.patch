@@ -1,0 +1,773 @@
+From 3cc4c017d73e06668d203425c0651312f900576a Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 10 Dec 2024 18:38:53 -0600
+Subject: [PATCH 234/312] Move definition of ACI_NORM to own file (#11428)
+
+---
+ src/expr/CMakeLists.txt                  |   2 +
+ src/expr/aci_norm.cpp                    | 240 +++++++++++++++++++++++
+ src/expr/aci_norm.h                      |  72 +++++++
+ src/expr/nary_term_util.cpp              | 210 +-------------------
+ src/expr/nary_term_util.h                |  40 ----
+ src/proof/alf/alf_node_converter.cpp     |   2 +-
+ src/proof/lfsc/lfsc_node_converter.cpp   |   2 +-
+ src/proof/lfsc/lfsc_node_converter.h     |   2 +-
+ src/rewriter/basic_rewrite_rcons.cpp     |   1 +
+ src/rewriter/rewrite_db_proof_cons.cpp   |   1 +
+ src/rewriter/rewrite_db_term_process.cpp |   2 +-
+ src/rewriter/rewrite_proof_rule.cpp      |   1 +
+ src/theory/builtin/proof_checker.cpp     |   2 +-
+ 13 files changed, 324 insertions(+), 253 deletions(-)
+ create mode 100644 src/expr/aci_norm.cpp
+ create mode 100644 src/expr/aci_norm.h
+
+diff --git a/src/expr/CMakeLists.txt b/src/expr/CMakeLists.txt
+index 44d2fc634..6259bcf59 100644
+--- a/src/expr/CMakeLists.txt
++++ b/src/expr/CMakeLists.txt
+@@ -14,6 +14,8 @@
+ ##
+ 
+ libcvc5_add_sources(
++  aci_norm.cpp
++  aci_norm.h
+   algorithm/flatten.h
+   annotation_elim_node_converter.cpp
+   annotation_elim_node_converter.h
+diff --git a/src/expr/aci_norm.cpp b/src/expr/aci_norm.cpp
+new file mode 100644
+index 000000000..a144e7330
+--- /dev/null
++++ b/src/expr/aci_norm.cpp
+@@ -0,0 +1,240 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds, Aina Niemetz, Mathias Preiner
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Definition of ProofRule::ACI_NORM
++ */
++
++#include "expr/aci_norm.h"
++
++#include "expr/attribute.h"
++#include "expr/skolem_manager.h"
++#include "theory/bv/theory_bv_utils.h"
++#include "theory/strings/word.h"
++#include "util/bitvector.h"
++#include "util/finite_field_value.h"
++#include "util/rational.h"
++#include "util/regexp.h"
++#include "util/string.h"
++
++using namespace cvc5::internal::kind;
++
++namespace cvc5::internal {
++namespace expr {
++
++Node getNullTerminator(Kind k, TypeNode tn)
++{
++  NodeManager* nm = NodeManager::currentNM();
++  Node nullTerm;
++  switch (k)
++  {
++    case Kind::OR: nullTerm = nm->mkConst(false); break;
++    case Kind::AND:
++    case Kind::SEP_STAR: nullTerm = nm->mkConst(true); break;
++    case Kind::ADD:
++      // Note that we ignore the type. This is safe since ADD is permissive
++      // for subtypes.
++      nullTerm = nm->mkConstInt(Rational(0));
++      break;
++    case Kind::MULT:
++    case Kind::NONLINEAR_MULT:
++      // Note that we ignore the type. This is safe since multiplication is
++      // permissive for subtypes.
++      nullTerm = nm->mkConstInt(Rational(1));
++      break;
++    case Kind::STRING_CONCAT:
++      // handles strings and sequences
++      if (tn.isStringLike())
++      {
++        nullTerm = theory::strings::Word::mkEmptyWord(tn);
++      }
++      break;
++    case Kind::REGEXP_CONCAT:
++      // the language containing only the empty string
++      nullTerm = nm->mkNode(Kind::STRING_TO_REGEXP, nm->mkConst(String("")));
++      break;
++    case Kind::REGEXP_UNION:
++      // empty language
++      nullTerm = nm->mkNode(Kind::REGEXP_NONE);
++      break;
++    case Kind::REGEXP_INTER:
++      // universal language
++      nullTerm = nm->mkNode(Kind::REGEXP_ALL);
++      break;
++    case Kind::BITVECTOR_AND:
++      // it may be the case that we are an abstract type, which we guard here
++      // and return the null node.
++      if (tn.isBitVector())
++      {
++        nullTerm = theory::bv::utils::mkOnes(tn.getBitVectorSize());
++      }
++      break;
++    case Kind::BITVECTOR_OR:
++    case Kind::BITVECTOR_ADD:
++    case Kind::BITVECTOR_XOR:
++      if (tn.isBitVector())
++      {
++        nullTerm = theory::bv::utils::mkZero(tn.getBitVectorSize());
++      }
++      break;
++    case Kind::BITVECTOR_MULT:
++      if (tn.isBitVector())
++      {
++        nullTerm = theory::bv::utils::mkOne(tn.getBitVectorSize());
++      }
++      break;
++    case Kind::BITVECTOR_CONCAT:
++    {
++      nullTerm = nm->getSkolemManager()->mkSkolemFunction(SkolemId::BV_EMPTY);
++    }
++    break;
++    case Kind::FINITE_FIELD_ADD:
++      if (tn.isFiniteField())
++      {
++        nullTerm = nm->mkConst(FiniteFieldValue(Integer(0), tn.getFfSize()));
++      }
++      break;
++    case Kind::FINITE_FIELD_MULT:
++      if (tn.isFiniteField())
++      {
++        nullTerm = nm->mkConst(FiniteFieldValue(Integer(1), tn.getFfSize()));
++      }
++      break;
++    default:
++      // not handled as null-terminated
++      break;
++  }
++  return nullTerm;
++}
++
++bool isAssocCommIdem(Kind k)
++{
++  switch (k)
++  {
++    case Kind::OR:
++    case Kind::AND:
++    case Kind::SEP_STAR:
++    case Kind::REGEXP_UNION:
++    case Kind::REGEXP_INTER:
++    case Kind::BITVECTOR_AND:
++    case Kind::BITVECTOR_OR:
++    case Kind::FINITE_FIELD_ADD:
++    case Kind::FINITE_FIELD_MULT: return true;
++    default: break;
++  }
++  return false;
++}
++
++bool isAssoc(Kind k)
++{
++  switch (k)
++  {
++    case Kind::STRING_CONCAT:
++    case Kind::REGEXP_CONCAT: return true;
++    default: break;
++  }
++  // also return true for the operators listed above
++  return isAssocCommIdem(k);
++}
++
++struct NormalFormTag
++{
++};
++using NormalFormAttr = expr::Attribute<NormalFormTag, Node>;
++
++Node getACINormalForm(Node a)
++{
++  NormalFormAttr nfa;
++  Node an = a.getAttribute(nfa);
++  if (!an.isNull())
++  {
++    // already computed
++    return an;
++  }
++  Kind k = a.getKind();
++  bool aci = isAssocCommIdem(k);
++  if (!aci && !isAssoc(k))
++  {
++    // not associative, return self
++    a.setAttribute(nfa, a);
++    return a;
++  }
++  TypeNode atn = a.getType();
++  Node nt = getNullTerminator(k, atn);
++  if (nt.isNull())
++  {
++    // no null terminator, likely abstract type, return self
++    a.setAttribute(nfa, a);
++    return a;
++  }
++  std::vector<Node> toProcess;
++  toProcess.insert(toProcess.end(), a.rbegin(), a.rend());
++  std::vector<Node> children;
++  Node cur;
++  do
++  {
++    cur = toProcess.back();
++    toProcess.pop_back();
++    if (cur == nt)
++    {
++      // ignore null terminator (which is the neutral element)
++      continue;
++    }
++    else if (cur.getKind() == k)
++    {
++      // flatten
++      toProcess.insert(toProcess.end(), cur.rbegin(), cur.rend());
++    }
++    else if (!aci
++             || std::find(children.begin(), children.end(), cur)
++                    == children.end())
++    {
++      // add to final children if not idempotent or if not a duplicate
++      children.push_back(cur);
++    }
++  } while (!toProcess.empty());
++  if (aci)
++  {
++    // sort if commutative
++    std::sort(children.begin(), children.end());
++  }
++  an = children.empty() ? nt
++                        : (children.size() == 1
++                               ? children[0]
++                               : NodeManager::currentNM()->mkNode(k, children));
++  a.setAttribute(nfa, an);
++  return an;
++}
++
++bool isACINorm(Node a, Node b)
++{
++  Node an = getACINormalForm(a);
++  Node bn = getACINormalForm(b);
++  if (a.getKind() == b.getKind())
++  {
++    // if the kinds are equal, we compare their normal forms only, as the checks
++    // below are spurious.
++    return (an == bn);
++  }
++  // note we compare three possibilities, to handle cases like
++  //   (or (and A B) false) == (and A B).
++  //
++  // Note that we do *not* succeed if an==bn here, since this depends on the
++  // chosen ordering. For example, if (or (and A B) false) == (and B A),
++  // we get a normal form of (and A B) for the LHS. The normal form of the
++  // RHS is either (and A B) or (and B A). If we succeeded when an==bn,
++  // then this would only be the case if the former was chosen as a normal
++  // form. Instead, both fail.
++  return (a == bn) || (an == b);
++}
++
++}  // namespace expr
++}  // namespace cvc5::internal
+diff --git a/src/expr/aci_norm.h b/src/expr/aci_norm.h
+new file mode 100644
+index 000000000..9729ef089
+--- /dev/null
++++ b/src/expr/aci_norm.h
+@@ -0,0 +1,72 @@
++/******************************************************************************
++ * Top contributors (to current version):
++ *   Andrew Reynolds
++ *
++ * This file is part of the cvc5 project.
++ *
++ * Copyright (c) 2009-2024 by the authors listed in the file AUTHORS
++ * in the top-level source directory and their institutional affiliations.
++ * All rights reserved.  See the file COPYING in the top-level source
++ * directory for licensing information.
++ * ****************************************************************************
++ *
++ * Definition of ProofRule::ACI_NORM
++ */
++
++#include "cvc5_private.h"
++
++#ifndef CVC5__EXPR__ACI_NORM__H
++#define CVC5__EXPR__ACI_NORM__H
++
++#include <map>
++#include <vector>
++
++#include "expr/node.h"
++
++namespace cvc5::internal {
++namespace expr {
++
++/**
++ * Get the null terminator for kind k and type node tn.
++ *
++ * Examples of null terminators:
++ *   false for (OR, bool)
++ *   true for (AND, bool)
++ *   (as seq.empty (Seq Int)) for (STRING_CONCAT, (Seq Int)
++ *   #x0 for (BITVECTOR_OR, (_ BitVec 4))
++ */
++Node getNullTerminator(Kind k, TypeNode tn);
++
++/**
++ * @param k A kind
++ * @return true if k is associative, commutative and idempotent.
++ */
++bool isAssocCommIdem(Kind k);
++/**
++ * @param k A kind
++ * @return true if k is associative.
++ */
++bool isAssoc(Kind k);
++/**
++ * Get the normal form of a that takes into account associativity,
++ * commutativity, and idempotency if applicable.
++ * This is used by ProofRule::NORM.
++ *
++ * @param a The term.
++ * @return its normal form.
++ */
++Node getACINormalForm(Node a);
++/**
++ * Return true if a and b can be shown equivalent by computing normal forms as
++ * above.
++ *
++ * @param a The first term
++ * @param b The second term
++ * @return true if a and b were successfully shown to be equal.
++ */
++bool isACINorm(Node a, Node b);
++
++}  // namespace expr
++}  // namespace cvc5::internal
++
++#endif /* CVC5__EXPR__NARY_TERM_UTIL__H */
+diff --git a/src/expr/nary_term_util.cpp b/src/expr/nary_term_util.cpp
+index 40bc9d4a3..102adc29d 100644
+--- a/src/expr/nary_term_util.cpp
++++ b/src/expr/nary_term_util.cpp
+@@ -10,14 +10,14 @@
+  * directory for licensing information.
+  * ****************************************************************************
+  *
+- * Rewrite database
++ * N-ary term utilities
+  */
+ 
+ #include "expr/nary_term_util.h"
+ 
++#include "expr/aci_norm.h"
+ #include "expr/attribute.h"
+ #include "expr/node_algorithm.h"
+-#include "expr/skolem_manager.h"
+ #include "theory/bv/theory_bv_utils.h"
+ #include "theory/strings/word.h"
+ #include "util/bitvector.h"
+@@ -113,91 +113,6 @@ bool getListVarContext(TNode n, std::map<Node, Node>& context)
+   return true;
+ }
+ 
+-Node getNullTerminator(Kind k, TypeNode tn)
+-{
+-  NodeManager* nm = NodeManager::currentNM();
+-  Node nullTerm;
+-  switch (k)
+-  {
+-    case Kind::OR: nullTerm = nm->mkConst(false); break;
+-    case Kind::AND:
+-    case Kind::SEP_STAR: nullTerm = nm->mkConst(true); break;
+-    case Kind::ADD:
+-      // Note that we ignore the type. This is safe since ADD is permissive
+-      // for subtypes.
+-      nullTerm = nm->mkConstInt(Rational(0));
+-      break;
+-    case Kind::MULT:
+-    case Kind::NONLINEAR_MULT:
+-      // Note that we ignore the type. This is safe since multiplication is
+-      // permissive for subtypes.
+-      nullTerm = nm->mkConstInt(Rational(1));
+-      break;
+-    case Kind::STRING_CONCAT:
+-      // handles strings and sequences
+-      if (tn.isStringLike())
+-      {
+-        nullTerm = theory::strings::Word::mkEmptyWord(tn);
+-      }
+-      break;
+-    case Kind::REGEXP_CONCAT:
+-      // the language containing only the empty string
+-      nullTerm = nm->mkNode(Kind::STRING_TO_REGEXP, nm->mkConst(String("")));
+-      break;
+-    case Kind::REGEXP_UNION:
+-      // empty language
+-      nullTerm = nm->mkNode(Kind::REGEXP_NONE);
+-      break;
+-    case Kind::REGEXP_INTER:
+-      // universal language
+-      nullTerm = nm->mkNode(Kind::REGEXP_ALL);
+-      break;
+-    case Kind::BITVECTOR_AND:
+-      // it may be the case that we are an abstract type, which we guard here
+-      // and return the null node.
+-      if (tn.isBitVector())
+-      {
+-        nullTerm = theory::bv::utils::mkOnes(tn.getBitVectorSize());
+-      }
+-      break;
+-    case Kind::BITVECTOR_OR:
+-    case Kind::BITVECTOR_ADD:
+-    case Kind::BITVECTOR_XOR:
+-      if (tn.isBitVector())
+-      {
+-        nullTerm = theory::bv::utils::mkZero(tn.getBitVectorSize());
+-      }
+-      break;
+-    case Kind::BITVECTOR_MULT:
+-      if (tn.isBitVector())
+-      {
+-        nullTerm = theory::bv::utils::mkOne(tn.getBitVectorSize());
+-      }
+-      break;
+-    case Kind::BITVECTOR_CONCAT:
+-    {
+-      nullTerm = nm->getSkolemManager()->mkSkolemFunction(SkolemId::BV_EMPTY);
+-    }
+-    break;
+-    case Kind::FINITE_FIELD_ADD:
+-      if (tn.isFiniteField())
+-      {
+-        nullTerm = nm->mkConst(FiniteFieldValue(Integer(0), tn.getFfSize()));
+-      }
+-      break;
+-    case Kind::FINITE_FIELD_MULT:
+-      if (tn.isFiniteField())
+-      {
+-        nullTerm = nm->mkConst(FiniteFieldValue(Integer(1), tn.getFfSize()));
+-      }
+-      break;
+-    default:
+-      // not handled as null-terminated
+-      break;
+-  }
+-  return nullTerm;
+-}
+-
+ Node narySubstitute(Node src,
+                     const std::vector<Node>& vars,
+                     const std::vector<Node>& subs)
+@@ -318,126 +233,5 @@ Node narySubstitute(Node src,
+   return visited[src];
+ }
+ 
+-bool isAssocCommIdem(Kind k)
+-{
+-  switch (k)
+-  {
+-    case Kind::OR:
+-    case Kind::AND:
+-    case Kind::SEP_STAR:
+-    case Kind::REGEXP_UNION:
+-    case Kind::REGEXP_INTER:
+-    case Kind::BITVECTOR_AND:
+-    case Kind::BITVECTOR_OR:
+-    case Kind::FINITE_FIELD_ADD:
+-    case Kind::FINITE_FIELD_MULT: return true;
+-    default: break;
+-  }
+-  return false;
+-}
+-
+-bool isAssoc(Kind k)
+-{
+-  switch (k)
+-  {
+-    case Kind::STRING_CONCAT:
+-    case Kind::REGEXP_CONCAT: return true;
+-    default: break;
+-  }
+-  // also return true for the operators listed above
+-  return isAssocCommIdem(k);
+-}
+-
+-struct NormalFormTag
+-{
+-};
+-using NormalFormAttr = expr::Attribute<NormalFormTag, Node>;
+-
+-Node getACINormalForm(Node a)
+-{
+-  NormalFormAttr nfa;
+-  Node an = a.getAttribute(nfa);
+-  if (!an.isNull())
+-  {
+-    // already computed
+-    return an;
+-  }
+-  Kind k = a.getKind();
+-  bool aci = isAssocCommIdem(k);
+-  if (!aci && !isAssoc(k))
+-  {
+-    // not associative, return self
+-    a.setAttribute(nfa, a);
+-    return a;
+-  }
+-  TypeNode atn = a.getType();
+-  Node nt = getNullTerminator(k, atn);
+-  if (nt.isNull())
+-  {
+-    // no null terminator, likely abstract type, return self
+-    a.setAttribute(nfa, a);
+-    return a;
+-  }
+-  std::vector<Node> toProcess;
+-  toProcess.insert(toProcess.end(), a.rbegin(), a.rend());
+-  std::vector<Node> children;
+-  Node cur;
+-  do
+-  {
+-    cur = toProcess.back();
+-    toProcess.pop_back();
+-    if (cur == nt)
+-    {
+-      // ignore null terminator (which is the neutral element)
+-      continue;
+-    }
+-    else if (cur.getKind() == k)
+-    {
+-      // flatten
+-      toProcess.insert(toProcess.end(), cur.rbegin(), cur.rend());
+-    }
+-    else if (!aci
+-             || std::find(children.begin(), children.end(), cur)
+-                    == children.end())
+-    {
+-      // add to final children if not idempotent or if not a duplicate
+-      children.push_back(cur);
+-    }
+-  } while (!toProcess.empty());
+-  if (aci)
+-  {
+-    // sort if commutative
+-    std::sort(children.begin(), children.end());
+-  }
+-  an = children.empty() ? nt
+-                        : (children.size() == 1
+-                               ? children[0]
+-                               : NodeManager::currentNM()->mkNode(k, children));
+-  a.setAttribute(nfa, an);
+-  return an;
+-}
+-
+-bool isACINorm(Node a, Node b)
+-{
+-  Node an = getACINormalForm(a);
+-  Node bn = getACINormalForm(b);
+-  if (a.getKind() == b.getKind())
+-  {
+-    // if the kinds are equal, we compare their normal forms only, as the checks
+-    // below are spurious.
+-    return (an == bn);
+-  }
+-  // note we compare three possibilities, to handle cases like
+-  //   (or (and A B) false) == (and A B).
+-  //
+-  // Note that we do *not* succeed if an==bn here, since this depends on the
+-  // chosen ordering. For example, if (or (and A B) false) == (and B A),
+-  // we get a normal form of (and A B) for the LHS. The normal form of the
+-  // RHS is either (and A B) or (and B A). If we succeeded when an==bn,
+-  // then this would only be the case if the former was chosen as a normal
+-  // form. Instead, both fail.
+-  return (a == bn) || (an == b);
+-}
+-
+ }  // namespace expr
+ }  // namespace cvc5::internal
+diff --git a/src/expr/nary_term_util.h b/src/expr/nary_term_util.h
+index 6febeb117..a2dfba064 100644
+--- a/src/expr/nary_term_util.h
++++ b/src/expr/nary_term_util.h
+@@ -41,17 +41,6 @@ bool hasListVar(TNode n);
+  */
+ bool getListVarContext(TNode n, std::map<Node, Node>& context);
+ 
+-/**
+- * Get the null terminator for kind k and type node tn.
+- *
+- * Examples of null terminators:
+- *   false for (OR, bool)
+- *   true for (AND, bool)
+- *   (as seq.empty (Seq Int)) for (STRING_CONCAT, (Seq Int)
+- *   #x0 for (BITVECTOR_OR, (_ BitVec 4))
+- */
+-Node getNullTerminator(Kind k, TypeNode tn);
+-
+ /**
+  * Substitution with list semantics.
+  * Handles mixtures of list / non-list variables in vars.
+@@ -78,35 +67,6 @@ Node narySubstitute(Node src,
+                     const std::vector<Node>& subs,
+                     std::unordered_map<TNode, Node>& visited);
+ 
+-/**
+- * @param k A kind
+- * @return true if k is associative, commutative and idempotent.
+- */
+-bool isAssocCommIdem(Kind k);
+-/**
+- * @param k A kind
+- * @return true if k is associative.
+- */
+-bool isAssoc(Kind k);
+-/**
+- * Get the normal form of a that takes into account associativity,
+- * commutativity, and idempotency if applicable.
+- * This is used by ProofRule::NORM.
+- *
+- * @param a The term.
+- * @return its normal form.
+- */
+-Node getACINormalForm(Node a);
+-/**
+- * Return true if a and b can be shown equivalent by computing normal forms as
+- * above.
+- *
+- * @param a The first term
+- * @param b The second term
+- * @return true if a and b were successfully shown to be equal.
+- */
+-bool isACINorm(Node a, Node b);
+-
+ }  // namespace expr
+ }  // namespace cvc5::internal
+ 
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index 60ff996ae..17852b377 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -19,11 +19,11 @@
+ #include <iomanip>
+ #include <sstream>
+ 
++#include "expr/aci_norm.h"
+ #include "expr/array_store_all.h"
+ #include "expr/cardinality_constraint.h"
+ #include "expr/dtype.h"
+ #include "expr/dtype_cons.h"
+-#include "expr/nary_term_util.h"
+ #include "expr/sequence.h"
+ #include "printer/smt2/smt2_printer.h"
+ #include "theory/builtin/generic_op.h"
+diff --git a/src/proof/lfsc/lfsc_node_converter.cpp b/src/proof/lfsc/lfsc_node_converter.cpp
+index 6d987003b..e9109e86a 100644
+--- a/src/proof/lfsc/lfsc_node_converter.cpp
++++ b/src/proof/lfsc/lfsc_node_converter.cpp
+@@ -19,11 +19,11 @@
+ #include <iomanip>
+ #include <sstream>
+ 
++#include "expr/aci_norm.h"
+ #include "expr/array_store_all.h"
+ #include "expr/cardinality_constraint.h"
+ #include "expr/dtype.h"
+ #include "expr/dtype_cons.h"
+-#include "expr/nary_term_util.h"
+ #include "expr/sequence.h"
+ #include "expr/skolem_manager.h"
+ #include "printer/smt2/smt2_printer.h"
+diff --git a/src/proof/lfsc/lfsc_node_converter.h b/src/proof/lfsc/lfsc_node_converter.h
+index a080c6451..2d606bc6e 100644
+--- a/src/proof/lfsc/lfsc_node_converter.h
++++ b/src/proof/lfsc/lfsc_node_converter.h
+@@ -49,7 +49,7 @@ class LfscNodeConverter : public NodeConverter
+    *
+    * The returned null terminator is *not* converted to internal form.
+    *
+-   * For examples of null terminators, see nary_term_utils.h.
++   * For examples of null terminators, see aci_norm.h.
+    */
+   Node getNullTerminator(Kind k, TypeNode tn = TypeNode::null());
+   /**
+diff --git a/src/rewriter/basic_rewrite_rcons.cpp b/src/rewriter/basic_rewrite_rcons.cpp
+index 8a3f66437..dff46203a 100644
+--- a/src/rewriter/basic_rewrite_rcons.cpp
++++ b/src/rewriter/basic_rewrite_rcons.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "rewriter/basic_rewrite_rcons.h"
+ 
++#include "expr/aci_norm.h"
+ #include "expr/nary_term_util.h"
+ #include "expr/node_algorithm.h"
+ #include "expr/term_context.h"
+diff --git a/src/rewriter/rewrite_db_proof_cons.cpp b/src/rewriter/rewrite_db_proof_cons.cpp
+index efd32c55c..c70456290 100644
+--- a/src/rewriter/rewrite_db_proof_cons.cpp
++++ b/src/rewriter/rewrite_db_proof_cons.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include "rewriter/rewrite_db_proof_cons.h"
+ 
++#include "expr/aci_norm.h"
+ #include "expr/node_algorithm.h"
+ #include "options/proof_options.h"
+ #include "proof/proof_node_algorithm.h"
+diff --git a/src/rewriter/rewrite_db_term_process.cpp b/src/rewriter/rewrite_db_term_process.cpp
+index 4a5a2be2b..f0016e70a 100644
+--- a/src/rewriter/rewrite_db_term_process.cpp
++++ b/src/rewriter/rewrite_db_term_process.cpp
+@@ -15,10 +15,10 @@
+ 
+ #include "rewriter/rewrite_db_term_process.h"
+ 
++#include "expr/aci_norm.h"
+ #include "expr/attribute.h"
+ #include "expr/dtype.h"
+ #include "expr/dtype_cons.h"
+-#include "expr/nary_term_util.h"
+ #include "proof/conv_proof_generator.h"
+ #include "theory/builtin/generic_op.h"
+ #include "theory/bv/theory_bv_utils.h"
+diff --git a/src/rewriter/rewrite_proof_rule.cpp b/src/rewriter/rewrite_proof_rule.cpp
+index 2593deb88..b06c2996c 100644
+--- a/src/rewriter/rewrite_proof_rule.cpp
++++ b/src/rewriter/rewrite_proof_rule.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include <sstream>
+ 
++#include "expr/aci_norm.h"
+ #include "expr/nary_term_util.h"
+ #include "expr/node_algorithm.h"
+ #include "proof/proof_checker.h"
+diff --git a/src/theory/builtin/proof_checker.cpp b/src/theory/builtin/proof_checker.cpp
+index d9c790a02..1075167b2 100644
+--- a/src/theory/builtin/proof_checker.cpp
++++ b/src/theory/builtin/proof_checker.cpp
+@@ -15,7 +15,7 @@
+ 
+ #include "theory/builtin/proof_checker.h"
+ 
+-#include "expr/nary_term_util.h"
++#include "expr/aci_norm.h"
+ #include "expr/skolem_manager.h"
+ #include "rewriter/rewrite_db.h"
+ #include "rewriter/rewrite_db_term_process.h"
+-- 
+2.47.1
+

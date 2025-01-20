@@ -1,0 +1,165 @@
+From 40726ce3f4ea89675b96a30c28af774f4a206494 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 6 Nov 2024 08:13:06 -0600
+Subject: [PATCH 159/312] Add RARE rewrites for arith bv conversions (#11336)
+
+---
+ include/cvc5/cvc5_proof_rule.h                | 12 +++++++
+ proofs/eo/cpc/rules/Rewrites.eo               | 27 +++++++++++++++
+ src/theory/uf/rewrites                        | 33 ++++++++++++++-----
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/uf-conv-rewrites.smt2        | 18 ++++++++++
+ 5 files changed, 83 insertions(+), 8 deletions(-)
+ create mode 100644 test/regress/cli/regress0/uf-conv-rewrites.smt2
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index a5780c004..cb29ec389 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -3733,8 +3733,20 @@ enum ENUM(ProofRewriteRule)
+   EVALUE(EQ_COND_DEQ),
+   /** Auto-generated from RARE rule distinct-binary-elim */
+   EVALUE(DISTINCT_BINARY_ELIM),
++  /** Auto-generated from RARE rule uf-bv2nat-int2bv */
++  EVALUE(UF_BV2NAT_INT2BV),
++  /** Auto-generated from RARE rule uf-bv2nat-int2bv-extend */
++  EVALUE(UF_BV2NAT_INT2BV_EXTEND),
++  /** Auto-generated from RARE rule uf-bv2nat-int2bv-extract */
++  EVALUE(UF_BV2NAT_INT2BV_EXTRACT),
++  /** Auto-generated from RARE rule uf-int2bv-bv2nat */
++  EVALUE(UF_INT2BV_BV2NAT),
+   /** Auto-generated from RARE rule uf-bv2nat-geq-elim */
+   EVALUE(UF_BV2NAT_GEQ_ELIM),
++  /** Auto-generated from RARE rule uf-int2bv-bvult-equiv */
++  EVALUE(UF_INT2BV_BVULT_EQUIV),
++  /** Auto-generated from RARE rule uf-int2bv-bvule-equiv */
++  EVALUE(UF_INT2BV_BVULE_EQUIV),
+ // ${rules}$
+ #ifdef CVC5_API_USE_C_ENUMS
+   // must be last entry
+diff --git a/proofs/eo/cpc/rules/Rewrites.eo b/proofs/eo/cpc/rules/Rewrites.eo
+index 314e530da..00aaa1542 100644
+--- a/proofs/eo/cpc/rules/Rewrites.eo
++++ b/proofs/eo/cpc/rules/Rewrites.eo
+@@ -1894,8 +1894,35 @@
+   :args (t1 s1)
+   :conclusion (= (distinct t1 s1) (not (= t1 s1)))
+ )
++(declare-rule uf-bv2nat-int2bv ((@n0 Int) (w1 Int) (t1 (BitVec @n0)))
++  :premises ((= (@bvsize t1) w1))
++  :args (w1 t1)
++  :conclusion (= (int2bv w1 (bv2nat t1)) t1)
++)
++(declare-rule uf-bv2nat-int2bv-extend ((@n0 Int) (w1 Int) (t1 (BitVec @n0)) (n1 Int))
++  :premises ((= (> w1 (@bvsize t1)) true) (= n1 (- w1 (@bvsize t1))))
++  :args (w1 t1 n1)
++  :conclusion (= (int2bv w1 (bv2nat t1)) (concat (@bv 0 n1) t1))
++)
++(declare-rule uf-bv2nat-int2bv-extract ((@n0 Int) (w1 Int) (t1 (BitVec @n0)) (wm1 Int))
++  :premises ((= (< w1 (@bvsize t1)) true) (= wm1 (- w1 1)))
++  :args (w1 t1 wm1)
++  :conclusion (= (int2bv w1 (bv2nat t1)) (extract wm1 0 t1))
++)
++(declare-rule uf-int2bv-bv2nat ((w1 Int) (t1 Int))
++  :args (w1 t1)
++  :conclusion (= (bv2nat (int2bv w1 t1)) (mod_total t1 (int.pow2 w1)))
++)
+ (declare-rule uf-bv2nat-geq-elim ((@n0 Int) (x1 (BitVec @n0)) (n1 Int) (w1 Int))
+   :premises ((= w1 (@bvsize x1)))
+   :args (x1 n1 w1)
+   :conclusion (= (>= (bv2nat x1) n1) (ite (>= n1 w1) false (ite (< n1 0) true (bvuge x1 (int2bv w1 n1)))))
+ )
++(declare-rule uf-int2bv-bvult-equiv ((@n0 Int) (@n1 Int) (t1 (BitVec @n0)) (s1 (BitVec @n1)))
++  :args (t1 s1)
++  :conclusion (= (bvult t1 s1) (< (bv2nat t1) (bv2nat s1)))
++)
++(declare-rule uf-int2bv-bvule-equiv ((@n0 Int) (@n1 Int) (t1 (BitVec @n0)) (s1 (BitVec @n1)))
++  :args (t1 s1)
++  :conclusion (= (bvule t1 s1) (<= (bv2nat t1) (bv2nat s1)))
++)
+diff --git a/src/theory/uf/rewrites b/src/theory/uf/rewrites
+index 0f196b256..6ac90c346 100644
+--- a/src/theory/uf/rewrites
++++ b/src/theory/uf/rewrites
+@@ -12,17 +12,34 @@
+ 
+ ; bv to arith conversions
+ 
+-;(define-cond-rule uf-bv2nat-int2bv ((w Int) (t ?BitVec))
+-;  (= (bvsize t) w)
+-;  (int2bv w (bv2nat t))
+-;  t)
+-;
+-;(define-rule uf-int2bv-bv2nat ((w Int) (t Int))
+-;  (bv2nat (int2bv w t))
+-;  (mod t (^ 2 w)))
++(define-cond-rule uf-bv2nat-int2bv ((w Int) (t ?BitVec))
++  (= (@bvsize t) w)
++  (int2bv w (bv2nat t))
++  t)
+ 
++(define-cond-rule uf-bv2nat-int2bv-extend ((w Int) (t ?BitVec) (n Int))
++  (and (> w (@bvsize t)) (= n (- w (@bvsize t))))
++  (int2bv w (bv2nat t))
++  (concat (@bv 0 n) t))
++
++(define-cond-rule uf-bv2nat-int2bv-extract ((w Int) (t ?BitVec) (wm1 Int))
++  (and (< w (@bvsize t)) (= wm1 (- w 1)))
++  (int2bv w (bv2nat t))
++  (extract wm1 0 t))
++
++(define-rule uf-int2bv-bv2nat ((w Int) (t Int))
++  (bv2nat (int2bv w t))
++  (mod_total t (int.pow2 w)))
+ 
+ (define-cond-rule uf-bv2nat-geq-elim ((x ?BitVec) (n Int) (w Int))
+   (= w (@bvsize x))
+   (>= (bv2nat x) n)
+   (ite (>= n w) false (ite (< n 0) true (bvuge x (int2bv w n)))))
++
++(define-rule uf-int2bv-bvult-equiv ((t ?BitVec) (s ?BitVec))
++  (bvult t s)
++  (< (bv2nat t) (bv2nat s)))
++
++(define-rule uf-int2bv-bvule-equiv ((t ?BitVec) (s ?BitVec))
++  (bvule t s)
++  (<= (bv2nat t) (bv2nat s)))
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index d4c8b13b2..528957ac0 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -2003,6 +2003,7 @@ set(regress_0_tests
+   regress0/tptp/tptp_parser7.smt2
+   regress0/tptp/tptp_parser8.smt2
+   regress0/tptp/tptp_parser9.smt2
++  regress0/uf-conv-rewrites.smt2
+   regress0/uf/bool-pred-nested.smt2
+   regress0/uf/ccredesign-fuzz.smtv1.smt2
+   regress0/uf/cnf_abc.smt2
+diff --git a/test/regress/cli/regress0/uf-conv-rewrites.smt2 b/test/regress/cli/regress0/uf-conv-rewrites.smt2
+new file mode 100644
+index 000000000..3940a1e30
+--- /dev/null
++++ b/test/regress/cli/regress0/uf-conv-rewrites.smt2
+@@ -0,0 +1,18 @@
++; COMMAND-LINE: --eager-arith-bv-conv
++; EXPECT: unsat
++(set-logic ALL)
++
++(declare-const x (_ BitVec 3))
++(declare-const y (_ BitVec 5))
++
++
++(assert (or
++
++(not (= ((_ int2bv 4) (bv2nat x)) (concat #b0 x)))
++(not (= ((_ int2bv 4) (bv2nat y)) ((_ extract 3 0) y)))
++
++(not (= (bv2nat x) (bv2nat (concat #b0 x))))
++
++))
++
++(check-sat)
+-- 
+2.47.1
+

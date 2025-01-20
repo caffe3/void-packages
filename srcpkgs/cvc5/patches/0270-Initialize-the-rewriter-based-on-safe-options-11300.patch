@@ -1,0 +1,1137 @@
+From d7a5f90822a20681b236af127b8ef33d95ebd230 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 6 Jan 2025 15:08:09 -0600
+Subject: [PATCH 270/312] Initialize the rewriter based on safe-options
+ (#11300)
+
+Makes it so that the floating points, bags, separation logic and finite
+field theories do not provide a rewriter when they are disabled due to
+`--safe-options`.
+
+Makes it so that sets does not rewrite experimental arithmetic, set
+cardinality or relation terms when their corresponding extensions are
+disabled. Also makes arith operator elimination not reduce experimental
+arithmetic terms when `arith-exp` is false.
+---
+ src/theory/arith/arith_rewriter.cpp      |  99 +++--
+ src/theory/arith/arith_rewriter.h        |   9 +-
+ src/theory/arith/arith_utilities.cpp     |  24 +-
+ src/theory/arith/theory_arith.cpp        |   2 +-
+ src/theory/bags/theory_bags.cpp          |   9 +-
+ src/theory/ff/theory_ff.cpp              |   9 +-
+ src/theory/fp/theory_fp.cpp              |   9 +-
+ src/theory/rewriter.cpp                  |  10 +-
+ src/theory/rewriter.h                    |   2 +
+ src/theory/rewriter_tables_template.h    |   2 +-
+ src/theory/sep/theory_sep.cpp            |   9 +-
+ src/theory/sets/theory_sets.cpp          |   3 +-
+ src/theory/sets/theory_sets_rewriter.cpp | 533 +++++++++++++----------
+ src/theory/sets/theory_sets_rewriter.h   |  12 +-
+ src/theory/theory_rewriter.h             |  26 +-
+ 15 files changed, 484 insertions(+), 274 deletions(-)
+
+diff --git a/src/theory/arith/arith_rewriter.cpp b/src/theory/arith/arith_rewriter.cpp
+index b8a792e4c..c7a216f41 100644
+--- a/src/theory/arith/arith_rewriter.cpp
++++ b/src/theory/arith/arith_rewriter.cpp
+@@ -48,13 +48,16 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace arith {
+ 
+-ArithRewriter::ArithRewriter(NodeManager* nm, OperatorElim& oe)
+-    : TheoryRewriter(nm), d_opElim(oe)
++ArithRewriter::ArithRewriter(NodeManager* nm,
++                             OperatorElim& oe,
++                             bool expertEnabled)
++    : TheoryRewriter(nm), d_opElim(oe), d_expertEnabled(expertEnabled)
+ {
+   registerProofRewriteRule(ProofRewriteRule::ARITH_POW_ELIM,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::MACRO_ARITH_STRING_PRED_ENTAIL,
+                            TheoryRewriteCtx::DSL_SUBCALL);
++
+   // we don't register ARITH_STRING_PRED_ENTAIL or
+   // ARITH_STRING_PRED_SAFE_APPROX, as these are subsumed by
+   // MACRO_ARITH_STRING_PRED_ENTAIL.
+@@ -327,6 +330,11 @@ RewriteResponse ArithRewriter::preRewriteTerm(TNode t){
+       case Kind::POW2: return RewriteResponse(REWRITE_DONE, t);
+       case Kind::INTS_ISPOW2: return RewriteResponse(REWRITE_DONE, t);
+       case Kind::INTS_LOG2: return RewriteResponse(REWRITE_DONE, t);
++      case Kind::INTS_DIVISION:
++      case Kind::INTS_MODULUS: return rewriteIntsDivMod(t, true);
++      case Kind::INTS_DIVISION_TOTAL:
++      case Kind::INTS_MODULUS_TOTAL: return rewriteIntsDivModTotal(t, true);
++      case Kind::ABS: return rewriteAbs(t);
+       case Kind::EXPONENTIAL:
+       case Kind::SINE:
+       case Kind::COSINE:
+@@ -340,12 +348,7 @@ RewriteResponse ArithRewriter::preRewriteTerm(TNode t){
+       case Kind::ARCCOSECANT:
+       case Kind::ARCSECANT:
+       case Kind::ARCCOTANGENT:
+-      case Kind::SQRT: return preRewriteTranscendental(t);
+-      case Kind::INTS_DIVISION:
+-      case Kind::INTS_MODULUS: return rewriteIntsDivMod(t, true);
+-      case Kind::INTS_DIVISION_TOTAL:
+-      case Kind::INTS_MODULUS_TOTAL: return rewriteIntsDivModTotal(t, true);
+-      case Kind::ABS: return rewriteAbs(t);
++      case Kind::SQRT:
+       case Kind::IS_INTEGER:
+       case Kind::TO_INTEGER:
+       case Kind::TO_REAL:
+@@ -374,24 +377,8 @@ RewriteResponse ArithRewriter::postRewriteTerm(TNode t){
+       case Kind::ADD: return postRewritePlus(t);
+       case Kind::MULT:
+       case Kind::NONLINEAR_MULT: return postRewriteMult(t);
+-      case Kind::IAND: return postRewriteIAnd(t);
+-      case Kind::POW2: return postRewritePow2(t);
+       case Kind::INTS_ISPOW2: return postRewriteIntsIsPow2(t);
+       case Kind::INTS_LOG2: return postRewriteIntsLog2(t);
+-      case Kind::EXPONENTIAL:
+-      case Kind::SINE:
+-      case Kind::COSINE:
+-      case Kind::TANGENT:
+-      case Kind::COSECANT:
+-      case Kind::SECANT:
+-      case Kind::COTANGENT:
+-      case Kind::ARCSINE:
+-      case Kind::ARCCOSINE:
+-      case Kind::ARCTANGENT:
+-      case Kind::ARCCOSECANT:
+-      case Kind::ARCSECANT:
+-      case Kind::ARCCOTANGENT:
+-      case Kind::SQRT: return postRewriteTranscendental(t);
+       case Kind::INTS_DIVISION:
+       case Kind::INTS_MODULUS: return rewriteIntsDivMod(t, false);
+       case Kind::INTS_DIVISION_TOTAL:
+@@ -409,10 +396,54 @@ RewriteResponse ArithRewriter::postRewriteTerm(TNode t){
+         return RewriteResponse(REWRITE_DONE, t);
+       }
+       case Kind::PI: return RewriteResponse(REWRITE_DONE, t);
++      // expert cases
++      case Kind::EXPONENTIAL:
++      case Kind::SINE:
++      case Kind::COSINE:
++      case Kind::TANGENT:
++      case Kind::COSECANT:
++      case Kind::SECANT:
++      case Kind::COTANGENT:
++      case Kind::ARCSINE:
++      case Kind::ARCCOSINE:
++      case Kind::ARCTANGENT:
++      case Kind::ARCCOSECANT:
++      case Kind::ARCSECANT:
++      case Kind::ARCCOTANGENT:
++      case Kind::SQRT:
++      case Kind::IAND:
++      case Kind::POW2: return postRewriteExpert(t);
+       default: Unreachable();
+     }
+   }
+ }
++RewriteResponse ArithRewriter::postRewriteExpert(TNode t)
++{
++  if (!d_expertEnabled)
++  {
++    return RewriteResponse(REWRITE_DONE, t);
++  }
++  switch (t.getKind())
++  {
++    case Kind::EXPONENTIAL:
++    case Kind::SINE:
++    case Kind::COSINE:
++    case Kind::TANGENT:
++    case Kind::COSECANT:
++    case Kind::SECANT:
++    case Kind::COTANGENT:
++    case Kind::ARCSINE:
++    case Kind::ARCCOSINE:
++    case Kind::ARCTANGENT:
++    case Kind::ARCCOSECANT:
++    case Kind::ARCSECANT:
++    case Kind::ARCCOTANGENT:
++    case Kind::SQRT: return postRewriteTranscendental(t);
++    case Kind::IAND: return postRewriteIAnd(t);
++    case Kind::POW2: return postRewritePow2(t);
++    default: Unreachable();
++  }
++}
+ 
+ RewriteResponse ArithRewriter::rewriteRAN(TNode t)
+ {
+@@ -865,16 +896,19 @@ RewriteResponse ArithRewriter::rewriteExtIntegerOp(TNode t)
+     Node ret = isPred ? nm->mkConst(true) : Node(t[0]);
+     return returnRewrite(t, ret, Rewrite::INT_EXT_INT);
+   }
+-  if (t[0].getKind() == Kind::PI)
+-  {
+-    Node ret = isPred ? nm->mkConst(false) : nm->mkConstInt(Rational(3));
+-    return returnRewrite(t, ret, Rewrite::INT_EXT_PI);
+-  }
+-  else if (t[0].getKind() == Kind::TO_REAL)
++  if (t[0].getKind() == Kind::TO_REAL)
+   {
+     Node ret = nm->mkNode(t.getKind(), t[0][0]);
+     return returnRewrite(t, ret, Rewrite::INT_EXT_TO_REAL);
+   }
++  if (d_expertEnabled)
++  {
++    if (t[0].getKind() == Kind::PI)
++    {
++      Node ret = isPred ? nm->mkConst(false) : nm->mkConstInt(Rational(3));
++      return returnRewrite(t, ret, Rewrite::INT_EXT_PI);
++    }
++  }
+   return RewriteResponse(REWRITE_DONE, t);
+ }
+ 
+@@ -986,11 +1020,6 @@ RewriteResponse ArithRewriter::postRewriteIntsLog2(TNode t)
+   return RewriteResponse(REWRITE_DONE, t);
+ }
+ 
+-RewriteResponse ArithRewriter::preRewriteTranscendental(TNode t)
+-{
+-  return RewriteResponse(REWRITE_DONE, t);
+-}
+-
+ RewriteResponse ArithRewriter::postRewriteTranscendental(TNode t)
+ {
+   Trace("arith-tf-rewrite")
+diff --git a/src/theory/arith/arith_rewriter.h b/src/theory/arith/arith_rewriter.h
+index 0e72248ac..a6155d62d 100644
+--- a/src/theory/arith/arith_rewriter.h
++++ b/src/theory/arith/arith_rewriter.h
+@@ -33,7 +33,7 @@ class OperatorElim;
+ class ArithRewriter : public TheoryRewriter
+ {
+  public:
+-  ArithRewriter(NodeManager* nm, OperatorElim& oe);
++  ArithRewriter(NodeManager* nm, OperatorElim& oe, bool expertEnabled = true);
+   RewriteResponse preRewrite(TNode n) override;
+   RewriteResponse postRewrite(TNode n) override;
+   /**
+@@ -68,6 +68,9 @@ class ArithRewriter : public TheoryRewriter
+   /** postRewrite for terms */
+   RewriteResponse postRewriteTerm(TNode t);
+ 
++  /** Post-rewrites that are only available in expert mode */
++  RewriteResponse postRewriteExpert(TNode t);
++
+   /** rewrite real algebraic numbers */
+   RewriteResponse rewriteRAN(TNode t);
+   /** rewrite variables */
+@@ -108,8 +111,6 @@ class ArithRewriter : public TheoryRewriter
+   /** postRewrite INTS_LOG2 */
+   RewriteResponse postRewriteIntsLog2(TNode t);
+ 
+-  /** preRewrite transcendental functions */
+-  RewriteResponse preRewriteTranscendental(TNode t);
+   /** postRewrite transcendental functions */
+   RewriteResponse postRewriteTranscendental(TNode t);
+ 
+@@ -127,6 +128,8 @@ class ArithRewriter : public TheoryRewriter
+   Node rewriteIneqToBv(Kind k, const rewriter::Sum& sum, const Node& ineq);
+   /** The operator elimination utility */
+   OperatorElim& d_opElim;
++  /** Whether we permit reasoning about expert extensions of arithmetic */
++  bool d_expertEnabled;
+ }; /* class ArithRewriter */
+ 
+ }  // namespace arith
+diff --git a/src/theory/arith/arith_utilities.cpp b/src/theory/arith/arith_utilities.cpp
+index 9f5d0edb7..84b84ef06 100644
+--- a/src/theory/arith/arith_utilities.cpp
++++ b/src/theory/arith/arith_utilities.cpp
+@@ -120,10 +120,26 @@ Node mkOne(const TypeNode& tn, bool isNeg)
+ 
+ bool isTranscendentalKind(Kind k)
+ {
+-  // many operators are eliminated during rewriting
+-  Assert(k != Kind::TANGENT && k != Kind::COSINE && k != Kind::COSECANT
+-         && k != Kind::SECANT && k != Kind::COTANGENT);
+-  return k == Kind::EXPONENTIAL || k == Kind::SINE || k == Kind::PI;
++  switch (k)
++  {
++    case Kind::PI:
++    case Kind::EXPONENTIAL:
++    case Kind::SINE:
++    case Kind::COSINE:
++    case Kind::TANGENT:
++    case Kind::COSECANT:
++    case Kind::SECANT:
++    case Kind::COTANGENT:
++    case Kind::ARCSINE:
++    case Kind::ARCCOSINE:
++    case Kind::ARCTANGENT:
++    case Kind::ARCCOSECANT:
++    case Kind::ARCSECANT:
++    case Kind::ARCCOTANGENT:
++    case Kind::SQRT: return true;
++    default: break;
++  }
++  return false;
+ }
+ 
+ Node getApproximateConstant(Node c, bool isLower, unsigned prec)
+diff --git a/src/theory/arith/theory_arith.cpp b/src/theory/arith/theory_arith.cpp
+index 4dd3fad92..e9aa2eee1 100644
+--- a/src/theory/arith/theory_arith.cpp
++++ b/src/theory/arith/theory_arith.cpp
+@@ -50,7 +50,7 @@ TheoryArith::TheoryArith(Env& env, OutputChannel& out, Valuation valuation)
+       d_nonlinearExtension(nullptr),
+       d_opElim(d_env),
+       d_arithPreproc(env, d_im, d_opElim),
+-      d_rewriter(nodeManager(), d_opElim),
++      d_rewriter(nodeManager(), d_opElim, options().arith.arithExp),
+       d_arithModelCacheSet(false),
+       d_checker(nodeManager())
+ {
+diff --git a/src/theory/bags/theory_bags.cpp b/src/theory/bags/theory_bags.cpp
+index a7320360d..2ee1dba61 100644
+--- a/src/theory/bags/theory_bags.cpp
++++ b/src/theory/bags/theory_bags.cpp
+@@ -52,7 +52,14 @@ TheoryBags::TheoryBags(Env& env, OutputChannel& out, Valuation valuation)
+ 
+ TheoryBags::~TheoryBags() {}
+ 
+-TheoryRewriter* TheoryBags::getTheoryRewriter() { return &d_rewriter; }
++TheoryRewriter* TheoryBags::getTheoryRewriter()
++{
++  if (!options().bags.bags)
++  {
++    return nullptr;
++  }
++  return &d_rewriter;
++}
+ 
+ ProofRuleChecker* TheoryBags::getProofChecker() { return nullptr; }
+ 
+diff --git a/src/theory/ff/theory_ff.cpp b/src/theory/ff/theory_ff.cpp
+index b3ec2b3cf..6939e2f90 100644
+--- a/src/theory/ff/theory_ff.cpp
++++ b/src/theory/ff/theory_ff.cpp
+@@ -67,7 +67,14 @@ TheoryFiniteFields::TheoryFiniteFields(Env& env,
+ 
+ TheoryFiniteFields::~TheoryFiniteFields() {}
+ 
+-TheoryRewriter* TheoryFiniteFields::getTheoryRewriter() { return &d_rewriter; }
++TheoryRewriter* TheoryFiniteFields::getTheoryRewriter()
++{
++  if (!options().ff.ff)
++  {
++    return nullptr;
++  }
++  return &d_rewriter;
++}
+ 
+ ProofRuleChecker* TheoryFiniteFields::getProofChecker() { return nullptr; }
+ 
+diff --git a/src/theory/fp/theory_fp.cpp b/src/theory/fp/theory_fp.cpp
+index 6a1eb4d8a..b9acef179 100644
+--- a/src/theory/fp/theory_fp.cpp
++++ b/src/theory/fp/theory_fp.cpp
+@@ -57,7 +57,14 @@ TheoryFp::TheoryFp(Env& env, OutputChannel& out, Valuation valuation)
+   d_inferManager = &d_im;
+ }
+ 
+-TheoryRewriter* TheoryFp::getTheoryRewriter() { return &d_rewriter; }
++TheoryRewriter* TheoryFp::getTheoryRewriter()
++{
++  if (!options().fp.fp)
++  {
++    return nullptr;
++  }
++  return &d_rewriter;
++}
+ 
+ ProofRuleChecker* TheoryFp::getProofChecker() { return nullptr; }
+ 
+diff --git a/src/theory/rewriter.cpp b/src/theory/rewriter.cpp
+index 82c647311..a80eefa16 100644
+--- a/src/theory/rewriter.cpp
++++ b/src/theory/rewriter.cpp
+@@ -142,7 +142,15 @@ Node Rewriter::rewriteEqualityExt(TNode node)
+ void Rewriter::registerTheoryRewriter(theory::TheoryId tid,
+                                       TheoryRewriter* trew)
+ {
+-  d_theoryRewriters[tid] = trew;
++  if (trew == nullptr)
++  {
++    // if nullptr, use the default (null) theory rewriter.
++    d_theoryRewriters[tid] = &d_nullTr;
++  }
++  else
++  {
++    d_theoryRewriters[tid] = trew;
++  }
+ }
+ 
+ TheoryRewriter* Rewriter::getTheoryRewriter(theory::TheoryId theoryId)
+diff --git a/src/theory/rewriter.h b/src/theory/rewriter.h
+index dd0445368..5495f08c6 100644
+--- a/src/theory/rewriter.h
++++ b/src/theory/rewriter.h
+@@ -176,6 +176,8 @@ class Rewriter {
+ 
+   /** Theory rewriters used by this rewriter instance */
+   TheoryRewriter* d_theoryRewriters[theory::THEORY_LAST];
++  /** No-op theory rewriter, used when theory does not provide a rewriter */
++  NoOpTheoryRewriter d_nullTr;
+ 
+   /** The proof generator */
+   std::unique_ptr<TConvProofGenerator> d_tpg;
+diff --git a/src/theory/rewriter_tables_template.h b/src/theory/rewriter_tables_template.h
+index 2fb5cdf6a..ed069dca4 100644
+--- a/src/theory/rewriter_tables_template.h
++++ b/src/theory/rewriter_tables_template.h
+@@ -81,7 +81,7 @@ ${post_rewrite_set_cache}
+ }
+ 
+ Rewriter::Rewriter(NodeManager* nm)
+-    : d_nm(nm), d_resourceManager(nullptr), d_tpg(nullptr)
++    : d_nm(nm), d_resourceManager(nullptr), d_nullTr(nm), d_tpg(nullptr)
+ {
+ }
+ 
+diff --git a/src/theory/sep/theory_sep.cpp b/src/theory/sep/theory_sep.cpp
+index 422fa8025..ad23fc978 100644
+--- a/src/theory/sep/theory_sep.cpp
++++ b/src/theory/sep/theory_sep.cpp
+@@ -89,7 +89,14 @@ void TheorySep::initializeHeapTypes()
+   }
+ }
+ 
+-TheoryRewriter* TheorySep::getTheoryRewriter() { return &d_rewriter; }
++TheoryRewriter* TheorySep::getTheoryRewriter()
++{
++  if (!options().sep.sep)
++  {
++    return nullptr;
++  }
++  return &d_rewriter;
++}
+ 
+ ProofRuleChecker* TheorySep::getProofChecker() { return nullptr; }
+ 
+diff --git a/src/theory/sets/theory_sets.cpp b/src/theory/sets/theory_sets.cpp
+index f2d6b5c96..34e5ddc8c 100644
+--- a/src/theory/sets/theory_sets.cpp
++++ b/src/theory/sets/theory_sets.cpp
+@@ -32,7 +32,8 @@ TheorySets::TheorySets(Env& env, OutputChannel& out, Valuation valuation)
+     : Theory(THEORY_SETS, env, out, valuation),
+       d_skCache(env.getNodeManager(), env.getRewriter()),
+       d_state(env, valuation, d_skCache),
+-      d_rewriter(nodeManager()),
++      d_rewriter(
++          nodeManager(), options().sets.setsCardExp, options().sets.relsExp),
+       d_im(env, *this, &d_rewriter, d_state),
+       d_cpacb(*this),
+       d_internal(
+diff --git a/src/theory/sets/theory_sets_rewriter.cpp b/src/theory/sets/theory_sets_rewriter.cpp
+index 78c09c550..5d7f38e2d 100644
+--- a/src/theory/sets/theory_sets_rewriter.cpp
++++ b/src/theory/sets/theory_sets_rewriter.cpp
+@@ -25,6 +25,7 @@
+ #include "theory/sets/normal_form.h"
+ #include "theory/sets/rels_utils.h"
+ #include "theory/sets/set_reduction.h"
++#include "theory/sets/theory_sets_rels.h"
+ #include "util/rational.h"
+ 
+ using namespace cvc5::internal::kind;
+@@ -34,7 +35,10 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace sets {
+ 
+-TheorySetsRewriter::TheorySetsRewriter(NodeManager* nm) : TheoryRewriter(nm)
++TheorySetsRewriter::TheorySetsRewriter(NodeManager* nm,
++                                       bool cardEnabled,
++                                       bool relsEnabled)
++    : TheoryRewriter(nm), d_cardEnabled(cardEnabled), d_relsEnabled(relsEnabled)
+ {
+   // Needs to be a subcall in DSL reconstruction since set.is_empty is used
+   // as a premise to test emptiness of a set.
+@@ -314,6 +318,11 @@ RewriteResponse TheorySetsRewriter::postRewrite(TNode node) {
+   }
+   case Kind::SET_CARD:
+   {
++    // if cardinality not enabled, do not rewrite
++    if (!d_cardEnabled)
++    {
++      return RewriteResponse(REWRITE_DONE, node);
++    }
+     if(node[0].isConst()) {
+       std::set<Node> elements = NormalForm::getElementsFromNormalConstant(node[0]);
+       return RewriteResponse(REWRITE_DONE,
+@@ -394,272 +403,356 @@ RewriteResponse TheorySetsRewriter::postRewrite(TNode node) {
+ 
+   case Kind::SET_COMPREHENSION: return postRewriteComprehension(node); break;
+ 
+-  case Kind::RELATION_TABLE_JOIN: return postRewriteTableJoin(node); break;
+   case Kind::SET_MAP: return postRewriteMap(node);
+   case Kind::SET_FILTER: return postRewriteFilter(node);
+   case Kind::SET_ALL: return postRewriteAll(node);
+   case Kind::SET_SOME: return postRewriteSome(node);
+   case Kind::SET_FOLD: return postRewriteFold(node);
+-
++  case Kind::RELATION_TABLE_JOIN:
+   case Kind::RELATION_TRANSPOSE:
+-  {
+-    if (node[0].getKind() == Kind::RELATION_TRANSPOSE)
+-    {
+-      return RewriteResponse(REWRITE_AGAIN, node[0][0]);
+-    }
+-
+-    if (node[0].getKind() == Kind::SET_EMPTY)
+-    {
+-      return RewriteResponse(REWRITE_DONE,
+-                             nm->mkConst(EmptySet(node.getType())));
+-    }
+-    else if (node[0].isConst())
+-    {
+-      std::set<Node> new_tuple_set;
+-      std::set<Node> tuple_set = NormalForm::getElementsFromNormalConstant(node[0]);
+-      std::set<Node>::iterator tuple_it = tuple_set.begin();
+-
+-      while(tuple_it != tuple_set.end()) {
+-        new_tuple_set.insert(TupleUtils::reverseTuple(*tuple_it));
+-        ++tuple_it;
+-      }
+-      Node new_node = NormalForm::elementsToSet(new_tuple_set, node.getType());
+-      Assert(new_node.isConst());
+-      Trace("sets-postrewrite") << "Sets::postRewrite returning " << new_node << std::endl;
+-      return RewriteResponse(REWRITE_DONE, new_node);
+-    }
+-    if (node[0].getKind() != Kind::RELATION_TRANSPOSE)
++  case Kind::RELATION_PRODUCT:
++  case Kind::RELATION_JOIN:
++  case Kind::RELATION_TCLOSURE:
++  case Kind::RELATION_IDEN:
++  case Kind::RELATION_JOIN_IMAGE:
++  case Kind::RELATION_GROUP:
++  case Kind::RELATION_AGGREGATE:
++  case Kind::RELATION_PROJECT:
++    // maybe a relation kind?
++    if (d_relsEnabled)
+     {
+-      Trace("sets-postrewrite") << "Sets::postRewrite returning " << node << std::endl;
+-      return RewriteResponse(REWRITE_DONE, node);
++      return postRewriteRelations(node);
+     }
+     break;
++  default: break;
+   }
+ 
+-  case Kind::RELATION_PRODUCT:
++  return RewriteResponse(REWRITE_DONE, node);
++}
++
++RewriteResponse TheorySetsRewriter::postRewriteRelations(TNode node)
++{
++  NodeManager* nm = nodeManager();
++  Kind kind = node.getKind();
++  switch (kind)
+   {
+-    Trace("sets-rels-postrewrite") << "Sets::postRewrite processing " <<  node << std::endl;
+-    if (node[0].getKind() == Kind::SET_EMPTY
+-        || node[1].getKind() == Kind::SET_EMPTY)
++    case Kind::RELATION_TABLE_JOIN: return postRewriteTableJoin(node); break;
++    case Kind::RELATION_TRANSPOSE:
+     {
+-      return RewriteResponse(REWRITE_DONE,
+-                             nm->mkConst(EmptySet(node.getType())));
+-    }
+-    else if (node[0].isConst() && node[1].isConst())
+-    {
+-      Trace("sets-rels-postrewrite") << "Sets::postRewrite processing **** " <<  node << std::endl;
+-      std::set<Node> new_tuple_set;
+-      std::set<Node> left = NormalForm::getElementsFromNormalConstant(node[0]);
+-      std::set<Node> right = NormalForm::getElementsFromNormalConstant(node[1]);
+-      std::set<Node>::iterator left_it = left.begin();
+-      int left_len = (*left_it).getType().getTupleLength();
+-      TypeNode tn = node.getType().getSetElementType();
+-      while(left_it != left.end()) {
+-        Trace("rels-debug") << "Sets::postRewrite processing left_it = " <<  *left_it << std::endl;
+-        std::vector<Node> left_tuple;
+-        left_tuple.push_back(tn.getDType()[0].getConstructor());
+-        for(int i = 0; i < left_len; i++) {
+-          left_tuple.push_back(TupleUtils::nthElementOfTuple(*left_it,i));
+-        }
+-        std::set<Node>::iterator right_it = right.begin();
+-        int right_len = (*right_it).getType().getTupleLength();
+-        while(right_it != right.end()) {
+-          Trace("rels-debug") << "Sets::postRewrite processing right_it = " <<  *right_it << std::endl;
+-          std::vector<Node> right_tuple;
+-          for(int j = 0; j < right_len; j++) {
+-            right_tuple.push_back(TupleUtils::nthElementOfTuple(*right_it,j));
+-          }
+-          std::vector<Node> new_tuple;
+-          new_tuple.insert(new_tuple.end(), left_tuple.begin(), left_tuple.end());
+-          new_tuple.insert(new_tuple.end(), right_tuple.begin(), right_tuple.end());
+-          Node composed_tuple =
+-              nodeManager()->mkNode(Kind::APPLY_CONSTRUCTOR, new_tuple);
+-          new_tuple_set.insert(composed_tuple);
+-          ++right_it;
++      if (node[0].getKind() == Kind::RELATION_TRANSPOSE)
++      {
++        return RewriteResponse(REWRITE_AGAIN, node[0][0]);
++      }
++
++      if (node[0].getKind() == Kind::SET_EMPTY)
++      {
++        return RewriteResponse(REWRITE_DONE,
++                               nm->mkConst(EmptySet(node.getType())));
++      }
++      else if (node[0].isConst())
++      {
++        std::set<Node> new_tuple_set;
++        std::set<Node> tuple_set =
++            NormalForm::getElementsFromNormalConstant(node[0]);
++        std::set<Node>::iterator tuple_it = tuple_set.begin();
++
++        while (tuple_it != tuple_set.end())
++        {
++          new_tuple_set.insert(TupleUtils::reverseTuple(*tuple_it));
++          ++tuple_it;
+         }
+-        ++left_it;
++        Node new_node =
++            NormalForm::elementsToSet(new_tuple_set, node.getType());
++        Assert(new_node.isConst());
++        Trace("sets-postrewrite")
++            << "Sets::postRewrite returning " << new_node << std::endl;
++        return RewriteResponse(REWRITE_DONE, new_node);
+       }
+-      Node new_node = NormalForm::elementsToSet(new_tuple_set, node.getType());
+-      Assert(new_node.isConst());
+-      Trace("sets-postrewrite") << "Sets::postRewrite returning " << new_node << std::endl;
+-      return RewriteResponse(REWRITE_DONE, new_node);
++      if (node[0].getKind() != Kind::RELATION_TRANSPOSE)
++      {
++        Trace("sets-postrewrite")
++            << "Sets::postRewrite returning " << node << std::endl;
++        return RewriteResponse(REWRITE_DONE, node);
++      }
++      break;
+     }
+-    break;
+-  }
+ 
+-  case Kind::RELATION_JOIN:
+-  {
+-    if (node[0].getKind() == Kind::SET_EMPTY
+-        || node[1].getKind() == Kind::SET_EMPTY)
++    case Kind::RELATION_PRODUCT:
+     {
+-      return RewriteResponse(REWRITE_DONE,
+-                             nm->mkConst(EmptySet(node.getType())));
+-    }
+-    else if (node[0].isConst() && node[1].isConst())
+-    {
+-      Trace("sets-rels-postrewrite") << "Sets::postRewrite processing " <<  node << std::endl;
+-      std::set<Node> new_tuple_set;
+-      std::set<Node> left = NormalForm::getElementsFromNormalConstant(node[0]);
+-      std::set<Node> right = NormalForm::getElementsFromNormalConstant(node[1]);
+-      std::set<Node>::iterator left_it = left.begin();
+-      int left_len = (*left_it).getType().getTupleLength();
+-      TypeNode tn = node.getType().getSetElementType();
+-      while(left_it != left.end()) {
+-        std::vector<Node> left_tuple;
+-        left_tuple.push_back(tn.getDType()[0].getConstructor());
+-        for(int i = 0; i < left_len - 1; i++) {
+-          left_tuple.push_back(TupleUtils::nthElementOfTuple(*left_it,i));
+-        }
+-        std::set<Node>::iterator right_it = right.begin();
+-        int right_len = (*right_it).getType().getTupleLength();
+-        while(right_it != right.end()) {
+-          if(TupleUtils::nthElementOfTuple(*left_it,left_len-1) == TupleUtils::nthElementOfTuple(*right_it,0)) {
++      Trace("sets-rels-postrewrite")
++          << "Sets::postRewrite processing " << node << std::endl;
++      if (node[0].getKind() == Kind::SET_EMPTY
++          || node[1].getKind() == Kind::SET_EMPTY)
++      {
++        return RewriteResponse(REWRITE_DONE,
++                               nm->mkConst(EmptySet(node.getType())));
++      }
++      else if (node[0].isConst() && node[1].isConst())
++      {
++        Trace("sets-rels-postrewrite")
++            << "Sets::postRewrite processing **** " << node << std::endl;
++        std::set<Node> new_tuple_set;
++        std::set<Node> left =
++            NormalForm::getElementsFromNormalConstant(node[0]);
++        std::set<Node> right =
++            NormalForm::getElementsFromNormalConstant(node[1]);
++        std::set<Node>::iterator left_it = left.begin();
++        int left_len = (*left_it).getType().getTupleLength();
++        TypeNode tn = node.getType().getSetElementType();
++        while (left_it != left.end())
++        {
++          Trace("rels-debug")
++              << "Sets::postRewrite processing left_it = " << *left_it
++              << std::endl;
++          std::vector<Node> left_tuple;
++          left_tuple.push_back(tn.getDType()[0].getConstructor());
++          for (int i = 0; i < left_len; i++)
++          {
++            left_tuple.push_back(TupleUtils::nthElementOfTuple(*left_it, i));
++          }
++          std::set<Node>::iterator right_it = right.begin();
++          int right_len = (*right_it).getType().getTupleLength();
++          while (right_it != right.end())
++          {
++            Trace("rels-debug")
++                << "Sets::postRewrite processing right_it = " << *right_it
++                << std::endl;
+             std::vector<Node> right_tuple;
+-            for(int j = 1; j < right_len; j++) {
++            for (int j = 0; j < right_len; j++)
++            {
+               right_tuple.push_back(
+-                  TupleUtils::nthElementOfTuple(*right_it,j));
++                  TupleUtils::nthElementOfTuple(*right_it, j));
+             }
+             std::vector<Node> new_tuple;
+-            new_tuple.insert(new_tuple.end(), left_tuple.begin(), left_tuple.end());
+-            new_tuple.insert(new_tuple.end(), right_tuple.begin(), right_tuple.end());
++            new_tuple.insert(
++                new_tuple.end(), left_tuple.begin(), left_tuple.end());
++            new_tuple.insert(
++                new_tuple.end(), right_tuple.begin(), right_tuple.end());
+             Node composed_tuple =
+                 nodeManager()->mkNode(Kind::APPLY_CONSTRUCTOR, new_tuple);
+             new_tuple_set.insert(composed_tuple);
++            ++right_it;
+           }
+-          ++right_it;
++          ++left_it;
+         }
+-        ++left_it;
++        Node new_node =
++            NormalForm::elementsToSet(new_tuple_set, node.getType());
++        Assert(new_node.isConst());
++        Trace("sets-postrewrite")
++            << "Sets::postRewrite returning " << new_node << std::endl;
++        return RewriteResponse(REWRITE_DONE, new_node);
+       }
+-      Node new_node = NormalForm::elementsToSet(new_tuple_set, node.getType());
+-      Assert(new_node.isConst());
+-      Trace("sets-postrewrite") << "Sets::postRewrite returning " << new_node << std::endl;
+-      return RewriteResponse(REWRITE_DONE, new_node);
++      break;
+     }
+ 
+-    break;
+-  }
+-
+-  case Kind::RELATION_TCLOSURE:
+-  {
+-    if (node[0].getKind() == Kind::SET_EMPTY)
++    case Kind::RELATION_JOIN:
+     {
+-      return RewriteResponse(REWRITE_DONE,
+-                             nm->mkConst(EmptySet(node.getType())));
+-    }
+-    else if (node[0].isConst())
+-    {
+-      std::set<Node> rel_mems = NormalForm::getElementsFromNormalConstant(node[0]);
+-      std::set<Node> tc_rel_mems = RelsUtils::computeTC(rel_mems, node);
+-      Node new_node = NormalForm::elementsToSet(tc_rel_mems, node.getType());
+-      Assert(new_node.isConst());
+-      Trace("sets-postrewrite") << "Sets::postRewrite returning " << new_node << std::endl;
+-      return RewriteResponse(REWRITE_DONE, new_node);
+-    }
+-    else if (node[0].getKind() == Kind::RELATION_TCLOSURE)
+-    {
+-      return RewriteResponse(REWRITE_AGAIN, node[0]);
+-    }
+-    else if (node[0].getKind() != Kind::RELATION_TCLOSURE)
+-    {
+-      Trace("sets-postrewrite") << "Sets::postRewrite returning " << node << std::endl;
+-      return RewriteResponse(REWRITE_DONE, node);
+-    }
+-    break;
+-  }
++      if (node[0].getKind() == Kind::SET_EMPTY
++          || node[1].getKind() == Kind::SET_EMPTY)
++      {
++        return RewriteResponse(REWRITE_DONE,
++                               nm->mkConst(EmptySet(node.getType())));
++      }
++      else if (node[0].isConst() && node[1].isConst())
++      {
++        Trace("sets-rels-postrewrite")
++            << "Sets::postRewrite processing " << node << std::endl;
++        std::set<Node> new_tuple_set;
++        std::set<Node> left =
++            NormalForm::getElementsFromNormalConstant(node[0]);
++        std::set<Node> right =
++            NormalForm::getElementsFromNormalConstant(node[1]);
++        std::set<Node>::iterator left_it = left.begin();
++        int left_len = (*left_it).getType().getTupleLength();
++        TypeNode tn = node.getType().getSetElementType();
++        while (left_it != left.end())
++        {
++          std::vector<Node> left_tuple;
++          left_tuple.push_back(tn.getDType()[0].getConstructor());
++          for (int i = 0; i < left_len - 1; i++)
++          {
++            left_tuple.push_back(TupleUtils::nthElementOfTuple(*left_it, i));
++          }
++          std::set<Node>::iterator right_it = right.begin();
++          int right_len = (*right_it).getType().getTupleLength();
++          while (right_it != right.end())
++          {
++            if (TupleUtils::nthElementOfTuple(*left_it, left_len - 1)
++                == TupleUtils::nthElementOfTuple(*right_it, 0))
++            {
++              std::vector<Node> right_tuple;
++              for (int j = 1; j < right_len; j++)
++              {
++                right_tuple.push_back(
++                    TupleUtils::nthElementOfTuple(*right_it, j));
++              }
++              std::vector<Node> new_tuple;
++              new_tuple.insert(
++                  new_tuple.end(), left_tuple.begin(), left_tuple.end());
++              new_tuple.insert(
++                  new_tuple.end(), right_tuple.begin(), right_tuple.end());
++              Node composed_tuple =
++                  nodeManager()->mkNode(Kind::APPLY_CONSTRUCTOR, new_tuple);
++              new_tuple_set.insert(composed_tuple);
++            }
++            ++right_it;
++          }
++          ++left_it;
++        }
++        Node new_node =
++            NormalForm::elementsToSet(new_tuple_set, node.getType());
++        Assert(new_node.isConst());
++        Trace("sets-postrewrite")
++            << "Sets::postRewrite returning " << new_node << std::endl;
++        return RewriteResponse(REWRITE_DONE, new_node);
++      }
+ 
+-  case Kind::RELATION_IDEN:
+-  {
+-    if (node[0].getKind() == Kind::SET_EMPTY)
+-    {
+-      return RewriteResponse(REWRITE_DONE,
+-                             nm->mkConst(EmptySet(node.getType())));
++      break;
+     }
+-    else if (node[0].isConst())
+-    {
+-      std::set<Node> iden_rel_mems;
+-      std::set<Node> rel_mems = NormalForm::getElementsFromNormalConstant(node[0]);
+-      std::set<Node>::iterator rel_mems_it = rel_mems.begin();
+ 
+-      while( rel_mems_it != rel_mems.end() ) {
+-        Node fst_mem = TupleUtils::nthElementOfTuple( *rel_mems_it, 0);
+-        iden_rel_mems.insert(RelsUtils::constructPair(node, fst_mem, fst_mem));
+-        ++rel_mems_it;
++    case Kind::RELATION_TCLOSURE:
++    {
++      if (node[0].getKind() == Kind::SET_EMPTY)
++      {
++        return RewriteResponse(REWRITE_DONE,
++                               nm->mkConst(EmptySet(node.getType())));
+       }
+-
+-      Node new_node = NormalForm::elementsToSet(iden_rel_mems, node.getType());
+-      Assert(new_node.isConst());
+-      Trace("rels-postrewrite") << "Rels::postRewrite returning " << new_node << std::endl;
+-      return RewriteResponse(REWRITE_DONE, new_node);
++      else if (node[0].isConst())
++      {
++        std::set<Node> rel_mems =
++            NormalForm::getElementsFromNormalConstant(node[0]);
++        std::set<Node> tc_rel_mems = RelsUtils::computeTC(rel_mems, node);
++        Node new_node = NormalForm::elementsToSet(tc_rel_mems, node.getType());
++        Assert(new_node.isConst());
++        Trace("sets-postrewrite")
++            << "Sets::postRewrite returning " << new_node << std::endl;
++        return RewriteResponse(REWRITE_DONE, new_node);
++      }
++      else if (node[0].getKind() == Kind::RELATION_TCLOSURE)
++      {
++        return RewriteResponse(REWRITE_AGAIN, node[0]);
++      }
++      else if (node[0].getKind() != Kind::RELATION_TCLOSURE)
++      {
++        Trace("sets-postrewrite")
++            << "Sets::postRewrite returning " << node << std::endl;
++        return RewriteResponse(REWRITE_DONE, node);
++      }
++      break;
+     }
+-    else
++
++    case Kind::RELATION_IDEN:
+     {
+-      Trace("rels-postrewrite") << "Rels::postRewrite miss to handle term " << node << std::endl;
+-    }
+-    break;
+-  }
++      if (node[0].getKind() == Kind::SET_EMPTY)
++      {
++        return RewriteResponse(REWRITE_DONE,
++                               nm->mkConst(EmptySet(node.getType())));
++      }
++      else if (node[0].isConst())
++      {
++        std::set<Node> iden_rel_mems;
++        std::set<Node> rel_mems =
++            NormalForm::getElementsFromNormalConstant(node[0]);
++        std::set<Node>::iterator rel_mems_it = rel_mems.begin();
+ 
+-  case Kind::RELATION_JOIN_IMAGE:
+-  {
+-    unsigned int min_card = node[1].getConst<Rational>().getNumerator().getUnsignedInt();
+-    Trace("rels-postrewrite") << "Rels::postRewrite  " << node << " with min_card = " << min_card << std::endl;
++        while (rel_mems_it != rel_mems.end())
++        {
++          Node fst_mem = TupleUtils::nthElementOfTuple(*rel_mems_it, 0);
++          iden_rel_mems.insert(
++              RelsUtils::constructPair(node, fst_mem, fst_mem));
++          ++rel_mems_it;
++        }
+ 
+-    if( min_card == 0) {
+-      return RewriteResponse(
+-          REWRITE_DONE,
+-          nm->mkNullaryOperator(node.getType(), Kind::SET_UNIVERSE));
+-    }
+-    else if (node[0].getKind() == Kind::SET_EMPTY)
+-    {
+-      return RewriteResponse(REWRITE_DONE,
+-                             nm->mkConst(EmptySet(node.getType())));
++        Node new_node =
++            NormalForm::elementsToSet(iden_rel_mems, node.getType());
++        Assert(new_node.isConst());
++        Trace("rels-postrewrite")
++            << "Rels::postRewrite returning " << new_node << std::endl;
++        return RewriteResponse(REWRITE_DONE, new_node);
++      }
++      else
++      {
++        Trace("rels-postrewrite")
++            << "Rels::postRewrite miss to handle term " << node << std::endl;
++      }
++      break;
+     }
+-    else if (node[0].isConst())
++
++    case Kind::RELATION_JOIN_IMAGE:
+     {
+-      std::set<Node> has_checked;
+-      std::set<Node> join_img_mems;
+-      std::set<Node> rel_mems = NormalForm::getElementsFromNormalConstant(node[0]);
+-      std::set<Node>::iterator rel_mems_it = rel_mems.begin();
++      unsigned int min_card =
++          node[1].getConst<Rational>().getNumerator().getUnsignedInt();
++      Trace("rels-postrewrite") << "Rels::postRewrite  " << node
++                                << " with min_card = " << min_card << std::endl;
+ 
+-      while( rel_mems_it != rel_mems.end() ) {
+-        Node fst_mem = TupleUtils::nthElementOfTuple( *rel_mems_it, 0);
+-        if( has_checked.find( fst_mem ) != has_checked.end() ) {
+-          ++rel_mems_it;
+-          continue;
+-        }
+-        has_checked.insert( fst_mem );
+-        std::set<Node> existing_mems;
+-        std::set<Node>::iterator rel_mems_it_snd = rel_mems.begin();
+-        while( rel_mems_it_snd != rel_mems.end() ) {
+-          Node fst_mem_snd = TupleUtils::nthElementOfTuple( *rel_mems_it_snd, 0);
+-          if( fst_mem == fst_mem_snd ) {
+-            existing_mems.insert(
+-                TupleUtils::nthElementOfTuple( *rel_mems_it_snd, 1) );
++      if (min_card == 0)
++      {
++        return RewriteResponse(
++            REWRITE_DONE,
++            nm->mkNullaryOperator(node.getType(), Kind::SET_UNIVERSE));
++      }
++      else if (node[0].getKind() == Kind::SET_EMPTY)
++      {
++        return RewriteResponse(REWRITE_DONE,
++                               nm->mkConst(EmptySet(node.getType())));
++      }
++      else if (node[0].isConst())
++      {
++        std::set<Node> has_checked;
++        std::set<Node> join_img_mems;
++        std::set<Node> rel_mems =
++            NormalForm::getElementsFromNormalConstant(node[0]);
++        std::set<Node>::iterator rel_mems_it = rel_mems.begin();
++
++        while (rel_mems_it != rel_mems.end())
++        {
++          Node fst_mem = TupleUtils::nthElementOfTuple(*rel_mems_it, 0);
++          if (has_checked.find(fst_mem) != has_checked.end())
++          {
++            ++rel_mems_it;
++            continue;
+           }
+-          ++rel_mems_it_snd;
+-        }
+-        if( existing_mems.size() >= min_card ) {
+-          const DType& dt = node.getType().getSetElementType().getDType();
+-          join_img_mems.insert(nm->mkNode(
+-              Kind::APPLY_CONSTRUCTOR, dt[0].getConstructor(), fst_mem));
++          has_checked.insert(fst_mem);
++          std::set<Node> existing_mems;
++          std::set<Node>::iterator rel_mems_it_snd = rel_mems.begin();
++          while (rel_mems_it_snd != rel_mems.end())
++          {
++            Node fst_mem_snd =
++                TupleUtils::nthElementOfTuple(*rel_mems_it_snd, 0);
++            if (fst_mem == fst_mem_snd)
++            {
++              existing_mems.insert(
++                  TupleUtils::nthElementOfTuple(*rel_mems_it_snd, 1));
++            }
++            ++rel_mems_it_snd;
++          }
++          if (existing_mems.size() >= min_card)
++          {
++            const DType& dt = node.getType().getSetElementType().getDType();
++            join_img_mems.insert(nm->mkNode(
++                Kind::APPLY_CONSTRUCTOR, dt[0].getConstructor(), fst_mem));
++          }
++          ++rel_mems_it;
+         }
+-        ++rel_mems_it;
++        Node new_node =
++            NormalForm::elementsToSet(join_img_mems, node.getType());
++        Assert(new_node.isConst());
++        Trace("rels-postrewrite")
++            << "Rels::postRewrite returning " << new_node << std::endl;
++        return RewriteResponse(REWRITE_DONE, new_node);
+       }
+-      Node new_node = NormalForm::elementsToSet(join_img_mems, node.getType());
+-      Assert(new_node.isConst());
+-      Trace("rels-postrewrite") << "Rels::postRewrite returning " << new_node << std::endl;
+-      return RewriteResponse(REWRITE_DONE, new_node);
+-    }
+-    else
+-    {
+-      Trace("rels-postrewrite") << "Rels::postRewrite miss to handle term " << node << std::endl;
++      else
++      {
++        Trace("rels-postrewrite")
++            << "Rels::postRewrite miss to handle term " << node << std::endl;
++      }
++      break;
+     }
+-    break;
+-  }
+ 
+-  case Kind::RELATION_GROUP: return postRewriteGroup(node);
+-  case Kind::RELATION_AGGREGATE: return postRewriteAggregate(node);
+-  case Kind::RELATION_PROJECT: return postRewriteProject(node);
+-  default: break;
++    case Kind::RELATION_GROUP: return postRewriteGroup(node);
++    case Kind::RELATION_AGGREGATE: return postRewriteAggregate(node);
++    case Kind::RELATION_PROJECT: return postRewriteProject(node);
++    default: break;
+   }
+ 
+   return RewriteResponse(REWRITE_DONE, node);
+diff --git a/src/theory/sets/theory_sets_rewriter.h b/src/theory/sets/theory_sets_rewriter.h
+index b450b7de4..848b3e5c7 100644
+--- a/src/theory/sets/theory_sets_rewriter.h
++++ b/src/theory/sets/theory_sets_rewriter.h
+@@ -27,7 +27,9 @@ namespace sets {
+ class TheorySetsRewriter : public TheoryRewriter
+ {
+  public:
+-  TheorySetsRewriter(NodeManager* nm);
++  TheorySetsRewriter(NodeManager* nm,
++                     bool cardEnabled = true,
++                     bool relsEnabled = true);
+ 
+   /**
+    * Rewrite n based on the proof rewrite rule id.
+@@ -95,6 +97,10 @@ class TheorySetsRewriter : public TheoryRewriter
+    * Returns true if elementTerm is in setTerm, where both terms are constants.
+    */
+   bool checkConstantMembership(TNode elementTerm, TNode setTerm);
++  /**
++   * Main entry point for rewriting relation kinds.
++   */
++  RewriteResponse postRewriteRelations(TNode node);
+   /**
+    * Rewrite set comprehension
+    */
+@@ -169,6 +175,10 @@ class TheorySetsRewriter : public TheoryRewriter
+    * (set.map (lambda ((t T)) ((_ tuple.project n1 ... nk) t)) A)
+    */
+   RewriteResponse postRewriteProject(TNode n);
++  /** Is sets+cardinality enabled? */
++  bool d_cardEnabled;
++  /** Are relations enabled? */
++  bool d_relsEnabled;
+ }; /* class TheorySetsRewriter */
+ 
+ }  // namespace sets
+diff --git a/src/theory/theory_rewriter.h b/src/theory/theory_rewriter.h
+index be5affed4..caf7ef092 100644
+--- a/src/theory/theory_rewriter.h
++++ b/src/theory/theory_rewriter.h
+@@ -118,21 +118,21 @@ class TheoryRewriter
+   virtual void registerRewrites(Rewriter* rewriter) {}
+ 
+   /**
+-   * Performs a pre-rewrite step.
++   * Performs a post-rewrite step.
+    *
+    * @param node The node to rewrite
+    */
+   virtual RewriteResponse postRewrite(TNode node) = 0;
+ 
+   /**
+-   * Performs a pre-rewrite step, with proofs.
++   * Performs a post-rewrite step, with proofs.
+    *
+    * @param node The node to rewrite
+    */
+   virtual TrustRewriteResponse postRewriteWithProof(TNode node);
+ 
+   /**
+-   * Performs a post-rewrite step.
++   * Performs a pre-rewrite step.
+    *
+    * @param node The node to rewrite
+    */
+@@ -235,6 +235,26 @@ class TheoryRewriter
+   NodeManager* nodeManager() const;
+ };
+ 
++/**
++ * The null theory rewriter, which does not perform any rewrites. This is used
++ * if a theory does not have an (active) rewriter.
++ */
++class NoOpTheoryRewriter : public TheoryRewriter
++{
++ public:
++  NoOpTheoryRewriter(NodeManager* nm) : TheoryRewriter(nm) {}
++  /** Performs a post-rewrite step. */
++  RewriteResponse postRewrite(TNode node) override
++  {
++    return RewriteResponse(REWRITE_DONE, node);
++  }
++  /** Performs a pre-rewrite step. */
++  RewriteResponse preRewrite(TNode node) override
++  {
++    return RewriteResponse(REWRITE_DONE, node);
++  }
++};
++
+ }  // namespace theory
+ }  // namespace cvc5::internal
+ 
+-- 
+2.47.1
+

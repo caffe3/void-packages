@@ -1,0 +1,552 @@
+From eae5e26c70cbfc7ca21e3dcdd594a6f4ff50a6ca Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 27 Sep 2024 09:03:54 -0500
+Subject: [PATCH 081/312] Use smt2 printer for skolems when printing cpc proofs
+ (#11185)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This updates the cpc printer to use the native option for printing
+skolems (--print-skolem-definitions). This avoids spurious node
+conversion.
+
+Several changes were necessary:
+- The smt2 printer for skolems now threads a let binding utility, since
+skolem indices can be letified. Furthermore a bug in this method is
+fixed.
+- The let bind utility was extended to optionally traverse skolems (off
+by default).
+- The cpc printer no longer converts handled skolems, unless their
+indices change.
+- The skolem manager is simplified to not automatically sort indices,
+instead this is lifted to the API level. (Otherwise this would flip
+indices unsoundly during node conversion).
+- The Ethos version is updated to one where a bug in `:opaque` is fixed.
+
+---------
+
+Co-authored-by: Hans-Jörg <hansjoergschurr@users.noreply.github.com>
+---
+ contrib/get-ethos-checker            |  2 +-
+ src/api/cpp/cvc5.cpp                 |  5 ++++
+ src/expr/skolem_manager.cpp          |  8 ------
+ src/expr/skolem_manager.h            | 23 ++++++++++------
+ src/printer/let_binding.cpp          | 37 ++++++++++++++++++++++---
+ src/printer/let_binding.h            |  8 +++++-
+ src/printer/printer.cpp              |  5 ++--
+ src/printer/printer.h                |  8 +++++-
+ src/printer/smt2/smt2_printer.cpp    | 36 +++++++++++++++---------
+ src/printer/smt2/smt2_printer.h      |  7 +++--
+ src/proof/alf/alf_node_converter.cpp | 40 +++++++++++++++++----------
+ src/proof/alf/alf_print_channel.cpp  | 41 ++++++++++++++++++++++++++--
+ src/proof/alf/alf_printer.cpp        | 11 +++++---
+ 13 files changed, 170 insertions(+), 61 deletions(-)
+
+diff --git a/contrib/get-ethos-checker b/contrib/get-ethos-checker
+index a82c74c87..f6991b7b2 100755
+--- a/contrib/get-ethos-checker
++++ b/contrib/get-ethos-checker
+@@ -24,7 +24,7 @@ EO_DIR="$BASE_DIR/ethos-checker"
+ mkdir -p $EO_DIR
+ 
+ # download and unpack ethos
+-ETHOS_VERSION="90d2ae1c5298ca5d1a00e87c8ebc88cab100be90"
++ETHOS_VERSION="bd8bad943799396c0e5ddca4318f715b6aad5501"
+ download "https://github.com/cvc5/ethos/archive/$ETHOS_VERSION.tar.gz" $BASE_DIR/tmp/ethos.tgz
+ tar --strip 1 -xzf $BASE_DIR/tmp/ethos.tgz -C $EO_DIR
+ 
+diff --git a/src/api/cpp/cvc5.cpp b/src/api/cpp/cvc5.cpp
+index 4cd84ba0b..4d2c01c91 100644
+--- a/src/api/cpp/cvc5.cpp
++++ b/src/api/cpp/cvc5.cpp
+@@ -5830,6 +5830,11 @@ Term TermManager::mkSkolem(SkolemId id, const std::vector<Term>& indices)
+   //////// all checks before this line
+   // iterate over indices and convert the Terms to Nodes
+   std::vector<internal::Node> nodeIndices = Term::termVectorToNodes(indices);
++  // automatically sort if a commutative skolem
++  if (internal::SkolemManager::isCommutativeSkolemId(id))
++  {
++    std::sort(nodeIndices.begin(), nodeIndices.end());
++  }
+   internal::Node res =
+       d_nm->getSkolemManager()->mkSkolemFunction(id, nodeIndices);
+   return Term(this, res);
+diff --git a/src/expr/skolem_manager.cpp b/src/expr/skolem_manager.cpp
+index 417e08487..0c37e39f4 100644
+--- a/src/expr/skolem_manager.cpp
++++ b/src/expr/skolem_manager.cpp
+@@ -98,14 +98,6 @@ Node SkolemManager::mkSkolemFunction(SkolemId id,
+ {
+   TypeNode ctn = getTypeFor(id, cacheVals);
+   Assert(!ctn.isNull());
+-  if (isCommutativeSkolemId(id))
+-  {
+-    // sort arguments if commutative, which should not impact its type
+-    std::vector<Node> cvs = cacheVals;
+-    std::sort(cvs.begin(), cvs.end());
+-    Assert(getTypeFor(id, cvs) == ctn);
+-    return mkSkolemFunctionTyped(id, ctn, cvs);
+-  }
+   return mkSkolemFunctionTyped(id, ctn, cacheVals);
+ }
+ 
+diff --git a/src/expr/skolem_manager.h b/src/expr/skolem_manager.h
+index 745c74b04..c29d8c59c 100644
+--- a/src/expr/skolem_manager.h
++++ b/src/expr/skolem_manager.h
+@@ -177,8 +177,14 @@ class SkolemManager
+    * @return The skolem function.
+    */
+   Node mkSkolemFunction(SkolemId id, Node cacheVal = Node::null());
+-  /** Same as above, with multiple cache values */
+-  Node mkSkolemFunction(SkolemId id, const std::vector<Node>& cacheVals);
++  /**
++   * Same as above, with multiple cache values.
++   * @param id The identifier of the skolem function
++   * @param cacheVals A vector of cache values.
++   * @return The skolem function.
++   */
++  Node mkSkolemFunction(SkolemId id,
++                        const std::vector<Node>& cacheVals);
+   /**
+    * Same as above, with multiple cache values and an internal skolem id.
+    * This will call mkSkolemFunction where the (external) id is
+@@ -255,7 +261,12 @@ class SkolemManager
+    * @return The number of indices for the skolem id.
+    */
+   size_t getNumIndicesForSkolemId(SkolemId id) const;
+-
++  /**
++   * Is the given skolem identifier commutative, in the sense that its
++   * arguments can be reordered? If this method returns true, then
++   * we sort the arguments to the skolem upon construction via the API.
++   */
++  static bool isCommutativeSkolemId(SkolemId id);
+  private:
+   /** Cache of skolem functions for mkSkolemFunction above. */
+   std::map<std::tuple<SkolemId, TypeNode, Node>, Node> d_skolemFuns;
+@@ -270,12 +281,6 @@ class SkolemManager
+    * by this node manager.
+    */
+   size_t d_skolemCounter;
+-  /**
+-   * Is the given skolem identifier commutative, in the sense that its
+-   * arguments can be reordered? If this method returns true, then
+-   * we always sort the arguments to the skolem upon construction.
+-   */
+-  static bool isCommutativeSkolemId(SkolemId id);
+   /** Same as mkSkolemFunction, with explicit type */
+   Node mkSkolemFunctionTyped(SkolemId id,
+                              TypeNode tn,
+diff --git a/src/printer/let_binding.cpp b/src/printer/let_binding.cpp
+index 52134af43..98a0d07c8 100644
+--- a/src/printer/let_binding.cpp
++++ b/src/printer/let_binding.cpp
+@@ -17,14 +17,18 @@
+ 
+ #include <sstream>
+ 
++#include "expr/skolem_manager.h"
++
+ namespace cvc5::internal {
+ 
+ LetBinding::LetBinding(const std::string& prefix,
+                        uint32_t thresh,
+-                       bool traverseBinders)
++                       bool traverseBinders,
++                       bool traverseSkolems)
+     : d_prefix(prefix),
+       d_thresh(thresh),
+       d_traverseBinders(traverseBinders),
++      d_traverseSkolems(traverseSkolems),
+       d_context(),
+       d_visitList(&d_context),
+       d_count(&d_context),
+@@ -159,9 +163,10 @@ void LetBinding::updateCounts(Node n)
+   {
+     cur = visit.back();
+     it = d_count.find(cur);
++    bool isSkolem = (d_traverseSkolems && cur.getKind() == Kind::SKOLEM);
+     // do not traverse beneath quantifiers if d_traverseBinders is false.
+-    if (cur.getNumChildren() == 0 || cur.getKind() == Kind::BOUND_VAR_LIST
+-        || (!d_traverseBinders && cur.isClosure()))
++    if ((!isSkolem && cur.getNumChildren() == 0) || cur.getKind() == Kind::BOUND_VAR_LIST
++             || (!d_traverseBinders && cur.isClosure()))
+     {
+       visit.pop_back();
+       continue;
+@@ -169,7 +174,31 @@ void LetBinding::updateCounts(Node n)
+     if (it == d_count.end())
+     {
+       d_count[cur] = 0;
+-      visit.insert(visit.end(), cur.begin(), cur.end());
++      if (isSkolem)
++      {
++        SkolemId skid;
++        Node cacheVal;
++        SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
++        if (sm->isSkolemFunction(cur, skid, cacheVal) && !cacheVal.isNull())
++        {
++          if (cacheVal.getKind() == Kind::SEXPR)
++          {
++            visit.insert(visit.end(), cacheVal.begin(), cacheVal.end());
++          }
++          else
++          {
++            visit.push_back(cacheVal);
++          }
++        }
++      }
++      else
++      {
++        if (cur.hasOperator())
++        {
++          visit.push_back(cur.getOperator());
++        }
++        visit.insert(visit.end(), cur.begin(), cur.end());
++      }
+     }
+     else
+     {
+diff --git a/src/printer/let_binding.h b/src/printer/let_binding.h
+index 298471139..421bb77b1 100644
+--- a/src/printer/let_binding.h
++++ b/src/printer/let_binding.h
+@@ -97,10 +97,14 @@ class LetBinding
+    * @param traverseBinders Whether we should traverse binders, that is, if
+    * this flag is true, we consider terms beneath binders as targets for
+    * letificiation.
++   * @param traverseSkolems Whether we should traverse skolems, that is, if
++   * this flag is true, we consider terms in skolem indices as targets for
++   * letificiation.
+    */
+   LetBinding(const std::string& prefix,
+              uint32_t thresh = 2,
+-             bool traverseBinders = false);
++             bool traverseBinders = false,
++             bool traverseSkolems = false);
+   /** Get threshold */
+   uint32_t getThreshold() const;
+   /**
+@@ -161,6 +165,8 @@ class LetBinding
+   uint32_t d_thresh;
+   /** Traverse binders? */
+   bool d_traverseBinders;
++  /** Traverse skolems? */
++  bool d_traverseSkolems;
+   /** An internal context */
+   context::Context d_context;
+   /** Visit list */
+diff --git a/src/printer/printer.cpp b/src/printer/printer.cpp
+index 80819a0dd..1214377e7 100644
+--- a/src/printer/printer.cpp
++++ b/src/printer/printer.cpp
+@@ -55,12 +55,13 @@ unique_ptr<Printer> Printer::makePrinter(Language lang)
+ 
+ void Printer::toStream(std::ostream& out,
+                        TNode n,
+-                       const LetBinding* lbind) const
++                       const LetBinding* lbind,
++                       bool lbindTop) const
+ {
+   // no special implementation, just convert and print with default prefix
+   if (lbind != nullptr)
+   {
+-    Node nc = lbind->convert(n);
++    Node nc = lbind->convert(n, lbindTop);
+     toStream(out, nc);
+   }
+   else
+diff --git a/src/printer/printer.h b/src/printer/printer.h
+index b0707148e..aa8842cf3 100644
+--- a/src/printer/printer.h
++++ b/src/printer/printer.h
+@@ -65,10 +65,16 @@ class CVC5_EXPORT Printer
+   /**
+    * Write a Node out to a stream with this Printer, with the provided
+    * let binding.
++   * @param out The output stream to write to.
++   * @param n The node to print.
++   * @param lbind The let binding, which determines which nodes are letified.
++   * @param lbindTop If false, the topmost term in n does not take into account
++   * lbind.
+    */
+   virtual void toStream(std::ostream& out,
+                         TNode n,
+-                        const LetBinding* lbind) const;
++                        const LetBinding* lbind,
++                        bool lbindTop) const;
+ 
+   /** Write a Kind out to a stream with this Printer. */
+   virtual void toStream(std::ostream& out, Kind k) const = 0;
+diff --git a/src/printer/smt2/smt2_printer.cpp b/src/printer/smt2/smt2_printer.cpp
+index 3cd07ff71..af07dceb2 100644
+--- a/src/printer/smt2/smt2_printer.cpp
++++ b/src/printer/smt2/smt2_printer.cpp
+@@ -187,10 +187,11 @@ void Smt2Printer::toStream(std::ostream& out,
+ 
+ void Smt2Printer::toStream(std::ostream& out,
+                            TNode n,
+-                           const LetBinding* lbind) const
++                           const LetBinding* lbind,
++                           bool lbindTop) const
+ {
+   int toDepth = options::ioutils::getNodeDepth(out);
+-  toStream(out, n, lbind, toDepth);
++  toStream(out, n, lbind, toDepth, lbindTop);
+ }
+ 
+ void Smt2Printer::toStream(std::ostream& out, TNode n) const
+@@ -609,7 +610,8 @@ bool Smt2Printer::toStreamBase(std::ostream& out,
+         }
+         else if (options::ioutils::getPrintSkolemDefinitions(out))
+         {
+-          toStreamSkolem(out, cacheVal, id, /*isApplied=*/false);
++          toStreamSkolem(
++              out, cacheVal, id, /*isApplied=*/false, toDepth, lbind);
+           printed = true;
+         }
+       }
+@@ -668,7 +670,7 @@ bool Smt2Printer::toStreamBase(std::ostream& out,
+           {
+             out << '(';
+           }
+-          toStreamSkolem(out, cacheVal, id, /*isApplied=*/true);
++          toStreamSkolem(out, cacheVal, id, /*isApplied=*/true, toDepth, lbind);
+           return false;
+         }
+       }
+@@ -2149,11 +2151,13 @@ void Smt2Printer::toStreamCmdDeclareHeap(std::ostream& out,
+ void Smt2Printer::toStreamSkolem(std::ostream& out,
+                                  Node cacheVal,
+                                  SkolemId id,
+-                                 bool isApplied) const
++                                 bool isApplied,
++                                 int toDepth,
++                                 const LetBinding* lbind) const
+ {
+-  auto delim = isApplied ? " " : ")";
+-
+-  if (!isApplied && !cacheVal.isNull())
++  // true if this is a standalone skolem that requires printing with arguments
++  bool unappliedApp = (!isApplied && !cacheVal.isNull());
++  if (unappliedApp)
+   {
+     out << "(";
+   }
+@@ -2162,17 +2166,23 @@ void Smt2Printer::toStreamSkolem(std::ostream& out,
+   {
+     for (const Node& cv : cacheVal)
+     {
+-      out << " " << cv;
++      out << " ";
++      toStream(out, cv, lbind, toDepth);
+     }
+-    out << delim;
+   }
+   else if (!cacheVal.isNull())
+   {
+-    out << " " << cacheVal << delim;
++    out << " ";
++    toStream(out, cacheVal, lbind, toDepth);
++  }
++  if (unappliedApp)
++  {
++    out << ")";
+   }
+-  else
++  else if (isApplied)
+   {
+-    out << delim;
++    // separates further arguments
++    out << " ";
+   }
+ }
+ 
+diff --git a/src/printer/smt2/smt2_printer.h b/src/printer/smt2/smt2_printer.h
+index bb700be8d..132da11b9 100644
+--- a/src/printer/smt2/smt2_printer.h
++++ b/src/printer/smt2/smt2_printer.h
+@@ -46,7 +46,8 @@ class Smt2Printer : public cvc5::internal::Printer
+   void toStream(std::ostream& out, TNode n, int toDepth, size_t dag) const;
+   void toStream(std::ostream& out,
+                 TNode n,
+-                const LetBinding* lbind) const override;
++                const LetBinding* lbind,
++                bool lbindTop) const override;
+   void toStream(std::ostream& out, Kind k) const override;
+   void toStream(std::ostream& out, const smt::Model& m) const override;
+   /**
+@@ -295,7 +296,9 @@ class Smt2Printer : public cvc5::internal::Printer
+   void toStreamSkolem(std::ostream& out,
+                       Node cacheVal,
+                       SkolemId id,
+-                      bool isApplied) const;
++                      bool isApplied,
++                      int toDepth,
++                      const LetBinding* lbind) const;
+ 
+   /**
+    * Get the string for a kind k, which returns how the kind k is printed in
+diff --git a/src/proof/alf/alf_node_converter.cpp b/src/proof/alf/alf_node_converter.cpp
+index a1a0f3ac3..ca42ce972 100644
+--- a/src/proof/alf/alf_node_converter.cpp
++++ b/src/proof/alf/alf_node_converter.cpp
+@@ -330,24 +330,36 @@ Node AlfNodeConverter::maybeMkSkolemFun(Node k)
+   {
+     if (isHandledSkolemId(sfi))
+     {
+-      // convert every skolem function to its name applied to arguments
+-      std::stringstream ss;
+-      ss << "@" << sfi;
+-      std::vector<Node> args;
+-      if (cacheVal.getKind() == Kind::SEXPR)
++      if (!cacheVal.isNull())
+       {
+-        for (const Node& cv : cacheVal)
++        std::vector<Node> vals;
++        if (cacheVal.getKind() == Kind::SEXPR)
+         {
+-          args.push_back(convert(cv));
++          vals.insert(vals.end(), cacheVal.begin(), cacheVal.end());
++        }
++        else
++        {
++          vals.push_back(cacheVal);
++        }
++        bool hasChanged = false;
++        for (Node& v : vals)
++        {
++          Node orig = v;
++          v = convert(v);
++          hasChanged = hasChanged || v != orig;
++        }
++        // if an index term changed, we have to construct a new skolem
++        if (hasChanged)
++        {
++          // construct an internal app instead
++          std::stringstream ss;
++          ss << "@" << sfi;
++          return mkInternalApp(ss.str(), vals, k.getType());
+         }
+       }
+-      else if (!cacheVal.isNull())
+-      {
+-        args.push_back(convert(cacheVal));
+-      }
+-      // must convert all arguments
+-      Node app = mkInternalApp(ss.str(), args, k.getType());
+-      return app;
++      // otherwise we return itself, this will be printed in its full
++      // definition since applyPrintSkolemDefinitions is set to true
++      return k;
+     }
+   }
+   return Node::null();
+diff --git a/src/proof/alf/alf_print_channel.cpp b/src/proof/alf/alf_print_channel.cpp
+index 7a7af4d1a..603fc40d3 100644
+--- a/src/proof/alf/alf_print_channel.cpp
++++ b/src/proof/alf/alf_print_channel.cpp
+@@ -18,6 +18,7 @@
+ #include <sstream>
+ 
+ #include "expr/node_algorithm.h"
++#include "expr/skolem_manager.h"
+ #include "printer/printer.h"
+ #include "rewriter/rewrite_db.h"
+ 
+@@ -160,7 +161,7 @@ void AlfPrintChannelOut::printNodeInternal(std::ostream& out, Node n)
+   if (d_lbind)
+   {
+     // use the toStream with custom letification method
+-    Printer::getPrinter(out)->toStream(out, n, d_lbind);
++    Printer::getPrinter(out)->toStream(out, n, d_lbind, true);
+   }
+   else
+   {
+@@ -229,7 +230,43 @@ void AlfPrintChannelPre::processInternal(const Node& n)
+     d_lbind->process(n);
+   }
+   d_keep.insert(n);  // probably not necessary
+-  expr::getVariables(n, d_vars, d_varsVisited);
++  NodeManager* nm = NodeManager::currentNM();
++  SkolemManager* sm = nm->getSkolemManager();
++  // traverse and collect all free variables in this term, which includes
++  // traversing skolem indices.
++  std::vector<TNode> visit;
++  TNode cur;
++  SkolemId sfi;
++  Node cacheVal;
++  visit.push_back(n);
++  do
++  {
++    cur = visit.back();
++    visit.pop_back();
++    if (d_varsVisited.find(cur) == d_varsVisited.end())
++    {
++      d_varsVisited.insert(cur);
++      Kind ck = cur.getKind();
++      if (ck == Kind::BOUND_VARIABLE)
++      {
++        d_vars.insert(cur);
++        continue;
++      }
++      else if (ck == Kind::SKOLEM)
++      {
++        if (sm->isSkolemFunction(cur, sfi, cacheVal) && !cacheVal.isNull())
++        {
++          visit.push_back(cacheVal);
++        }
++        continue;
++      }
++      if (cur.hasOperator())
++      {
++        visit.push_back(cur.getOperator());
++      }
++      visit.insert(visit.end(), cur.begin(), cur.end());
++    }
++  } while (!visit.empty());
+ }
+ 
+ const std::unordered_set<Node>& AlfPrintChannelPre::getVariables() const
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 9a3897c31..39513d3be 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -535,10 +535,11 @@ void AlfPrinter::printLetList(std::ostream& out, LetBinding& lbind)
+   for (size_t i = 0, nlets = letList.size(); i < nlets; i++)
+   {
+     Node n = letList[i];
+-    Node def = lbind.convert(n, false);
+-    Node f = lbind.convert(n, true);
+     // use define command which does not invoke type checking
+-    out << "(define " << f << " () " << def << ")" << std::endl;
++    out << "(define " << d_termLetPrefix << lbind.getId(n);
++    out << " () ";
++    Printer::getPrinter(out)->toStream(out, n, &lbind, false);
++    out << ")" << std::endl;
+   }
+ }
+ 
+@@ -547,6 +548,7 @@ void AlfPrinter::print(std::ostream& out, std::shared_ptr<ProofNode> pfn)
+   // ensures options are set once and for all
+   options::ioutils::applyOutputLanguage(out, Language::LANG_SMTLIB_V2_6);
+   options::ioutils::applyPrintArithLitToken(out, true);
++  options::ioutils::applyPrintSkolemDefinitions(out, true);
+   d_pfIdCounter = 0;
+ 
+   // Get the definitions and assertions and print the declarations from them
+@@ -558,7 +560,8 @@ void AlfPrinter::print(std::ostream& out, std::shared_ptr<ProofNode> pfn)
+   // We can traverse binders due to the way we print global declare-var, since
+   // terms beneath binders will always have their variables in scope and hence
+   // can be printed in define commands.
+-  LetBinding lbind(d_termLetPrefix, 2, true);
++  // We additionally traverse skolems with this utility.
++  LetBinding lbind(d_termLetPrefix, 2, true, true);
+   LetBinding* lbindUse = options().proof.proofDagGlobal ? &lbind : nullptr;
+   AlfPrintChannelPre aletify(lbindUse);
+   AlfPrintChannelOut aprint(out, lbindUse, d_termLetPrefix);
+-- 
+2.47.1
+

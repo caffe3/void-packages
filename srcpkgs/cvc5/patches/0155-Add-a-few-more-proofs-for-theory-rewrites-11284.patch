@@ -1,0 +1,594 @@
+From 86be9c0a66353f3f26513abcdaf4e62887fa4e2d Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 5 Nov 2024 11:01:25 -0600
+Subject: [PATCH 155/312] Add a few more proofs for theory rewrites (#11284)
+
+Includes:
+- Distinct cardinality conflict,
+- Datatype tester elimination,
+- Lambda elimination,
+- Array constant select.
+
+Each of these cannot be expressed in RARE currently. This fills 6,5,6,15
+holes in our regressions respectively.
+
+Adds Eunoia signature for the latter two rules; the second cannot be
+expressed in Eunoia currently.
+
+---------
+
+Co-authored-by: Haniel Barbosa <hanielbbarbosa@gmail.com>
+---
+ include/cvc5/cvc5_proof_rule.h                | 47 +++++++++
+ proofs/eo/cpc/programs/Utils.eo               | 39 ++++++++
+ proofs/eo/cpc/rules/Arrays.eo                 | 10 ++
+ proofs/eo/cpc/rules/Quantifiers.eo            |  3 +-
+ proofs/eo/cpc/rules/Uf.eo                     | 15 +++
+ src/api/cpp/cvc5_proof_rule_template.cpp      |  5 +
+ src/proof/alf/alf_printer.cpp                 |  2 +
+ src/theory/arrays/theory_arrays_rewriter.cpp  | 13 ++-
+ .../builtin/theory_builtin_rewriter.cpp       | 11 +++
+ src/theory/datatypes/datatypes_rewriter.cpp   | 95 +++++++++++--------
+ src/theory/datatypes/datatypes_rewriter.h     |  8 ++
+ src/theory/uf/theory_uf_rewriter.cpp          | 62 ++++++++----
+ src/theory/uf/theory_uf_rewriter.h            |  7 ++
+ 13 files changed, 257 insertions(+), 60 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index c2e0aa02a..6da7c1fd9 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -2310,6 +2310,19 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(DISTINCT_ELIM),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Builtin -- Distinct cardinality conflict**
++   *
++   * .. math::
++   *   \texttt{distinct}(t_1, \ldots, tn) = \bot
++   *
++   * where :math:`n` is greater than the cardinality of the type of
++   * :math:`t_1, \ldots, t_n`.
++   *
++   * \endverbatim
++   */
++  EVALUE(DISTINCT_CARD_CONFLICT),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **UF -- Bitvector to natural elimination**
+@@ -2439,6 +2452,28 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(BETA_REDUCE),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Equality -- Lambda elimination**
++   *
++   * .. math::
++   *   (\lambda x_1 \ldots x_n.\> f(x_1 \ldots x_n)) = f
++   *
++   * \endverbatim
++   */
++  EVALUE(LAMBDA_ELIM),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Arrays -- Constant array select**
++   *
++   * .. math::
++   *   (select A x) = c
++   *
++   * where :math:`A` is a constant array storing element :math:`c`.
++   *
++   * \endverbatim
++   */
++  EVALUE(ARRAYS_SELECT_CONST),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Arrays -- Expansion of array range equality**
+@@ -2622,6 +2657,18 @@ enum ENUM(ProofRewriteRule)
+    * \endverbatim
+    */
+   EVALUE(DT_CONS_EQ),
++  /**
++   * \verbatim embed:rst:leading-asterisk
++   * **Datatypes - updater elimination**
++   *
++   * .. math::
++   *   u_{c,i}(t, s) = ite(\mathit{is}_c(t), c(s_0(t), \ldots, s, \ldots s_n(t)), t)
++   *
++   * where :math:`s_i` is the :math:`i^{th}` selector for constructor :math:`c`.
++   *
++   * \endverbatim
++   */
++  EVALUE(DT_UPDATER_ELIM),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Datatypes -- match elimination**
+diff --git a/proofs/eo/cpc/programs/Utils.eo b/proofs/eo/cpc/programs/Utils.eo
+index 8326e4c20..3f96619a7 100644
+--- a/proofs/eo/cpc/programs/Utils.eo
++++ b/proofs/eo/cpc/programs/Utils.eo
+@@ -21,6 +21,45 @@
+ (declare-const @list.nil @List)
+ (declare-const @list (-> (! Type :var T :implicit) T @List @List) :right-assoc-nil @list.nil)
+ 
++
++; program: $get_arg_list_rec
++; args:
++; - t S: The term to inspect.
++; - acc @List: The accumulator storing the arguments we have seen so far.
++; return: >
++;   The list of arguments provided to the function at the head of t appended to
++;   acc, or acc if t is not a function application.
++(program $get_arg_list_rec ((T Type) (S Type) (f (-> T S)) (x T) (y S) (acc @List))
++  (S @List) @List
++  (
++    (($get_arg_list_rec (f x) acc)  ($get_arg_list_rec f (eo::cons @list x acc)))
++    (($get_arg_list_rec y acc)      acc)
++  )
++)
++
++; define: $get_arg_list
++; args:
++; - t T: The term to inspect.
++; return: >
++;   The list of arguments provided to the function at the head of t, or the nil
++;   list if t is not a function application.
++(define $get_arg_list ((T Type :implicit) (t T)) ($get_arg_list_rec t @list.nil))
++
++
++
++; program: $is_app
++; args:
++; - f (-> T U): The function.
++; - t S: The term to inspect.
++; return: True if and only if t is an application of f.
++(program $is_app ((T Type) (S Type) (U Type) (f (-> T U)) (g (-> T S)) (x T) (y S))
++  ((-> T U) S) Bool
++  (
++    (($is_app f (g x))  ($is_app f g))
++    (($is_app f x)      (eo::is_eq f x))
++  )
++)
++
+ ; define: $compare_var
+ ; args:
+ ; - a T: The first term to compare.
+diff --git a/proofs/eo/cpc/rules/Arrays.eo b/proofs/eo/cpc/rules/Arrays.eo
+index dfb9d7f93..59b37c9e1 100644
+--- a/proofs/eo/cpc/rules/Arrays.eo
++++ b/proofs/eo/cpc/rules/Arrays.eo
+@@ -48,3 +48,13 @@
+   :premises ((not (= a b)))
+   :conclusion (not (= (select a (@array_deq_diff a b)) (select b (@array_deq_diff a b))))
+ )
++
++; rule: arrays-select-const
++; implements: ProofRewriteRule::ARRAYS_SELECT_CONST.
++; args:
++; - eq : Bool. The equality between a select of an array constant and the constant it stores.
++; conclusion: The given equality.
++(declare-rule arrays-select-const ((T Type) (U Type) (i T) (c U))
++  :args ((= (select (store_all (Array T U) c) i) c))
++  :conclusion (= (select (store_all (Array T U) c) i) c)
++)
+diff --git a/proofs/eo/cpc/rules/Quantifiers.eo b/proofs/eo/cpc/rules/Quantifiers.eo
+index c78b88f07..5fe004dbb 100644
+--- a/proofs/eo/cpc/rules/Quantifiers.eo
++++ b/proofs/eo/cpc/rules/Quantifiers.eo
+@@ -70,7 +70,8 @@
+   :conclusion (= B ($substitute_list vs ts B))
+ )
+ 
+-; rule: beta_reduce implements ProofRewriteRule::BETA_REDUCE
++; rule: beta-reduce
++; implements: ProofRewriteRule::BETA_REDUCE.
+ ; args:
+ ; - eq : Bool. The equality to prove between terms a and b.
+ ; requires: Showing that a beta-reduces to b.
+diff --git a/proofs/eo/cpc/rules/Uf.eo b/proofs/eo/cpc/rules/Uf.eo
+index 59617bf44..cb41ec110 100644
+--- a/proofs/eo/cpc/rules/Uf.eo
++++ b/proofs/eo/cpc/rules/Uf.eo
+@@ -247,3 +247,18 @@
+   :requires ((($singleton_elim ($mk_distinct-elim b1)) b2))
+   :conclusion (= b1 b2)
+ )
++
++; rule: lambda-elim
++; implements: ProofRewriteRule::LAMBDA_ELIM.
++; args:
++; - eq : Bool. The equality to prove between terms a and b.
++; requires: >
++;   Showing that the lambda on the left hand side of eq has bound variables that
++;   coincide with the arguments of its body, and its body is an application of
++;   the right hand side of the equality.
++; conclusion: The given equality.
++(declare-rule lambda-elim ((T Type) (U Type) (x @List) (t T) (f U))
++  :args ((= (lambda x t) f))
++  :requires ((($get_arg_list t) x) (($is_app f t) true))
++  :conclusion (= (lambda x t) f)
++)
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index bedeef1f6..6890bf90e 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -220,6 +220,8 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::NONE: return "NONE";
+     //================================================= ad-hoc rules
+     case ProofRewriteRule::DISTINCT_ELIM: return "distinct-elim";
++    case ProofRewriteRule::DISTINCT_CARD_CONFLICT:
++      return "distinct-card-conflict";
+     case ProofRewriteRule::BV_TO_NAT_ELIM: return "bv-to-nat-elim";
+     case ProofRewriteRule::INT_TO_BV_ELIM: return "int-to-bv-elim";
+     case ProofRewriteRule::MACRO_BOOL_NNF_NORM: return "macro-bool-nnf-norm";
+@@ -233,6 +235,8 @@ const char* toString(cvc5::ProofRewriteRule rule)
+       return "macro-arith-string-pred-entail";
+     case ProofRewriteRule::ARITH_POW_ELIM: return "arith-pow-elim";
+     case ProofRewriteRule::BETA_REDUCE: return "beta-reduce";
++    case ProofRewriteRule::LAMBDA_ELIM: return "lambda-elim";
++    case ProofRewriteRule::ARRAYS_SELECT_CONST: return "arrays-select-const";
+     case ProofRewriteRule::ARRAYS_EQ_RANGE_EXPAND:
+       return "arrays-eq-range-expand";
+     case ProofRewriteRule::EXISTS_ELIM: return "exists-elim";
+@@ -252,6 +256,7 @@ const char* toString(cvc5::ProofRewriteRule rule)
+     case ProofRewriteRule::DT_COLLAPSE_TESTER_SINGLETON:
+       return "dt-collapse-tester-singleton";
+     case ProofRewriteRule::DT_CONS_EQ: return "dt-cons-eq";
++    case ProofRewriteRule::DT_UPDATER_ELIM: return "dt-updater-elim";
+     case ProofRewriteRule::DT_MATCH_ELIM: return "dt-match-elim";
+     case ProofRewriteRule::BV_UMULO_ELIMINATE: return "bv-umulo-eliminate";
+     case ProofRewriteRule::BV_SMULO_ELIMINATE: return "bv-smulo-eliminate";
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index f186be3d4..f5f3b3af6 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -260,8 +260,10 @@ bool AlfPrinter::isHandledTheoryRewrite(ProofRewriteRule id,
+   {
+     case ProofRewriteRule::DISTINCT_ELIM:
+     case ProofRewriteRule::BETA_REDUCE:
++    case ProofRewriteRule::LAMBDA_ELIM:
+     case ProofRewriteRule::ARITH_STRING_PRED_ENTAIL:
+     case ProofRewriteRule::ARITH_STRING_PRED_SAFE_APPROX:
++    case ProofRewriteRule::ARRAYS_SELECT_CONST:
+     case ProofRewriteRule::QUANT_MINISCOPE_FV:
+     case ProofRewriteRule::RE_LOOP_ELIM:
+     case ProofRewriteRule::SETS_IS_EMPTY_EVAL:
+diff --git a/src/theory/arrays/theory_arrays_rewriter.cpp b/src/theory/arrays/theory_arrays_rewriter.cpp
+index c9f83bce0..7f8453e34 100644
+--- a/src/theory/arrays/theory_arrays_rewriter.cpp
++++ b/src/theory/arrays/theory_arrays_rewriter.cpp
+@@ -68,6 +68,8 @@ TheoryArraysRewriter::TheoryArraysRewriter(NodeManager* nm,
+                                            EagerProofGenerator* epg)
+     : TheoryRewriter(nm), d_rewriter(r), d_epg(epg)
+ {
++  registerProofRewriteRule(ProofRewriteRule::ARRAYS_SELECT_CONST,
++                           TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::ARRAYS_EQ_RANGE_EXPAND,
+                            TheoryRewriteCtx::PRE_DSL);
+ }
+@@ -76,14 +78,23 @@ Node TheoryArraysRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+ {
+   switch (id)
+   {
++    case ProofRewriteRule::ARRAYS_SELECT_CONST:
++    {
++      if (n.getKind() == Kind::SELECT && n[0].getKind() == Kind::STORE_ALL)
++      {
++        ArrayStoreAll storeAll = n[0].getConst<ArrayStoreAll>();
++        return storeAll.getValue();
++      }
++    }
++    break;
+     case ProofRewriteRule::ARRAYS_EQ_RANGE_EXPAND:
+     {
+       if (n.getKind() == Kind::EQ_RANGE)
+       {
+         return expandEqRange(d_nm, n);
+       }
+-      break;
+     }
++    break;
+     default: break;
+   }
+   return Node::null();
+diff --git a/src/theory/builtin/theory_builtin_rewriter.cpp b/src/theory/builtin/theory_builtin_rewriter.cpp
+index a2b52c25a..63c5a2eb6 100644
+--- a/src/theory/builtin/theory_builtin_rewriter.cpp
++++ b/src/theory/builtin/theory_builtin_rewriter.cpp
+@@ -34,6 +34,8 @@ namespace builtin {
+ TheoryBuiltinRewriter::TheoryBuiltinRewriter(NodeManager* nm)
+     : TheoryRewriter(nm)
+ {
++  registerProofRewriteRule(ProofRewriteRule::DISTINCT_CARD_CONFLICT,
++                           TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::DISTINCT_ELIM,
+                            TheoryRewriteCtx::PRE_DSL);
+ }
+@@ -42,6 +44,15 @@ Node TheoryBuiltinRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+ {
+   switch (id)
+   {
++    case ProofRewriteRule::DISTINCT_CARD_CONFLICT:
++      if (n.getKind() == Kind::DISTINCT)
++      {
++        if (n[0].getType().isCardinalityLessThan(n.getNumChildren()))
++        {
++          return nodeManager()->mkConst(false);
++        }
++      }
++      break;
+     case ProofRewriteRule::DISTINCT_ELIM:
+       if (n.getKind() == Kind::DISTINCT)
+       {
+diff --git a/src/theory/datatypes/datatypes_rewriter.cpp b/src/theory/datatypes/datatypes_rewriter.cpp
+index ba5f111d5..b6487933e 100644
+--- a/src/theory/datatypes/datatypes_rewriter.cpp
++++ b/src/theory/datatypes/datatypes_rewriter.cpp
+@@ -51,6 +51,8 @@ DatatypesRewriter::DatatypesRewriter(NodeManager* nm,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::DT_CONS_EQ,
+                            TheoryRewriteCtx::PRE_DSL);
++  registerProofRewriteRule(ProofRewriteRule::DT_UPDATER_ELIM,
++                           TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::DT_MATCH_ELIM,
+                            TheoryRewriteCtx::PRE_DSL);
+ }
+@@ -143,6 +145,14 @@ Node DatatypesRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       }
+     }
+     break;
++    case ProofRewriteRule::DT_UPDATER_ELIM:
++    {
++      if (n.getKind() == Kind::APPLY_UPDATER)
++      {
++        return expandUpdater(n);
++      }
++    }
++    break;
+     case ProofRewriteRule::DT_MATCH_ELIM:
+     {
+       if (n.getKind() == Kind::MATCH)
+@@ -983,8 +993,6 @@ Node DatatypesRewriter::expandApplySelector(Node n, bool sharedSel)
+ 
+ TrustNode DatatypesRewriter::expandDefinition(Node n)
+ {
+-  NodeManager* nm = nodeManager();
+-  TypeNode tn = n.getType();
+   Node ret;
+   switch (n.getKind())
+   {
+@@ -995,44 +1003,7 @@ TrustNode DatatypesRewriter::expandDefinition(Node n)
+     break;
+     case Kind::APPLY_UPDATER:
+     {
+-      Assert(tn.isDatatype());
+-      const DType& dt = tn.getDType();
+-      Node op = n.getOperator();
+-      size_t updateIndex = utils::indexOf(op);
+-      size_t cindex = utils::cindexOf(op);
+-      const DTypeConstructor& dc = dt[cindex];
+-      NodeBuilder b(Kind::APPLY_CONSTRUCTOR);
+-      if (tn.isParametricDatatype())
+-      {
+-        b << dc.getInstantiatedConstructor(n[0].getType());
+-      }
+-      else
+-      {
+-        b << dc.getConstructor();
+-      }
+-      Trace("dt-expand") << "Expand updater " << n << std::endl;
+-      Trace("dt-expand") << "expr is " << n << std::endl;
+-      Trace("dt-expand") << "updateIndex is " << updateIndex << std::endl;
+-      Trace("dt-expand") << "t is " << tn << std::endl;
+-      bool shareSel = d_opts.datatypes.dtSharedSelectors;
+-      for (size_t i = 0, size = dc.getNumArgs(); i < size; ++i)
+-      {
+-        if (i == updateIndex)
+-        {
+-          b << n[1];
+-        }
+-        else
+-        {
+-          b << utils::applySelector(dc, i, shareSel, n[0]);
+-        }
+-      }
+-      ret = b;
+-      if (dt.getNumConstructors() > 1)
+-      {
+-        // must be the right constructor to update
+-        Node tester = nm->mkNode(Kind::APPLY_TESTER, dc.getTester(), n[0]);
+-        ret = nm->mkNode(Kind::ITE, tester, ret, n[0]);
+-      }
++      ret = expandUpdater(n);
+       Trace("dt-expand") << "return " << ret << std::endl;
+       break;
+     }
+@@ -1050,6 +1021,50 @@ TrustNode DatatypesRewriter::expandDefinition(Node n)
+   return TrustNode::null();
+ }
+ 
++Node DatatypesRewriter::expandUpdater(const Node& n)
++{
++  NodeManager* nm = nodeManager();
++  TypeNode tn = n.getType();
++  Node ret;
++  Assert(tn.isDatatype());
++  const DType& dt = tn.getDType();
++  Node op = n.getOperator();
++  size_t updateIndex = utils::indexOf(op);
++  size_t cindex = utils::cindexOf(op);
++  const DTypeConstructor& dc = dt[cindex];
++  NodeBuilder b(Kind::APPLY_CONSTRUCTOR);
++  if (tn.isParametricDatatype())
++  {
++    b << dc.getInstantiatedConstructor(n[0].getType());
++  }
++  else
++  {
++    b << dc.getConstructor();
++  }
++  Trace("dt-expand") << "Expand updater " << n << std::endl;
++  Trace("dt-expand") << "expr is " << n << std::endl;
++  Trace("dt-expand") << "updateIndex is " << updateIndex << std::endl;
++  Trace("dt-expand") << "t is " << tn << std::endl;
++  for (size_t i = 0, size = dc.getNumArgs(); i < size; ++i)
++  {
++    if (i == updateIndex)
++    {
++      b << n[1];
++    }
++    else
++    {
++      b << utils::applySelector(dc, i, false, n[0]);
++    }
++  }
++  ret = b;
++  if (dt.getNumConstructors() > 1)
++  {
++    // must be the right constructor to update
++    Node tester = nm->mkNode(Kind::APPLY_TESTER, dc.getTester(), n[0]);
++    ret = nm->mkNode(Kind::ITE, tester, ret, n[0]);
++  }
++  return ret;
++}
+ Node DatatypesRewriter::expandNullableLift(Node n)
+ {
+   NodeManager* nm = nodeManager();
+diff --git a/src/theory/datatypes/datatypes_rewriter.h b/src/theory/datatypes/datatypes_rewriter.h
+index 588ef2925..22dec0a29 100644
+--- a/src/theory/datatypes/datatypes_rewriter.h
++++ b/src/theory/datatypes/datatypes_rewriter.h
+@@ -84,6 +84,14 @@ class DatatypesRewriter : public TheoryRewriter
+    * reason about the original selector term e.g. via congruence.
+    */
+   static Node expandApplySelector(Node n, bool sharedSel);
++  /**
++   * Expand updater term. Given n = (APPLY_UPDATER{SELECTOR_k} t s), this method returns
++   *   (ITE (APPLY_TESTER{C} t)
++   *      (C (APPLY_SELECTOR SELECTOR_1 t)...s...(APPLY_SELECTOR SELECTOR_m t))
++   *       t).
++   * where 1 <= k <= m.
++   */
++  Node expandUpdater(const Node& n);
+   /**
+    * Expand a match term into its definition.
+    * For example
+diff --git a/src/theory/uf/theory_uf_rewriter.cpp b/src/theory/uf/theory_uf_rewriter.cpp
+index 3d85fc6ef..9c94c681b 100644
+--- a/src/theory/uf/theory_uf_rewriter.cpp
++++ b/src/theory/uf/theory_uf_rewriter.cpp
+@@ -34,6 +34,8 @@ TheoryUfRewriter::TheoryUfRewriter(NodeManager* nm, Rewriter* rr)
+ {
+   registerProofRewriteRule(ProofRewriteRule::BETA_REDUCE,
+                            TheoryRewriteCtx::PRE_DSL);
++  registerProofRewriteRule(ProofRewriteRule::LAMBDA_ELIM,
++                           TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::BV_TO_NAT_ELIM,
+                            TheoryRewriteCtx::PRE_DSL);
+   registerProofRewriteRule(ProofRewriteRule::INT_TO_BV_ELIM,
+@@ -216,6 +218,18 @@ Node TheoryUfRewriter::rewriteViaRule(ProofRewriteRule id, const Node& n)
+       return ret;
+     }
+     break;
++    case ProofRewriteRule::LAMBDA_ELIM:
++    {
++      if (n.getKind() == Kind::LAMBDA)
++      {
++        Node felim = canEliminateLambda(n);
++        if (!felim.isNull())
++        {
++          return felim;
++        }
++      }
++    }
++    break;
+     case ProofRewriteRule::BV_TO_NAT_ELIM:
+     {
+       if (n.getKind() == Kind::BITVECTOR_TO_NAT)
+@@ -317,25 +331,10 @@ Node TheoryUfRewriter::rewriteLambda(Node node)
+   Trace("builtin-rewrite-debug")
+       << "...failed to get array representation." << std::endl;
+   // see if it can be eliminated, (lambda ((x T)) (f x)) ---> f
+-  if (node[1].getKind() == Kind::APPLY_UF)
++  Node felim = canEliminateLambda(node);
++  if (!felim.isNull())
+   {
+-    size_t nvar = node[0].getNumChildren();
+-    if (node[1].getNumChildren() == nvar)
+-    {
+-      bool matchesList = true;
+-      for (size_t i = 0; i < nvar; i++)
+-      {
+-        if (node[0][i] != node[1][i])
+-        {
+-          matchesList = false;
+-          break;
+-        }
+-      }
+-      if (matchesList)
+-      {
+-        return node[1].getOperator();
+-      }
+-    }
++    return felim;
+   }
+   return node;
+ }
+@@ -400,6 +399,33 @@ RewriteResponse TheoryUfRewriter::rewriteIntToBV(TNode node)
+   }
+   return RewriteResponse(REWRITE_DONE, node);
+ }
++
++Node TheoryUfRewriter::canEliminateLambda(const Node& node)
++{
++  Assert(node.getKind() == Kind::LAMBDA);
++  if (node[1].getKind() == Kind::APPLY_UF)
++  {
++    size_t nvar = node[0].getNumChildren();
++    if (node[1].getNumChildren() == nvar)
++    {
++      bool matchesList = true;
++      for (size_t i = 0; i < nvar; i++)
++      {
++        if (node[0][i] != node[1][i])
++        {
++          matchesList = false;
++          break;
++        }
++      }
++      if (matchesList)
++      {
++        return node[1].getOperator();
++      }
++    }
++  }
++  return Node::null();
++}
++
+ }  // namespace uf
+ }  // namespace theory
+ }  // namespace cvc5::internal
+diff --git a/src/theory/uf/theory_uf_rewriter.h b/src/theory/uf/theory_uf_rewriter.h
+index 60a36aa78..74c25fb2a 100644
+--- a/src/theory/uf/theory_uf_rewriter.h
++++ b/src/theory/uf/theory_uf_rewriter.h
+@@ -79,6 +79,13 @@ class TheoryUfRewriter : public TheoryRewriter
+   static bool canUseAsApplyUfOperator(TNode n);
+ 
+  private:
++  /**
++   * Can we eliminate the lambda n? This is true if n is of the form
++   * (LAMBDA x (APPLY_UF f x)), which is equivalent to f.
++   * @param n The lambda in question.
++   * @return the result of eliminating n, if possible, or null otherwise.
++   */
++  static Node canEliminateLambda(const Node& n);
+   /**
+    * Pointer to the rewriter, required for rewriting lambdas that appear
+    * inside of operators that are not in rewritten form. NOTE this is a cyclic
+-- 
+2.47.1
+

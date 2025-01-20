@@ -1,0 +1,45 @@
+From 8c74b382893ed1497fd993308f0a2651d38aa0f3 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 16 Oct 2024 14:39:47 -0500
+Subject: [PATCH 127/312] Minor change to TrustId::SUBS_EQ (#11289)
+
+This makes a minor change to how trusted steps for substitution
+equivalence (SUBS_EQ) are stored.
+
+Instead of
+```
+t = s
+------ trusted
+x = r
+```
+We store
+```
+        -----------------trusted
+t = s  (t=s) = (x=r)
+-------------------------EQ_RESOLVE
+ x=r
+ ```
+
+This makes a difference since in the latter case, the RARE reconstruction can be applied. In fact 15 of the 33 SUBS_EQ holes in our regressions are fillable by RARE after this change.
+---
+ src/theory/trust_substitutions.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/theory/trust_substitutions.cpp b/src/theory/trust_substitutions.cpp
+index 5528a222c..7db2df314 100644
+--- a/src/theory/trust_substitutions.cpp
++++ b/src/theory/trust_substitutions.cpp
+@@ -114,7 +114,9 @@ ProofGenerator* TrustSubstitutionMap::addSubstitutionSolved(TNode x,
+     // failed to rewrite, we add a trust step which assumes eq is provable
+     // from proven, and proceed as normal.
+     Trace("trust-subs") << "...failed to rewrite " << proven << std::endl;
+-    d_tspb->addTrustedStep(TrustId::SUBS_EQ, {proven}, {}, eq);
++    Node seq = proven.eqNode(eq);
++    d_tspb->addTrustedStep(TrustId::SUBS_EQ, {}, {}, seq);
++    d_tspb->addStep(ProofRule::EQ_RESOLVE, {proven, seq}, {}, eq);
+   }
+   Trace("trust-subs") << "...successful rewrite" << std::endl;
+   solvePg->addSteps(*d_tspb.get());
+-- 
+2.47.1
+

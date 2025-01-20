@@ -1,0 +1,37 @@
+From 22f661b69ec1e56dc35f80a7c2c939bf09e14871 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 12 Sep 2024 09:18:44 -0500
+Subject: [PATCH 051/312] Fix a few options classification (#11205)
+
+These options shouldn't impact the behavior of the solver in any
+significant way, moreover we need them to be common for use in
+combination with `--safe-options`.
+---
+ src/options/theory_options.toml | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/options/theory_options.toml b/src/options/theory_options.toml
+index c3e12bfc1..4b743e63f 100644
+--- a/src/options/theory_options.toml
++++ b/src/options/theory_options.toml
+@@ -26,7 +26,7 @@ name   = "Theory Layer"
+ 
+ [[option]]
+   name       = "condenseFunctionValues"
+-  category   = "expert"
++  category   = "common"
+   long       = "condense-function-values"
+   type       = "bool"
+   default    = "true"
+@@ -34,7 +34,7 @@ name   = "Theory Layer"
+ 
+ [[option]]
+   name       = "defaultFunctionValueMode"
+-  category   = "expert"
++  category   = "common"
+   long       = "default-function-value-mode=MODE"
+   type       = "DefaultFunctionValueMode"
+   default    = "FIRST"
+-- 
+2.47.1
+

@@ -1,0 +1,154 @@
+From 99b9c3eef0bca9ee2c3a2a88d2fd59fc5cf95d6a Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Thu, 24 Oct 2024 09:46:01 -0500
+Subject: [PATCH 139/312] Demote ProofRule::MACRO_RE_ELIM to a trusted step
+ (#11310)
+
+For uniformity, it is best if this rule is handled as a trust step as it
+is identical in purpose to a single step rewrite.
+---
+ include/cvc5/cvc5_proof_rule.h           | 19 -------------------
+ src/api/cpp/cvc5_proof_rule_template.cpp |  1 -
+ src/proof/trust_id.cpp                   |  1 +
+ src/proof/trust_id.h                     | 12 ++++++++++++
+ src/theory/strings/proof_checker.cpp     | 18 ------------------
+ src/theory/strings/regexp_elim.cpp       |  6 ++----
+ 6 files changed, 15 insertions(+), 42 deletions(-)
+
+diff --git a/include/cvc5/cvc5_proof_rule.h b/include/cvc5/cvc5_proof_rule.h
+index bd5ce21da..22f21df8c 100644
+--- a/include/cvc5/cvc5_proof_rule.h
++++ b/include/cvc5/cvc5_proof_rule.h
+@@ -1797,25 +1797,6 @@ enum ENUM(ProofRule)
+    * \endverbatim
+    */
+   EVALUE(MACRO_STRING_INFERENCE),
+-  /**
+-   * \verbatim embed:rst:leading-asterisk
+-   * **Strings -- Regular expressions -- Macro elimination**
+-   *
+-   * .. math::
+-   *
+-   *   \inferrule{-\mid F,b}{F = F'}
+-   *
+-   * where :math:`F'` is the result of eliminating regular expressions from
+-   * :math:`F` using the routine
+-   * :math:`\texttt{strings::RegExpElimination::eliminate}(F, b)`.
+-   * Here, :math:`b` is a Boolean indicating whether we are using aggressive
+-   * eliminations. Notice this rule concludes :math:`F = F` if no eliminations
+-   * are performed for :math:`F`.
+-   *
+-   * We do not currently support elaboration of this macro.
+-   * \endverbatim
+-   */
+-  EVALUE(MACRO_RE_ELIM),
+   /**
+    * \verbatim embed:rst:leading-asterisk
+    * **Arithmetic -- Adding inequalities**
+diff --git a/src/api/cpp/cvc5_proof_rule_template.cpp b/src/api/cpp/cvc5_proof_rule_template.cpp
+index ee38c04e2..8cc52759d 100644
+--- a/src/api/cpp/cvc5_proof_rule_template.cpp
++++ b/src/api/cpp/cvc5_proof_rule_template.cpp
+@@ -156,7 +156,6 @@ const char* toString(ProofRule rule)
+     case ProofRule::STRING_CODE_INJ: return "STRING_CODE_INJ";
+     case ProofRule::STRING_SEQ_UNIT_INJ: return "STRING_SEQ_UNIT_INJ";
+     case ProofRule::MACRO_STRING_INFERENCE: return "MACRO_STRING_INFERENCE";
+-    case ProofRule::MACRO_RE_ELIM: return "MACRO_RE_ELIM";
+     //================================================= Arith rules
+     case ProofRule::MACRO_ARITH_SCALE_SUM_UB: return "MACRO_ARITH_SCALE_SUM_UB";
+     case ProofRule::ARITH_SUM_UB: return "ARITH_SUM_UB";
+diff --git a/src/proof/trust_id.cpp b/src/proof/trust_id.cpp
+index d4b5e5307..834a75f1c 100644
+--- a/src/proof/trust_id.cpp
++++ b/src/proof/trust_id.cpp
+@@ -45,6 +45,7 @@ const char* toString(TrustId id)
+     case TrustId::SUBS_MAP: return "SUBS_MAP";
+     case TrustId::SUBS_EQ: return "SUBS_EQ";
+     case TrustId::ARITH_PRED_CAST_TYPE: return "ARITH_PRED_CAST_TYPE";
++    case TrustId::RE_ELIM: return "RE_ELIM";
+     case TrustId::QUANTIFIERS_PREPROCESS: return "QUANTIFIERS_PREPROCESS";
+     case TrustId::SUBTYPE_ELIMINATION: return "SUBTYPE_ELIMINATION";
+     case TrustId::MACRO_THEORY_REWRITE_RCONS:
+diff --git a/src/proof/trust_id.h b/src/proof/trust_id.h
+index 50a63acbe..d5684c9c3 100644
+--- a/src/proof/trust_id.h
++++ b/src/proof/trust_id.h
+@@ -110,6 +110,18 @@ enum class TrustId : uint32_t
+   SUBS_EQ,
+   /** A step of the form (~ s t) = (~ (to_real s) (to_real t)) */
+   ARITH_PRED_CAST_TYPE,
++  /**
++   * Strings -- Regular expression elimination
++   *
++   * Proves :math:`F = F'` where :math:`F'` is the result of eliminating regular
++   * expressions from :math:`F` using the routine
++   * :math:`\texttt{strings::RegExpElimination::eliminate}(F, b)` for some
++   * :math:`b`.
++   *
++   * Here, :math:`b` is a Boolean indicating whether we are using aggressive
++   * eliminations.
++   */
++  RE_ELIM,
+   /** A quantifiers preprocessing step that was given without a proof */
+   QUANTIFIERS_PREPROCESS,
+   /** A subtype elimination step that could not be processed */
+diff --git a/src/theory/strings/proof_checker.cpp b/src/theory/strings/proof_checker.cpp
+index 3858c8bf7..e7953e780 100644
+--- a/src/theory/strings/proof_checker.cpp
++++ b/src/theory/strings/proof_checker.cpp
+@@ -58,7 +58,6 @@ void StringProofRuleChecker::registerTo(ProofChecker* pc)
+   pc->registerChecker(ProofRule::RE_UNFOLD_POS, this);
+   pc->registerChecker(ProofRule::RE_UNFOLD_NEG, this);
+   pc->registerChecker(ProofRule::RE_UNFOLD_NEG_CONCAT_FIXED, this);
+-  pc->registerChecker(ProofRule::MACRO_RE_ELIM, this);
+   pc->registerChecker(ProofRule::STRING_CODE_INJ, this);
+   pc->registerChecker(ProofRule::STRING_SEQ_UNIT_INJ, this);
+   // trusted rule
+@@ -478,23 +477,6 @@ Node StringProofRuleChecker::checkInternal(ProofRule id,
+     }
+     return conc;
+   }
+-  else if (id == ProofRule::MACRO_RE_ELIM)
+-  {
+-    Assert(children.empty());
+-    Assert(args.size() == 2);
+-    bool isAgg;
+-    if (!getBool(args[1], isAgg))
+-    {
+-      return Node::null();
+-    }
+-    Node ea = RegExpElimination::eliminate(args[0], isAgg);
+-    // if we didn't eliminate, then this trivially proves the reflexive equality
+-    if (ea.isNull())
+-    {
+-      ea = args[0];
+-    }
+-    return args[0].eqNode(ea);
+-  }
+   else if (id == ProofRule::STRING_CODE_INJ)
+   {
+     Assert(children.empty());
+diff --git a/src/theory/strings/regexp_elim.cpp b/src/theory/strings/regexp_elim.cpp
+index c0dc91652..bb5971da8 100644
+--- a/src/theory/strings/regexp_elim.cpp
++++ b/src/theory/strings/regexp_elim.cpp
+@@ -76,14 +76,12 @@ TrustNode RegExpElimination::eliminateTrusted(Node atom)
+   Node eatom = eliminate(atom, d_isAggressive);
+   if (!eatom.isNull())
+   {
+-    // Currently aggressive doesnt work due to fresh bound variables
+-    if (isProofEnabled() && !d_isAggressive)
++    if (isProofEnabled())
+     {
+       ProofNodeManager* pnm = d_env.getProofNodeManager();
+       Node eq = atom.eqNode(eatom);
+-      Node aggn = NodeManager::currentNM()->mkConst(d_isAggressive);
+       std::shared_ptr<ProofNode> pn =
+-          pnm->mkNode(ProofRule::MACRO_RE_ELIM, {}, {atom, aggn}, eq);
++          pnm->mkTrustedNode(TrustId::RE_ELIM, {}, {}, eq);
+       d_epg->setProofFor(eq, pn);
+       return TrustNode::mkTrustRewrite(atom, eatom, d_epg.get());
+     }
+-- 
+2.47.1
+

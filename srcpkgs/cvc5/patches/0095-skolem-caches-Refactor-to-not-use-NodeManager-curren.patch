@@ -1,0 +1,722 @@
+From 10bc90c65cdafea83c5e33180cbbaf61b533f5e1 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Wed, 2 Oct 2024 08:21:12 -0500
+Subject: [PATCH 095/312] skolem caches: Refactor to not use
+ NodeManager::currentNM() (#11215)
+
+Co-authored-by: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+---
+ src/preprocessing/passes/strings_eager_pp.cpp |  2 +-
+ src/theory/arrays/proof_checker.cpp           |  2 +-
+ src/theory/arrays/skolem_cache.cpp            |  8 +--
+ src/theory/arrays/skolem_cache.h              |  4 +-
+ src/theory/arrays/theory_arrays.cpp           |  2 +-
+ src/theory/arrays/theory_arrays_rewriter.cpp  |  2 +-
+ src/theory/sets/skolem_cache.cpp              |  9 ++-
+ src/theory/sets/skolem_cache.h                |  4 +-
+ src/theory/sets/theory_sets.cpp               |  2 +-
+ src/theory/strings/core_solver.cpp            |  2 +-
+ src/theory/strings/proof_checker.cpp          | 10 +--
+ src/theory/strings/regexp_operation.cpp       |  4 +-
+ src/theory/strings/skolem_cache.cpp           | 67 +++++++++----------
+ src/theory/strings/skolem_cache.h             | 13 ++--
+ src/theory/strings/term_registry.cpp          |  2 +-
+ .../strings/theory_strings_preprocess.cpp     | 50 +++++++-------
+ .../theory_strings_skolem_cache_black.cpp     |  2 +-
+ 17 files changed, 94 insertions(+), 91 deletions(-)
+
+diff --git a/src/preprocessing/passes/strings_eager_pp.cpp b/src/preprocessing/passes/strings_eager_pp.cpp
+index b58b721a5..cddd6538c 100644
+--- a/src/preprocessing/passes/strings_eager_pp.cpp
++++ b/src/preprocessing/passes/strings_eager_pp.cpp
+@@ -32,7 +32,7 @@ PreprocessingPassResult StringsEagerPp::applyInternal(
+     AssertionPipeline* assertionsToPreprocess)
+ {
+   NodeManager* nm = nodeManager();
+-  theory::strings::SkolemCache skc(nullptr);
++  theory::strings::SkolemCache skc(nm, nullptr);
+   theory::strings::StringsPreprocess pp(d_env, &skc);
+   for (size_t i = 0, nasserts = assertionsToPreprocess->size(); i < nasserts;
+        ++i)
+diff --git a/src/theory/arrays/proof_checker.cpp b/src/theory/arrays/proof_checker.cpp
+index 36295df19..00895567a 100644
+--- a/src/theory/arrays/proof_checker.cpp
++++ b/src/theory/arrays/proof_checker.cpp
+@@ -100,7 +100,7 @@ Node ArraysProofRuleChecker::checkInternal(ProofRule id,
+     {
+       return Node::null();
+     }
+-    Node k = SkolemCache::getExtIndexSkolem(adeq);
++    Node k = SkolemCache::getExtIndexSkolem(nm, adeq);
+     Node a = adeq[0][0];
+     Node b = adeq[0][1];
+     Node as = nm->mkNode(Kind::SELECT, a, k);
+diff --git a/src/theory/arrays/skolem_cache.cpp b/src/theory/arrays/skolem_cache.cpp
+index d908d2f86..852bed4d0 100644
+--- a/src/theory/arrays/skolem_cache.cpp
++++ b/src/theory/arrays/skolem_cache.cpp
+@@ -36,7 +36,7 @@ typedef expr::Attribute<EqRangeVarAttributeId, Node> EqRangeVarAttribute;
+ 
+ SkolemCache::SkolemCache() {}
+ 
+-Node SkolemCache::getExtIndexSkolem(Node deq)
++Node SkolemCache::getExtIndexSkolem(NodeManager* nm, Node deq)
+ {
+   Assert(deq.getKind() == Kind::NOT && deq[0].getKind() == Kind::EQUAL);
+   Node a = deq[0][0];
+@@ -45,14 +45,14 @@ Node SkolemCache::getExtIndexSkolem(Node deq)
+   Assert(b.getType() == a.getType());
+ 
+   // make the skolem, which is deterministic for a,b.
+-  SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
++  SkolemManager* sm = nm->getSkolemManager();
+   return sm->mkSkolemFunction(SkolemId::ARRAY_DEQ_DIFF, {a, b});
+ }
+ 
+-Node SkolemCache::getEqRangeVar(TNode eqr)
++Node SkolemCache::getEqRangeVar(NodeManager* nm, TNode eqr)
+ {
+   Assert(eqr.getKind() == Kind::EQ_RANGE);
+-  BoundVarManager* bvm = NodeManager::currentNM()->getBoundVarManager();
++  BoundVarManager* bvm = nm->getBoundVarManager();
+   return bvm->mkBoundVar<EqRangeVarAttribute>(eqr, eqr[2].getType());
+ }
+ 
+diff --git a/src/theory/arrays/skolem_cache.h b/src/theory/arrays/skolem_cache.h
+index 3e3b38629..368e96d99 100644
+--- a/src/theory/arrays/skolem_cache.h
++++ b/src/theory/arrays/skolem_cache.h
+@@ -41,14 +41,14 @@ class SkolemCache
+    * This skolem is unique for deq, calling this method will always return the
+    * same skolem over the lifetime of deq.
+    */
+-  static Node getExtIndexSkolem(Node deq);
++  static Node getExtIndexSkolem(NodeManager* nm, Node deq);
+ 
+   /**
+    * Get the bound variable for given EQ_RANGE operator. This bound variable
+    * is unique for `eqr`. Calling this method will always return the same bound
+    * variable over the lifetime of `eqr`.
+    */
+-  static Node getEqRangeVar(TNode eqr);
++  static Node getEqRangeVar(NodeManager* nm, TNode eqr);
+ };
+ 
+ }  // namespace arrays
+diff --git a/src/theory/arrays/theory_arrays.cpp b/src/theory/arrays/theory_arrays.cpp
+index 97ac4b3d2..397658a33 100644
+--- a/src/theory/arrays/theory_arrays.cpp
++++ b/src/theory/arrays/theory_arrays.cpp
+@@ -1199,7 +1199,7 @@ void TheoryArrays::presolve()
+ 
+ Node TheoryArrays::getSkolem(TNode ref)
+ {
+-  Node skolem = SkolemCache::getExtIndexSkolem(ref);
++  Node skolem = SkolemCache::getExtIndexSkolem(nodeManager(), ref);
+ 
+   Trace("pf::array") << "Pregistering a Skolem" << std::endl;
+   preRegisterTermInternal(skolem);
+diff --git a/src/theory/arrays/theory_arrays_rewriter.cpp b/src/theory/arrays/theory_arrays_rewriter.cpp
+index 92a70c714..c9f83bce0 100644
+--- a/src/theory/arrays/theory_arrays_rewriter.cpp
++++ b/src/theory/arrays/theory_arrays_rewriter.cpp
+@@ -337,7 +337,7 @@ Node TheoryArraysRewriter::expandEqRange(NodeManager* nm, TNode node)
+   TNode b = node[1];
+   TNode i = node[2];
+   TNode j = node[3];
+-  Node k = SkolemCache::getEqRangeVar(node);
++  Node k = SkolemCache::getEqRangeVar(nm, node);
+   Node bvl = nm->mkNode(Kind::BOUND_VAR_LIST, k);
+   TypeNode type = k.getType();
+ 
+diff --git a/src/theory/sets/skolem_cache.cpp b/src/theory/sets/skolem_cache.cpp
+index 3c04f160f..d5e61f672 100644
+--- a/src/theory/sets/skolem_cache.cpp
++++ b/src/theory/sets/skolem_cache.cpp
+@@ -24,7 +24,10 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace sets {
+ 
+-SkolemCache::SkolemCache(Rewriter* rr) : d_rewriter(rr) {}
++SkolemCache::SkolemCache(NodeManager* nm, Rewriter* rr)
++    : d_nm(nm), d_rewriter(rr)
++{
++}
+ 
+ Node SkolemCache::mkTypedSkolemCached(
+     TypeNode tn, Node a, Node b, SkolemId id, const char* c)
+@@ -37,7 +40,7 @@ Node SkolemCache::mkTypedSkolemCached(
+   std::map<SkolemId, Node>::iterator it = d_skolemCache[a][b].find(id);
+   if (it == d_skolemCache[a][b].end())
+   {
+-    SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
++    SkolemManager* sm = d_nm->getSkolemManager();
+     Node sk;
+     if (id == SkolemId::SK_PURIFY)
+     {
+@@ -64,7 +67,7 @@ Node SkolemCache::mkTypedSkolemCached(TypeNode tn,
+ 
+ Node SkolemCache::mkTypedSkolem(TypeNode tn, const char* c)
+ {
+-  SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
++  SkolemManager* sm = d_nm->getSkolemManager();
+   Node n = sm->mkDummySkolem(c, tn, "sets skolem");
+   d_allSkolems.insert(n);
+   return n;
+diff --git a/src/theory/sets/skolem_cache.h b/src/theory/sets/skolem_cache.h
+index 7b3276c5e..cbbc92133 100644
+--- a/src/theory/sets/skolem_cache.h
++++ b/src/theory/sets/skolem_cache.h
+@@ -38,7 +38,7 @@ namespace sets {
+ class SkolemCache
+ {
+  public:
+-  SkolemCache(Rewriter* rr);
++  SkolemCache(NodeManager* nm, Rewriter* rr);
+   /** Identifiers for skolem types
+    *
+    * The comments below document the properties of each skolem introduced by
+@@ -78,6 +78,8 @@ class SkolemCache
+   std::map<Node, std::map<Node, std::map<SkolemId, Node> > > d_skolemCache;
+   /** the set of all skolems we have generated */
+   std::unordered_set<Node> d_allSkolems;
++  /** the associated node manager */
++  NodeManager* d_nm;
+   /** the optional rewriter */
+   Rewriter* d_rewriter;
+ };
+diff --git a/src/theory/sets/theory_sets.cpp b/src/theory/sets/theory_sets.cpp
+index 3f98ddc4d..5f98860e9 100644
+--- a/src/theory/sets/theory_sets.cpp
++++ b/src/theory/sets/theory_sets.cpp
+@@ -30,7 +30,7 @@ namespace sets {
+ 
+ TheorySets::TheorySets(Env& env, OutputChannel& out, Valuation valuation)
+     : Theory(THEORY_SETS, env, out, valuation),
+-      d_skCache(env.getRewriter()),
++      d_skCache(env.getNodeManager(), env.getRewriter()),
+       d_state(env, valuation, d_skCache),
+       d_rewriter(nodeManager()),
+       d_im(env, *this, &d_rewriter, d_state),
+diff --git a/src/theory/strings/core_solver.cpp b/src/theory/strings/core_solver.cpp
+index 86e56fc76..eef86748f 100644
+--- a/src/theory/strings/core_solver.cpp
++++ b/src/theory/strings/core_solver.cpp
+@@ -2456,7 +2456,7 @@ void CoreSolver::processDeqExtensionality(Node n1, Node n2)
+ 
+   NodeManager* nm = nodeManager();
+   SkolemCache* sc = d_termReg.getSkolemCache();
+-  Node k = sc->mkSkolemFun(SkolemId::STRINGS_DEQ_DIFF, n1, n2);
++  Node k = sc->mkSkolemFun(nm, SkolemId::STRINGS_DEQ_DIFF, n1, n2);
+   Node deq = eq.negate();
+   // we could use seq.nth instead of substr
+   Node ss1, ss2;
+diff --git a/src/theory/strings/proof_checker.cpp b/src/theory/strings/proof_checker.cpp
+index 03d90e63c..3858c8bf7 100644
+--- a/src/theory/strings/proof_checker.cpp
++++ b/src/theory/strings/proof_checker.cpp
+@@ -302,7 +302,7 @@ Node StringProofRuleChecker::checkInternal(ProofRule id,
+       t0 = nm->mkNode(Kind::STRING_CONCAT, isRev ? w1 : t0, isRev ? t0 : w1);
+     }
+     // use skolem cache
+-    SkolemCache skc(nullptr);
++    SkolemCache skc(nm, nullptr);
+     std::vector<Node> newSkolems;
+     Node conc = CoreSolver::getConclusion(
+         nodeManager(), t0, s0, id, isRev, &skc, newSkolems);
+@@ -322,7 +322,7 @@ Node StringProofRuleChecker::checkInternal(ProofRule id,
+     {
+       return Node::null();
+     }
+-    SkolemCache skc(nullptr);
++    SkolemCache skc(nm, nullptr);
+     std::vector<Node> newSkolems;
+     Node conc = CoreSolver::getDecomposeConclusion(
+         nodeManager(), atom[0][0], atom[1], isRev, &skc, newSkolems);
+@@ -343,7 +343,7 @@ Node StringProofRuleChecker::checkInternal(ProofRule id,
+     {
+       Assert(args.size() == 1);
+       // we do not use optimizations
+-      SkolemCache skc(nullptr);
++      SkolemCache skc(nm, nullptr);
+       std::vector<Node> conj;
+       ret = StringsPreprocess::reduce(t, conj, &skc, d_alphaCard);
+       conj.push_back(t.eqNode(ret));
+@@ -352,7 +352,7 @@ Node StringProofRuleChecker::checkInternal(ProofRule id,
+     else if (id == ProofRule::STRING_EAGER_REDUCTION)
+     {
+       Assert(args.size() == 1);
+-      SkolemCache skc(nullptr);
++      SkolemCache skc(nm, nullptr);
+       ret = TermRegistry::eagerReduce(t, &skc, d_alphaCard);
+     }
+     else if (id == ProofRule::STRING_LENGTH_POS)
+@@ -443,7 +443,7 @@ Node StringProofRuleChecker::checkInternal(ProofRule id,
+     {
+       Assert(args.empty());
+       std::vector<Node> newSkolems;
+-      SkolemCache skc(nullptr);
++      SkolemCache skc(nodeManager(), nullptr);
+       conc =
+           RegExpOpr::reduceRegExpPos(nodeManager(), skChild, &skc, newSkolems);
+     }
+diff --git a/src/theory/strings/regexp_operation.cpp b/src/theory/strings/regexp_operation.cpp
+index 28ec2a24d..a4f7154ff 100644
+--- a/src/theory/strings/regexp_operation.cpp
++++ b/src/theory/strings/regexp_operation.cpp
+@@ -988,7 +988,7 @@ Node RegExpOpr::reduceRegExpNeg(NodeManager* nm, Node mem)
+     Node emp = Word::mkEmptyWord(s.getType());
+     Node lens = nm->mkNode(Kind::STRING_LENGTH, s);
+     Node sne = s.eqNode(emp).negate();
+-    Node b1 = SkolemCache::mkIndexVar(mem);
++    Node b1 = SkolemCache::mkIndexVar(nm, mem);
+     Node b1v = nm->mkNode(Kind::BOUND_VAR_LIST, b1);
+     Node g11n = nm->mkNode(Kind::LEQ, b1, zero);
+     Node g12n = nm->mkNode(Kind::LT, lens, b1);
+@@ -1035,7 +1035,7 @@ Node RegExpOpr::reduceRegExpNegConcatFixed(NodeManager* nm,
+   Node guard1n, guard2n;
+   if (reLen.isNull())
+   {
+-    b1 = SkolemCache::mkIndexVar(mem);
++    b1 = SkolemCache::mkIndexVar(nm, mem);
+     b1v = nm->mkNode(Kind::BOUND_VAR_LIST, b1);
+     guard1n = nm->mkNode(Kind::LT, b1, zero);
+     guard2n = nm->mkNode(Kind::LT, nm->mkNode(Kind::STRING_LENGTH, s), b1);
+diff --git a/src/theory/strings/skolem_cache.cpp b/src/theory/strings/skolem_cache.cpp
+index 8b42babd2..835ea2ad8 100644
+--- a/src/theory/strings/skolem_cache.cpp
++++ b/src/theory/strings/skolem_cache.cpp
+@@ -50,11 +50,10 @@ struct LengthVarAttributeId
+ };
+ typedef expr::Attribute<LengthVarAttributeId, Node> LengthVarAttribute;
+ 
+-SkolemCache::SkolemCache(Rewriter* rr) : d_rr(rr)
++SkolemCache::SkolemCache(NodeManager* nm, Rewriter* rr) : d_nm(nm), d_rr(rr)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+-  d_strType = nm->stringType();
+-  d_zero = nm->mkConstInt(Rational(0));
++  d_strType = d_nm->stringType();
++  d_zero = d_nm->mkConstInt(Rational(0));
+ }
+ 
+ Node SkolemCache::mkSkolemCached(Node a,
+@@ -102,8 +101,7 @@ Node SkolemCache::mkTypedSkolemCached(
+     return it->second;
+   }
+ 
+-  NodeManager* nm = NodeManager::currentNM();
+-  SkolemManager* sm = nm->getSkolemManager();
++  SkolemManager* sm = d_nm->getSkolemManager();
+   Node sk;
+   switch (id)
+   {
+@@ -154,7 +152,7 @@ Node SkolemCache::mkTypedSkolemCached(TypeNode tn,
+ Node SkolemCache::mkSkolem(const char* c)
+ {
+   // TODO: eliminate this
+-  SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
++  SkolemManager* sm = d_nm->getSkolemManager();
+   Node n = sm->mkDummySkolem(c, d_strType, "string skolem");
+   d_allSkolems.insert(n);
+   return n;
+@@ -168,9 +166,6 @@ bool SkolemCache::isSkolem(Node n) const
+ std::tuple<SkolemCache::StringSkolemId, Node, Node>
+ SkolemCache::normalizeStringSkolem(StringSkolemId id, Node a, Node b)
+ {
+-
+-  NodeManager* nm = NodeManager::currentNM();
+-
+   // eliminate in terms of prefix/suffix_rem
+   if (id == SK_FIRST_CTN_POST)
+   {
+@@ -178,49 +173,49 @@ SkolemCache::normalizeStringSkolem(StringSkolemId id, Node a, Node b)
+     //   SK_SUFFIX_REM(x, (+ (str.len SK_FIRST_CTN_PRE(x, y)) (str.len y)))
+     id = SK_SUFFIX_REM;
+     Node pre = mkSkolemCached(a, b, SK_FIRST_CTN_PRE, "pre");
+-    b = nm->mkNode(Kind::ADD,
+-                   nm->mkNode(Kind::STRING_LENGTH, pre),
+-                   nm->mkNode(Kind::STRING_LENGTH, b));
++    b = d_nm->mkNode(Kind::ADD,
++                     d_nm->mkNode(Kind::STRING_LENGTH, pre),
++                     d_nm->mkNode(Kind::STRING_LENGTH, b));
+   }
+   else if (id == SK_ID_V_SPT || id == SK_ID_C_SPT)
+   {
+     // SK_ID_*_SPT(x, y) ---> SK_SUFFIX_REM(x, (str.len y))
+     id = SK_SUFFIX_REM;
+-    b = nm->mkNode(Kind::STRING_LENGTH, b);
++    b = d_nm->mkNode(Kind::STRING_LENGTH, b);
+   }
+   else if (id == SK_ID_V_SPT_REV || id == SK_ID_C_SPT_REV)
+   {
+     // SK_ID_*_SPT_REV(x, y) ---> SK_PREFIX(x, (- (str.len x) (str.len y)))
+     id = SK_PREFIX;
+-    b = nm->mkNode(Kind::SUB,
+-                   nm->mkNode(Kind::STRING_LENGTH, a),
+-                   nm->mkNode(Kind::STRING_LENGTH, b));
++    b = d_nm->mkNode(Kind::SUB,
++                     d_nm->mkNode(Kind::STRING_LENGTH, a),
++                     d_nm->mkNode(Kind::STRING_LENGTH, b));
+   }
+   else if (id == SK_ID_VC_SPT)
+   {
+     // SK_ID_VC_SPT(x, y) ---> SK_SUFFIX_REM(x, 1)
+     id = SK_SUFFIX_REM;
+-    b = nm->mkConstInt(Rational(1));
++    b = d_nm->mkConstInt(Rational(1));
+   }
+   else if (id == SK_ID_VC_SPT_REV)
+   {
+     // SK_ID_VC_SPT_REV(x, y) ---> SK_PREFIX(x, (- (str.len x) 1))
+     id = SK_PREFIX;
+-    b = nm->mkNode(Kind::SUB,
+-                   nm->mkNode(Kind::STRING_LENGTH, a),
+-                   nm->mkConstInt(Rational(1)));
++    b = d_nm->mkNode(Kind::SUB,
++                     d_nm->mkNode(Kind::STRING_LENGTH, a),
++                     d_nm->mkConstInt(Rational(1)));
+   }
+   else if (id == SK_ID_DC_SPT)
+   {
+     // SK_ID_DC_SPT(x, y) ---> SK_PREFIX(x, 1)
+     id = SK_PREFIX;
+-    b = nm->mkConstInt(Rational(1));
++    b = d_nm->mkConstInt(Rational(1));
+   }
+   else if (id == SK_ID_DC_SPT_REM)
+   {
+     // SK_ID_DC_SPT_REM(x, y) ---> SK_SUFFIX_REM(x, 1)
+     id = SK_SUFFIX_REM;
+-    b = nm->mkConstInt(Rational(1));
++    b = d_nm->mkConstInt(Rational(1));
+   }
+   else if (id == SK_ID_DEQ_X)
+   {
+@@ -228,34 +223,34 @@ SkolemCache::normalizeStringSkolem(StringSkolemId id, Node a, Node b)
+     id = SK_PREFIX;
+     Node aOld = a;
+     a = b;
+-    b = nm->mkNode(Kind::STRING_LENGTH, aOld);
++    b = d_nm->mkNode(Kind::STRING_LENGTH, aOld);
+   }
+   else if (id == SK_ID_DEQ_Y)
+   {
+     // SK_ID_DEQ_Y(x, y) ---> SK_PREFIX(x, (str.len y))
+     id = SK_PREFIX;
+-    b = nm->mkNode(Kind::STRING_LENGTH, b);
++    b = d_nm->mkNode(Kind::STRING_LENGTH, b);
+   }
+   else if (id == SK_FIRST_CTN_PRE)
+   {
+     // SK_FIRST_CTN_PRE(x,y) ---> SK_PREFIX(x, indexof(x,y,0))
+     id = SK_PREFIX;
+-    b = nm->mkNode(Kind::STRING_INDEXOF, a, b, d_zero);
++    b = d_nm->mkNode(Kind::STRING_INDEXOF, a, b, d_zero);
+   }
+ 
+   if (id == SK_ID_V_UNIFIED_SPT || id == SK_ID_V_UNIFIED_SPT_REV)
+   {
+     bool isRev = (id == SK_ID_V_UNIFIED_SPT_REV);
+-    Node la = nm->mkNode(Kind::STRING_LENGTH, a);
+-    Node lb = nm->mkNode(Kind::STRING_LENGTH, b);
+-    Node ta = isRev ? utils::mkPrefix(a, nm->mkNode(Kind::SUB, la, lb))
++    Node la = d_nm->mkNode(Kind::STRING_LENGTH, a);
++    Node lb = d_nm->mkNode(Kind::STRING_LENGTH, b);
++    Node ta = isRev ? utils::mkPrefix(a, d_nm->mkNode(Kind::SUB, la, lb))
+                     : utils::mkSuffix(a, lb);
+-    Node tb = isRev ? utils::mkPrefix(b, nm->mkNode(Kind::SUB, lb, la))
++    Node tb = isRev ? utils::mkPrefix(b, d_nm->mkNode(Kind::SUB, lb, la))
+                     : utils::mkSuffix(b, la);
+     id = SK_PURIFY;
+     // SK_ID_V_UNIFIED_SPT(x,y) --->
+     //   ite(len(x) >= len(y), substr(x,0,str.len(y)), substr(y,0,str.len(x))
+-    a = nm->mkNode(Kind::ITE, nm->mkNode(Kind::GEQ, la, lb), ta, tb);
++    a = d_nm->mkNode(Kind::ITE, d_nm->mkNode(Kind::GEQ, la, lb), ta, tb);
+     b = Node::null();
+   }
+ 
+@@ -285,27 +280,25 @@ SkolemCache::normalizeStringSkolem(StringSkolemId id, Node a, Node b)
+   return std::make_tuple(id, a, b);
+ }
+ 
+-Node SkolemCache::mkIndexVar(Node t)
++Node SkolemCache::mkIndexVar(NodeManager* nm, Node t)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   TypeNode intType = nm->integerType();
+   BoundVarManager* bvm = nm->getBoundVarManager();
+   // Note that proof rules may depend on the name of this variable.
+   return bvm->mkBoundVar<IndexVarAttribute>(t, "@var.str_index", intType);
+ }
+ 
+-Node SkolemCache::mkLengthVar(Node t)
++Node SkolemCache::mkLengthVar(NodeManager* nm, Node t)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   TypeNode intType = nm->integerType();
+   BoundVarManager* bvm = nm->getBoundVarManager();
+   return bvm->mkBoundVar<LengthVarAttribute>(t, "@var.str_length", intType);
+ }
+ 
+-Node SkolemCache::mkSkolemFun(SkolemId id, Node a, Node b)
++Node SkolemCache::mkSkolemFun(NodeManager* nm, SkolemId id, Node a, Node b)
+ {
+   std::vector<Node> cacheVals = getSkolemCacheVals(a, b);
+-  SkolemManager* sm = NodeManager::currentNM()->getSkolemManager();
++  SkolemManager* sm = nm->getSkolemManager();
+   Node k = sm->mkSkolemFunction(id, cacheVals);
+   d_allSkolems.insert(k);
+   return k;
+diff --git a/src/theory/strings/skolem_cache.h b/src/theory/strings/skolem_cache.h
+index e0b434bab..6ed8069e9 100644
+--- a/src/theory/strings/skolem_cache.h
++++ b/src/theory/strings/skolem_cache.h
+@@ -47,7 +47,7 @@ class SkolemCache
+    * return the constants they are entailed to be equal to. This argument is
+    * optional.
+    */
+-  SkolemCache(Rewriter* rr);
++  SkolemCache(NodeManager* nm, Rewriter* rr);
+   /** Identifiers for skolem types
+    *
+    * The comments below document the properties of each skolem introduced by
+@@ -151,7 +151,7 @@ class SkolemCache
+    * reduction of t. For example, the index variable for the term str.to_int(s)
+    * is used to quantify over the positions in string term s.
+    */
+-  static Node mkIndexVar(Node t);
++  static Node mkIndexVar(NodeManager* nm, Node t);
+ 
+   /** Make length variable
+    *
+@@ -161,7 +161,7 @@ class SkolemCache
+    * term str.indexof(s, r, n) is used to quantify over the lengths of strings
+    * that could be matched by r.
+    */
+-  static Node mkLengthVar(Node t);
++  static Node mkLengthVar(NodeManager* nm, Node t);
+   /**
+    * Make skolem function, possibly normalizing based on the rewriter of this
+    * class. This method should be used whenever it is not possible to define
+@@ -171,7 +171,10 @@ class SkolemCache
+    * Skolem we construct (in d_allSkolems), which is used for finite model
+    * finding.
+    */
+-  Node mkSkolemFun(SkolemId id, Node a = Node::null(), Node b = Node::null());
++  Node mkSkolemFun(NodeManager* nm,
++                   SkolemId id,
++                   Node a = Node::null(),
++                   Node b = Node::null());
+ 
+  private:
+   /**
+@@ -190,6 +193,8 @@ class SkolemCache
+    */
+   std::tuple<StringSkolemId, Node, Node> normalizeStringSkolem(
+       StringSkolemId id, Node a, Node b);
++  /** the associated node manager */
++  NodeManager* d_nm;
+   /** the optional rewriter */
+   Rewriter* d_rr;
+   /** string type */
+diff --git a/src/theory/strings/term_registry.cpp b/src/theory/strings/term_registry.cpp
+index 7a793a9fb..15e6c4473 100644
+--- a/src/theory/strings/term_registry.cpp
++++ b/src/theory/strings/term_registry.cpp
+@@ -47,7 +47,7 @@ TermRegistry::TermRegistry(Env& env,
+       d_statistics(statistics),
+       d_hasStrCode(false),
+       d_hasSeqUpdate(false),
+-      d_skCache(env.getRewriter()),
++      d_skCache(nodeManager(), env.getRewriter()),
+       d_aent(env.getRewriter()),
+       d_functionsTerms(context()),
+       d_inputVars(userContext()),
+diff --git a/src/theory/strings/theory_strings_preprocess.cpp b/src/theory/strings/theory_strings_preprocess.cpp
+index e7a3f0cf4..51558ffad 100644
+--- a/src/theory/strings/theory_strings_preprocess.cpp
++++ b/src/theory/strings/theory_strings_preprocess.cpp
+@@ -282,8 +282,8 @@ Node StringsPreprocess::reduce(Node t,
+     // skk = n
+     Node retN = skk.eqNode(n);
+ 
+-    Node i = SkolemCache::mkIndexVar(t);
+-    Node l = SkolemCache::mkLengthVar(t);
++    Node i = SkolemCache::mkIndexVar(nm, t);
++    Node l = SkolemCache::mkLengthVar(nm, t);
+     Node bvl = nm->mkNode(Kind::BOUND_VAR_LIST, i, l);
+     Node bound = nm->mkNode(
+         Kind::AND,
+@@ -362,7 +362,7 @@ Node StringsPreprocess::reduce(Node t,
+     std::vector<Node> conc;
+     std::vector< TypeNode > argTypes;
+     argTypes.push_back(nm->integerType());
+-    Node u = sc->mkSkolemFun(SkolemId::STRINGS_ITOS_RESULT, t[0]);
++    Node u = sc->mkSkolemFun(nm, SkolemId::STRINGS_ITOS_RESULT, t[0]);
+ 
+     Node lem = nm->mkNode(Kind::GEQ, leni, one);
+     conc.push_back(lem);
+@@ -373,7 +373,7 @@ Node StringsPreprocess::reduce(Node t,
+     lem = zero.eqNode(nm->mkNode(Kind::APPLY_UF, u, zero));
+     conc.push_back(lem);
+ 
+-    Node x = SkolemCache::mkIndexVar(t);
++    Node x = SkolemCache::mkIndexVar(nm, t);
+     Node xPlusOne = nm->mkNode(Kind::ADD, x, one);
+     Node xbv = nm->mkNode(Kind::BOUND_VAR_LIST, x);
+     Node g = nm->mkNode(Kind::AND,
+@@ -448,7 +448,7 @@ Node StringsPreprocess::reduce(Node t,
+ 
+     Node emp = Word::mkEmptyWord(s.getType());
+     Node sEmpty = s.eqNode(emp);
+-    Node k = sc->mkSkolemFun(SkolemId::STRINGS_STOI_NON_DIGIT, t[0]);
++    Node k = sc->mkSkolemFun(nm, SkolemId::STRINGS_STOI_NON_DIGIT, t[0]);
+     Node kc1 = nm->mkNode(Kind::GEQ, k, zero);
+     Node kc2 = nm->mkNode(Kind::LT, k, lens);
+     Node c0 = nm->mkNode(Kind::STRING_TO_CODE, nm->mkConst(String("0")));
+@@ -463,7 +463,7 @@ Node StringsPreprocess::reduce(Node t,
+     std::vector<Node> conc2;
+     std::vector< TypeNode > argTypes;
+     argTypes.push_back(nm->integerType());
+-    Node u = sc->mkSkolemFun(SkolemId::STRINGS_STOI_RESULT, t[0]);
++    Node u = sc->mkSkolemFun(nm, SkolemId::STRINGS_STOI_RESULT, t[0]);
+ 
+     lem = stoit.eqNode(nm->mkNode(Kind::APPLY_UF, u, lens));
+     conc2.push_back(lem);
+@@ -474,7 +474,7 @@ Node StringsPreprocess::reduce(Node t,
+     lem = nm->mkNode(Kind::GT, lens, zero);
+     conc2.push_back(lem);
+ 
+-    Node x = SkolemCache::mkIndexVar(t);
++    Node x = SkolemCache::mkIndexVar(nm, t);
+     Node xbv = nm->mkNode(Kind::BOUND_VAR_LIST, x);
+     Node g = nm->mkNode(Kind::AND,
+                         nm->mkNode(Kind::GEQ, x, zero),
+@@ -638,9 +638,9 @@ Node StringsPreprocess::reduce(Node t,
+     Node z = t[2];
+     Node rpaw = sc->mkSkolemCached(t, SkolemCache::SK_PURIFY, "rpaw");
+ 
+-    Node numOcc = sc->mkSkolemFun(SkolemId::STRINGS_NUM_OCCUR, x, y);
+-    Node us = sc->mkSkolemFun(SkolemId::STRINGS_REPLACE_ALL_RESULT, t);
+-    Node uf = sc->mkSkolemFun(SkolemId::STRINGS_OCCUR_INDEX, x, y);
++    Node numOcc = sc->mkSkolemFun(nm, SkolemId::STRINGS_NUM_OCCUR, x, y);
++    Node us = sc->mkSkolemFun(nm, SkolemId::STRINGS_REPLACE_ALL_RESULT, t);
++    Node uf = sc->mkSkolemFun(nm, SkolemId::STRINGS_OCCUR_INDEX, x, y);
+ 
+     Node ufno = nm->mkNode(Kind::APPLY_UF, uf, numOcc);
+     Node usno = nm->mkNode(Kind::APPLY_UF, us, numOcc);
+@@ -654,7 +654,7 @@ Node StringsPreprocess::reduce(Node t,
+     lem.push_back(nm->mkNode(Kind::APPLY_UF, uf, zero).eqNode(zero));
+     lem.push_back(nm->mkNode(Kind::STRING_INDEXOF, x, y, ufno).eqNode(negOne));
+ 
+-    Node i = SkolemCache::mkIndexVar(t);
++    Node i = SkolemCache::mkIndexVar(nm, t);
+     Node bvli = nm->mkNode(Kind::BOUND_VAR_LIST, i);
+     Node bound = nm->mkNode(Kind::AND,
+                             nm->mkNode(Kind::GEQ, i, zero),
+@@ -721,15 +721,15 @@ Node StringsPreprocess::reduce(Node t,
+     // k = z ++ x
+     Node res1 = k.eqNode(nm->mkNode(Kind::STRING_CONCAT, z, x));
+ 
+-    Node k1 = sc->mkSkolemFun(SkolemId::RE_FIRST_MATCH_PRE, x, y);
+-    Node k2 = sc->mkSkolemFun(SkolemId::RE_FIRST_MATCH, x, y);
+-    Node k3 = sc->mkSkolemFun(SkolemId::RE_FIRST_MATCH_POST, x, y);
++    Node k1 = sc->mkSkolemFun(nm, SkolemId::RE_FIRST_MATCH_PRE, x, y);
++    Node k2 = sc->mkSkolemFun(nm, SkolemId::RE_FIRST_MATCH, x, y);
++    Node k3 = sc->mkSkolemFun(nm, SkolemId::RE_FIRST_MATCH_POST, x, y);
+     Node k2Len = nm->mkNode(Kind::STRING_LENGTH, k2);
+     // x = k1 ++ k2 ++ k3
+     Node split = x.eqNode(nm->mkNode(Kind::STRING_CONCAT, k1, k2, k3));
+     // len(k1) = indexof_re(x, y, 0)
+     Node k1Len = nm->mkNode(Kind::STRING_LENGTH, k1).eqNode(idx);
+-    Node l = SkolemCache::mkLengthVar(t);
++    Node l = SkolemCache::mkLengthVar(nm, t);
+     Node bvll = nm->mkNode(Kind::BOUND_VAR_LIST, l);
+     Node bound = nm->mkNode(Kind::AND,
+                             nm->mkNode(Kind::LEQ, zero, l),
+@@ -770,10 +770,10 @@ Node StringsPreprocess::reduce(Node t,
+     Node z = t[2];
+     Node k = sc->mkSkolemCached(t, SkolemCache::SK_PURIFY, "k");
+ 
+-    Node numOcc = sc->mkSkolemFun(SkolemId::STRINGS_NUM_OCCUR_RE, x, y);
+-    Node us = sc->mkSkolemFun(SkolemId::STRINGS_REPLACE_ALL_RESULT, t);
+-    Node uf = sc->mkSkolemFun(SkolemId::STRINGS_OCCUR_INDEX_RE, x, y);
+-    Node ul = sc->mkSkolemFun(SkolemId::STRINGS_OCCUR_LEN_RE, x, y);
++    Node numOcc = sc->mkSkolemFun(nm, SkolemId::STRINGS_NUM_OCCUR_RE, x, y);
++    Node us = sc->mkSkolemFun(nm, SkolemId::STRINGS_REPLACE_ALL_RESULT, t);
++    Node uf = sc->mkSkolemFun(nm, SkolemId::STRINGS_OCCUR_INDEX_RE, x, y);
++    Node ul = sc->mkSkolemFun(nm, SkolemId::STRINGS_OCCUR_LEN_RE, x, y);
+ 
+     Node emp = Word::mkEmptyWord(t.getType());
+ 
+@@ -801,7 +801,7 @@ Node StringsPreprocess::reduce(Node t,
+     lemmas.push_back(
+         nm->mkNode(Kind::STRING_INDEXOF_RE, rem, yp, zero).eqNode(negOne));
+ 
+-    Node i = SkolemCache::mkIndexVar(t);
++    Node i = SkolemCache::mkIndexVar(nm, t);
+     Node bvli = nm->mkNode(Kind::BOUND_VAR_LIST, i);
+     Node bound = nm->mkNode(Kind::AND,
+                             nm->mkNode(Kind::GEQ, i, zero),
+@@ -823,7 +823,7 @@ Node StringsPreprocess::reduce(Node t,
+     flem.push_back(nm->mkNode(Kind::STRING_IN_REGEXP,
+                               nm->mkNode(Kind::STRING_SUBSTR, x, ii, ulip1),
+                               yp));
+-    Node l = SkolemCache::mkLengthVar(t);
++    Node l = SkolemCache::mkLengthVar(nm, t);
+     Node bvll = nm->mkNode(Kind::BOUND_VAR_LIST, l);
+     Node lenBound = nm->mkNode(Kind::AND,
+                                nm->mkNode(Kind::LT, zero, l),
+@@ -896,7 +896,7 @@ Node StringsPreprocess::reduce(Node t,
+     Node lenr = nm->mkNode(Kind::STRING_LENGTH, r);
+     Node eqLenA = lenx.eqNode(lenr);
+ 
+-    Node i = SkolemCache::mkIndexVar(t);
++    Node i = SkolemCache::mkIndexVar(nm, t);
+     Node bvi = nm->mkNode(Kind::BOUND_VAR_LIST, i);
+ 
+     Node ci = mkCodePointAtIndex(x, i);
+@@ -944,7 +944,7 @@ Node StringsPreprocess::reduce(Node t,
+     Node lenr = nm->mkNode(Kind::STRING_LENGTH, r);
+     Node eqLenA = lenx.eqNode(lenr);
+ 
+-    Node i = SkolemCache::mkIndexVar(t);
++    Node i = SkolemCache::mkIndexVar(nm, t);
+     Node bvi = nm->mkNode(Kind::BOUND_VAR_LIST, i);
+ 
+     Node revi = nm->mkNode(Kind::SUB,
+@@ -975,7 +975,7 @@ Node StringsPreprocess::reduce(Node t,
+     //negative contains reduces to existential
+     Node lenx = NodeManager::currentNM()->mkNode(Kind::STRING_LENGTH, x);
+     Node lens = NodeManager::currentNM()->mkNode(Kind::STRING_LENGTH, s);
+-    Node b1 = SkolemCache::mkIndexVar(t);
++    Node b1 = SkolemCache::mkIndexVar(nm, t);
+     Node b1v = NodeManager::currentNM()->mkNode(Kind::BOUND_VAR_LIST, b1);
+     Node body = NodeManager::currentNM()->mkNode(
+         Kind::AND,
+@@ -994,7 +994,7 @@ Node StringsPreprocess::reduce(Node t,
+   {
+     Node ltp = sc->mkTypedSkolemCached(
+         nm->booleanType(), t, SkolemCache::SK_PURIFY, "ltp");
+-    Node k = SkolemCache::mkIndexVar(t);
++    Node k = SkolemCache::mkIndexVar(nm, t);
+ 
+     std::vector<Node> conj;
+     conj.push_back(nm->mkNode(Kind::GEQ, k, zero));
+diff --git a/test/unit/theory/theory_strings_skolem_cache_black.cpp b/test/unit/theory/theory_strings_skolem_cache_black.cpp
+index d99931c75..459b5f5af 100644
+--- a/test/unit/theory/theory_strings_skolem_cache_black.cpp
++++ b/test/unit/theory/theory_strings_skolem_cache_black.cpp
+@@ -45,7 +45,7 @@ TEST_F(TestTheoryBlackStringsSkolemCache, mkSkolemCached)
+       d_nodeManager->mkNode(Kind::STRING_INDEXOF, a, b, zero));
+   Node sc = d_nodeManager->mkNode(Kind::STRING_SUBSTR, c, zero, n);
+ 
+-  SkolemCache sk(nullptr);
++  SkolemCache sk(d_nodeManager, nullptr);
+ 
+   // Check that skolems are shared between:
+   //
+-- 
+2.47.1
+

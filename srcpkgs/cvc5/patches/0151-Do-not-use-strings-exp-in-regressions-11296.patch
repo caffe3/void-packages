@@ -1,0 +1,3845 @@
+From b4e24d2af340b9a317bed48e6c2c8fe200b07b54 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 1 Nov 2024 15:30:30 -0500
+Subject: [PATCH 151/312] Do not use strings-exp in regressions (#11296)
+
+This is a deprecated option that is enabled by default in applicable
+logics. It is classified as "regular" meaning that it impacts
+`--safe-options`.
+
+This removes `--strings-exp` from our regressions, thus making more
+regressions legal for safe options. The motivation is to increase our
+testing coverage for safe-options.
+---
+ .../regress/cli/regress0/arith/projissue469-int-equality.smt2 | 2 +-
+ .../cli/regress0/deep-restart/dd.wrong-sat-020322.smt2        | 2 +-
+ .../cli/regress0/fp/proj-issue477-fp-set-comprehension.smt2   | 2 +-
+ test/regress/cli/regress0/ho/issue5371.smt2                   | 2 +-
+ test/regress/cli/regress0/ho/issue6536.smt2                   | 2 +-
+ test/regress/cli/regress0/issue5187-div-justification.smt2    | 2 +-
+ .../cli/regress0/preprocess/issue5943-non-clausal-simp.smt2   | 2 +-
+ test/regress/cli/regress0/proofs/dsl-rule-comp-types.smt2     | 2 +-
+ .../cli/regress0/proofs/issue9156-doublePropProof.smt2        | 2 +-
+ .../cli/regress0/proofs/issue9172-doublePropProof.smt2        | 2 +-
+ .../cli/regress0/proofs/proj-issue462-sat-proof-option.smt2   | 2 +-
+ test/regress/cli/regress0/push-pop/bug654-dd.smt2             | 2 +-
+ test/regress/cli/regress0/seq/array/array1.smt2               | 2 +-
+ test/regress/cli/regress0/seq/array/array2.smt2               | 2 +-
+ test/regress/cli/regress0/seq/array/array3.smt2               | 2 +-
+ test/regress/cli/regress0/seq/array/array4.smt2               | 2 +-
+ test/regress/cli/regress0/seq/array/distinct-update.smt2      | 2 +-
+ test/regress/cli/regress0/seq/array/model-dd-1220.smt2        | 2 +-
+ test/regress/cli/regress0/seq/array/nth-concat.smt2           | 2 +-
+ test/regress/cli/regress0/seq/array/update-fallback.smt2      | 2 +-
+ test/regress/cli/regress0/seq/array/update-word-eq.smt2       | 2 +-
+ test/regress/cli/regress0/seq/err1.smt2                       | 2 +-
+ test/regress/cli/regress0/seq/intseq.smt2                     | 2 +-
+ test/regress/cli/regress0/seq/intseq_dt.smt2                  | 2 +-
+ test/regress/cli/regress0/seq/issue4370-bool-terms.smt2       | 2 +-
+ test/regress/cli/regress0/seq/issue5543-unit-cmv.smt2         | 2 +-
+ test/regress/cli/regress0/seq/issue5547-seq-len-unit.smt2     | 2 +-
+ .../cli/regress0/seq/issue5547-small-seq-len-unit.smt2        | 2 +-
+ test/regress/cli/regress0/seq/nth-oob.smt2                    | 2 +-
+ test/regress/cli/regress0/seq/nth-update.smt2                 | 2 +-
+ test/regress/cli/regress0/seq/proj-issue384-subtypes.smt2     | 2 +-
+ test/regress/cli/regress0/seq/quant_len_trigger.smt2          | 2 +-
+ test/regress/cli/regress0/seq/query0-subtype-skel.smt2        | 2 +-
+ test/regress/cli/regress0/seq/query1-subtype.smt2             | 2 +-
+ test/regress/cli/regress0/seq/query2-subtype.smt2             | 2 +-
+ test/regress/cli/regress0/seq/seq-ex3.smt2                    | 2 +-
+ test/regress/cli/regress0/seq/seq-ex4.smt2                    | 2 +-
+ test/regress/cli/regress0/seq/seq-ex5-dd.smt2                 | 2 +-
+ test/regress/cli/regress0/seq/seq-ex5.smt2                    | 2 +-
+ test/regress/cli/regress0/seq/seq-expand-defs.smt2            | 2 +-
+ test/regress/cli/regress0/seq/seq-nth-uf-z.smt2               | 2 +-
+ test/regress/cli/regress0/seq/seq-nth-uf.smt2                 | 2 +-
+ test/regress/cli/regress0/seq/seq-nth-undef-unsat.smt2        | 2 +-
+ test/regress/cli/regress0/seq/seq-nth.smt2                    | 2 +-
+ test/regress/cli/regress0/seq/seq-types.smt2                  | 2 +-
+ test/regress/cli/regress0/seq/seqa-model-unsound-dd.smt2      | 2 +-
+ test/regress/cli/regress0/seq/shared-term-registration.smt2   | 2 +-
+ test/regress/cli/regress0/seq/update-concat-non-atomic.smt2   | 2 +-
+ test/regress/cli/regress0/seq/update-concat-non-atomic2.smt2  | 2 +-
+ test/regress/cli/regress0/seq/update-eq-unsat.smt2            | 2 +-
+ test/regress/cli/regress0/seq/update-eq.smt2                  | 2 +-
+ test/regress/cli/regress0/seq/wrong-model-020322.smt2         | 2 +-
+ test/regress/cli/regress0/seq/wrong-sat-020322.smt2           | 2 +-
+ test/regress/cli/regress0/strings/bug002.smt2                 | 2 +-
+ test/regress/cli/regress0/strings/bug612.smt2                 | 2 +-
+ test/regress/cli/regress0/strings/bug613.smt2                 | 2 +-
+ test/regress/cli/regress0/strings/code-perf.smt2              | 2 +-
+ test/regress/cli/regress0/strings/delta-trust-subs.smt2       | 2 +-
+ test/regress/cli/regress0/strings/idof-rewrites.smt2          | 2 +-
+ test/regress/cli/regress0/strings/idof-sem.smt2               | 2 +-
+ test/regress/cli/regress0/strings/ilc-like.smt2               | 2 +-
+ test/regress/cli/regress0/strings/indexof-sym-simp.smt2       | 2 +-
+ test/regress/cli/regress0/strings/indexof_re-start-index.smt2 | 2 +-
+ test/regress/cli/regress0/strings/indexof_re.smt2             | 2 +-
+ test/regress/cli/regress0/strings/issue1189.smt2              | 2 +-
+ test/regress/cli/regress0/strings/issue2958.smt2              | 2 +-
+ test/regress/cli/regress0/strings/issue3497.smt2              | 2 +-
+ test/regress/cli/regress0/strings/issue4376.smt2              | 2 +-
+ test/regress/cli/regress0/strings/issue4915.smt2              | 2 +-
+ test/regress/cli/regress0/strings/issue5090.smt2              | 2 +-
+ .../cli/regress0/strings/issue5384-double-conflict.smt2       | 2 +-
+ .../cli/regress0/strings/issue5542-strings-seq-mix.smt2       | 2 +-
+ test/regress/cli/regress0/strings/issue5771-eager-pp.smt2     | 2 +-
+ .../cli/regress0/strings/issue5915-repl-ctn-rewrite.smt2      | 2 +-
+ .../cli/regress0/strings/issue6203-3-unfold-trivial-true.smt2 | 2 +-
+ test/regress/cli/regress0/strings/issue6510-seq-bool.smt2     | 2 +-
+ .../cli/regress0/strings/issue6560-indexof-reduction.smt2     | 2 +-
+ test/regress/cli/regress0/strings/issue6604-re-elim.smt2      | 2 +-
+ .../regress0/strings/issue6643-ctn-decompose-conflict.smt2    | 2 +-
+ test/regress/cli/regress0/strings/issue8346-idof-max.smt2     | 2 +-
+ test/regress/cli/regress0/strings/issue8722-learned-rew.smt2  | 2 +-
+ test/regress/cli/regress0/strings/itos-entail.smt2            | 2 +-
+ test/regress/cli/regress0/strings/leadingzero001.smt2         | 2 +-
+ test/regress/cli/regress0/strings/leq.smt2                    | 2 +-
+ test/regress/cli/regress0/strings/norn-31.smt2                | 2 +-
+ test/regress/cli/regress0/strings/norn-simp-rew.smt2          | 2 +-
+ test/regress/cli/regress0/strings/re.all.smt2                 | 2 +-
+ test/regress/cli/regress0/strings/regexp_inclusion.smt2       | 2 +-
+ .../cli/regress0/strings/regexp_inclusion_reduction.smt2      | 2 +-
+ test/regress/cli/regress0/strings/repl-rewrites2.smt2         | 2 +-
+ test/regress/cli/regress0/strings/rewrites-v2.smt2            | 2 +-
+ test/regress/cli/regress0/strings/std2.6.1.smt2               | 2 +-
+ test/regress/cli/regress0/strings/strings-charat.cvc.smt2     | 2 +-
+ test/regress/cli/regress0/strings/strip-endpoint-itos.smt2    | 2 +-
+ test/regress/cli/regress0/strings/substr-rewrites.smt2        | 2 +-
+ test/regress/cli/regress0/strings/tolower-rrs.smt2            | 2 +-
+ test/regress/cli/regress0/strings/tolower-simple.smt2         | 2 +-
+ test/regress/cli/regress0/strings/type001.smt2                | 2 +-
+ test/regress/cli/regress0/strings/unicode-esc.smt2            | 2 +-
+ test/regress/cli/regress0/strings/unsound-0908.smt2           | 2 +-
+ test/regress/cli/regress0/strings/unsound-repl-rewrite.smt2   | 2 +-
+ test/regress/cli/regress1/bags/fold2.smt2                     | 2 +-
+ test/regress/cli/regress1/bags/fold3.smt2                     | 2 +-
+ test/regress/cli/regress1/bags/map4.smt2                      | 2 +-
+ test/regress/cli/regress1/bags/murxla2.smt2                   | 2 +-
+ test/regress/cli/regress1/bug590.smt2                         | 2 +-
+ test/regress/cli/regress1/cores/issue5604.smt2                | 2 +-
+ test/regress/cli/regress1/fmf/issue8096-non-const-rep.smt2    | 2 +-
+ test/regress/cli/regress1/nl/issue9183-3.smt2                 | 2 +-
+ .../cli/regress1/quantifiers/issue2970-string-var-elim.smt2   | 2 +-
+ test/regress/cli/regress1/quantifiers/issue3537.smt2          | 2 +-
+ .../cli/regress1/quantifiers/issue5288-vts-real-int.smt2      | 2 +-
+ test/regress/cli/regress1/quantifiers/issue5378-witness.smt2  | 2 +-
+ test/regress/cli/regress1/quantifiers/issue5469-aext.smt2     | 4 ++--
+ test/regress/cli/regress1/quantifiers/issue5470-aext.smt2     | 2 +-
+ test/regress/cli/regress1/quantifiers/issue5471-aext.smt2     | 2 +-
+ .../regress1/quantifiers/issue8572-sygus-inst-ic-purify.smt2  | 2 +-
+ test/regress/cli/regress1/quantifiers/proj-issue295.smt2      | 2 +-
+ test/regress/cli/regress1/quantifiers/seq-solved-enum.smt2    | 2 +-
+ .../regress/cli/regress1/quantifiers/seq-unsolved-ematch.smt2 | 2 +-
+ .../cli/regress1/quantifiers/seqa-unsat-unknown-110921.smt2   | 2 +-
+ test/regress/cli/regress1/seq/issue8148-2-const-mv.smt2       | 2 +-
+ test/regress/cli/regress1/seq/issue8148-const-mv.smt2         | 2 +-
+ test/regress/cli/regress1/seq/issue8936-nth-eager-red.smt2    | 2 +-
+ test/regress/cli/regress1/sets/issue5942-witness.smt2         | 2 +-
+ test/regress/cli/regress1/sets/issue8987-ho-exception.smt2    | 2 +-
+ test/regress/cli/regress1/sets/issue8987-ho.smt2              | 2 +-
+ .../cli/regress1/sets/proj-issue494-finite-leafof.smt2        | 2 +-
+ test/regress/cli/regress1/sets/set_fold3.smt2                 | 2 +-
+ test/regress/cli/regress1/strings/artemis-0512-nonterm.smt2   | 2 +-
+ test/regress/cli/regress1/strings/at001.smt2                  | 2 +-
+ test/regress/cli/regress1/strings/bug615.smt2                 | 2 +-
+ test/regress/cli/regress1/strings/bug682.smt2                 | 2 +-
+ test/regress/cli/regress1/strings/bug799-min.smt2             | 2 +-
+ test/regress/cli/regress1/strings/cee-norn-aes-trivially.smt2 | 4 ++--
+ test/regress/cli/regress1/strings/chapman150408.smt2          | 2 +-
+ test/regress/cli/regress1/strings/cmu-2db2-extf-reg.smt2      | 2 +-
+ test/regress/cli/regress1/strings/cmu-5042-0707-2.smt2        | 2 +-
+ test/regress/cli/regress1/strings/cmu-inc-nlpp-071516.smt2    | 2 +-
+ test/regress/cli/regress1/strings/cmu-substr-rw.smt2          | 2 +-
+ test/regress/cli/regress1/strings/code-sequence.smt2          | 2 +-
+ test/regress/cli/regress1/strings/complement-test.smt2        | 2 +-
+ test/regress/cli/regress1/strings/crash-1019.smt2             | 2 +-
+ test/regress/cli/regress1/strings/double-replace.smt2         | 2 +-
+ test/regress/cli/regress1/strings/fmf001.smt2                 | 2 +-
+ test/regress/cli/regress1/strings/fmf002.smt2                 | 2 +-
+ test/regress/cli/regress1/strings/gm-inc-071516-2.smt2        | 2 +-
+ test/regress/cli/regress1/strings/goodAI.smt2                 | 2 +-
+ test/regress/cli/regress1/strings/idof-handg.smt2             | 2 +-
+ test/regress/cli/regress1/strings/idof-nconst-index.smt2      | 2 +-
+ test/regress/cli/regress1/strings/idof-neg-index.smt2         | 2 +-
+ test/regress/cli/regress1/strings/idof-triv.smt2              | 2 +-
+ test/regress/cli/regress1/strings/ilc-l-nt.smt2               | 2 +-
+ test/regress/cli/regress1/strings/indexof_re_red.smt2         | 2 +-
+ .../cli/regress1/strings/instance1079-re-loop-cong.smt2       | 2 +-
+ .../regress1/strings/instance6561-dd-concat-unify-char.smt2   | 2 +-
+ test/regress/cli/regress1/strings/issue1105.smt2              | 2 +-
+ test/regress/cli/regress1/strings/issue1684-regex.smt2        | 2 +-
+ test/regress/cli/regress1/strings/issue2429-code.smt2         | 2 +-
+ test/regress/cli/regress1/strings/issue2981.smt2              | 2 +-
+ test/regress/cli/regress1/strings/issue2982.smt2              | 2 +-
+ test/regress/cli/regress1/strings/issue3090.smt2              | 2 +-
+ test/regress/cli/regress1/strings/issue3217.smt2              | 2 +-
+ test/regress/cli/regress1/strings/issue3272.smt2              | 2 +-
+ test/regress/cli/regress1/strings/issue3357.smt2              | 2 +-
+ .../cli/regress1/strings/issue3657-unexpectedUnsatCVC4.smt2   | 2 +-
+ test/regress/cli/regress1/strings/issue4379.smt2              | 2 +-
+ .../regress/cli/regress1/strings/issue4701_substr_splice.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue5330.smt2              | 2 +-
+ test/regress/cli/regress1/strings/issue5330_2.smt2            | 2 +-
+ test/regress/cli/regress1/strings/issue5510-re-consume.smt2   | 2 +-
+ test/regress/cli/regress1/strings/issue5520-re-consume.smt2   | 2 +-
+ .../regress/cli/regress1/strings/issue5610-2-infer-proxy.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue5610-infer-proxy.smt2  | 2 +-
+ test/regress/cli/regress1/strings/issue5611-deq-norm-emp.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue5692-infer-proxy.smt2  | 2 +-
+ .../cli/regress1/strings/issue5940-2-skc-len-conc.smt2        | 2 +-
+ test/regress/cli/regress1/strings/issue5940-skc-len-conc.smt2 | 2 +-
+ .../regress1/strings/issue6057-replace-re-all-jiwonparc.smt2  | 2 +-
+ .../cli/regress1/strings/issue6072-inc-no-const-reg.smt2      | 2 +-
+ .../cli/regress1/strings/issue6075-repl-len-one-rr.smt2       | 2 +-
+ test/regress/cli/regress1/strings/issue6101-2.smt2            | 2 +-
+ test/regress/cli/regress1/strings/issue6101.smt2              | 2 +-
+ .../cli/regress1/strings/issue6132-non-unique-skolem.smt2     | 2 +-
+ test/regress/cli/regress1/strings/issue6142-repl-inv-rew.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue6180-2-proxy-vars.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue6180-proxy-vars.smt2   | 2 +-
+ test/regress/cli/regress1/strings/issue6184-unsat-core.smt2   | 4 ++--
+ test/regress/cli/regress1/strings/issue6191-replace-all.smt2  | 2 +-
+ .../cli/regress1/strings/issue6203-1-substr-ctn-strip.smt2    | 2 +-
+ test/regress/cli/regress1/strings/issue6203-2-re-ccache.smt2  | 2 +-
+ test/regress/cli/regress1/strings/issue6203-6-replace-re.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue6214-2-sym-re-inc.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue6214-3-sym-re-inc.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue6214-4-sym-re-inc.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue6270.smt2              | 2 +-
+ test/regress/cli/regress1/strings/issue6271-2-rnf.smt2        | 2 +-
+ test/regress/cli/regress1/strings/issue6271-rnf.smt2          | 2 +-
+ .../cli/regress1/strings/issue6337-replace-re-all.smt2        | 2 +-
+ test/regress/cli/regress1/strings/issue6337-replace-re.smt2   | 2 +-
+ test/regress/cli/regress1/strings/issue6604-2.smt2            | 2 +-
+ test/regress/cli/regress1/strings/issue6635-rre.smt2          | 2 +-
+ test/regress/cli/regress1/strings/issue6653-4-rre.smt2        | 2 +-
+ test/regress/cli/regress1/strings/issue6653-rre-small.smt2    | 2 +-
+ test/regress/cli/regress1/strings/issue6653-rre.smt2          | 2 +-
+ .../cli/regress1/strings/issue6654-indexof_re_red.smt2        | 2 +-
+ test/regress/cli/regress1/strings/issue6766-re-elim-bv.smt2   | 2 +-
+ .../cli/regress1/strings/issue6777-seq-nth-eval-cm.smt2       | 2 +-
+ test/regress/cli/regress1/strings/issue6913.smt2              | 2 +-
+ .../cli/regress1/strings/issue6973-dup-lemma-conc.smt2        | 4 ++--
+ .../regress/cli/regress1/strings/issue8094-witness-model.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue8347-has-skolem.smt2   | 2 +-
+ test/regress/cli/regress1/strings/issue8434-nterm-str-rw.smt2 | 2 +-
+ test/regress/cli/regress1/strings/issue8890-inj-oob.smt2      | 2 +-
+ test/regress/cli/regress1/strings/issue8906-oob-exp.smt2      | 2 +-
+ .../cli/regress1/strings/issue8915-str-unit-model.smt2        | 2 +-
+ .../cli/regress1/strings/issue8916-str-unit-pairs.smt2        | 2 +-
+ .../cli/regress1/strings/issue8918-str-nth-crange-red.smt2    | 2 +-
+ .../regress/cli/regress1/strings/issue9040-re-inter-comp.smt2 | 2 +-
+ test/regress/cli/regress1/strings/loop007.smt2                | 2 +-
+ test/regress/cli/regress1/strings/loop008.smt2                | 2 +-
+ test/regress/cli/regress1/strings/loop009.smt2                | 2 +-
+ test/regress/cli/regress1/strings/no-lazy-pp-quant.smt2       | 2 +-
+ .../cli/regress1/strings/non-terminating-rewrite-aent.smt2    | 2 +-
+ .../regress1/strings/non_termination_regular_expression4.smt2 | 2 +-
+ test/regress/cli/regress1/strings/norn-13.smt2                | 2 +-
+ test/regress/cli/regress1/strings/norn-360.smt2               | 2 +-
+ test/regress/cli/regress1/strings/norn-ab.smt2                | 2 +-
+ test/regress/cli/regress1/strings/norn-nel-bug-052116.smt2    | 2 +-
+ test/regress/cli/regress1/strings/norn-simp-rew-sat.smt2      | 2 +-
+ test/regress/cli/regress1/strings/nt6-dd.smt2                 | 2 +-
+ test/regress/cli/regress1/strings/nterm-re-inter-sigma.smt2   | 2 +-
+ test/regress/cli/regress1/strings/pierre150331.smt2           | 2 +-
+ test/regress/cli/regress1/strings/policy_variable.smt2        | 2 +-
+ .../regress/cli/regress1/strings/pre_ctn_no_skolem_share.smt2 | 2 +-
+ test/regress/cli/regress1/strings/proj-issue281.smt2          | 2 +-
+ test/regress/cli/regress1/strings/proj-issue331.smt2          | 2 +-
+ .../cli/regress1/strings/proj-issue502-merge-type.smt2        | 2 +-
+ test/regress/cli/regress1/strings/proj254-re-elim-agg.smt2    | 2 +-
+ test/regress/cli/regress1/strings/prop-engine-order.smt2      | 2 +-
+ test/regress/cli/regress1/strings/query4674.smt2              | 2 +-
+ test/regress/cli/regress1/strings/query8485.smt2              | 2 +-
+ test/regress/cli/regress1/strings/re-agg-total1.smt2          | 2 +-
+ test/regress/cli/regress1/strings/re-agg-total2.smt2          | 2 +-
+ test/regress/cli/regress1/strings/re-elim-exact.smt2          | 2 +-
+ test/regress/cli/regress1/strings/re-mod-eq.smt2              | 2 +-
+ test/regress/cli/regress1/strings/re-neg-concat-reduct.smt2   | 2 +-
+ test/regress/cli/regress1/strings/re-neg-unfold-rev-a.smt2    | 2 +-
+ test/regress/cli/regress1/strings/re-unsound-080718.smt2      | 2 +-
+ .../regress1/strings/regexp-050-multiply-graft-fuzz-dd.smt2   | 2 +-
+ test/regress/cli/regress1/strings/regexp-strat-fix.smt2       | 2 +-
+ test/regress/cli/regress1/strings/regexp001.smt2              | 2 +-
+ test/regress/cli/regress1/strings/regexp002.smt2              | 2 +-
+ test/regress/cli/regress1/strings/regexp003.smt2              | 2 +-
+ test/regress/cli/regress1/strings/reloop.smt2                 | 2 +-
+ test/regress/cli/regress1/strings/repl-empty-sem.smt2         | 2 +-
+ test/regress/cli/regress1/strings/repl-soundness-sem.smt2     | 2 +-
+ test/regress/cli/regress1/strings/replaceall-len.smt2         | 2 +-
+ test/regress/cli/regress1/strings/replaceall-replace.smt2     | 2 +-
+ test/regress/cli/regress1/strings/rev-conv1.smt2              | 2 +-
+ test/regress/cli/regress1/strings/rev-ex1.smt2                | 2 +-
+ test/regress/cli/regress1/strings/rev-ex2.smt2                | 2 +-
+ test/regress/cli/regress1/strings/rev-ex3.smt2                | 2 +-
+ test/regress/cli/regress1/strings/rev-ex4.smt2                | 2 +-
+ test/regress/cli/regress1/strings/rev-ex5.smt2                | 2 +-
+ test/regress/cli/regress1/strings/rew-020618.smt2             | 2 +-
+ .../cli/regress1/strings/seq-quant-infinite-branch.smt2       | 2 +-
+ test/regress/cli/regress1/strings/seq-skeleton-gap.smt2       | 2 +-
+ test/regress/cli/regress1/strings/stoi-400million.smt2        | 2 +-
+ test/regress/cli/regress1/strings/stoi-solve.smt2             | 2 +-
+ test/regress/cli/regress1/strings/str-rev-simple-s.smt2       | 2 +-
+ test/regress/cli/regress1/strings/string-unsound-sem.smt2     | 2 +-
+ test/regress/cli/regress1/strings/strings-index-empty.smt2    | 2 +-
+ .../regress/cli/regress1/strings/strings-leq-trans-unsat.smt2 | 2 +-
+ test/regress/cli/regress1/strings/strings-lt-len5.smt2        | 2 +-
+ test/regress/cli/regress1/strings/strings-lt-simple.smt2      | 2 +-
+ test/regress/cli/regress1/strings/strip-endpt-sound.smt2      | 2 +-
+ test/regress/cli/regress1/strings/substr001.smt2              | 2 +-
+ test/regress/cli/regress1/strings/timeout-no-resp.smt2        | 2 +-
+ test/regress/cli/regress1/strings/to_upper_12.smt2            | 2 +-
+ test/regress/cli/regress1/strings/to_upper_over_concat.smt2   | 2 +-
+ test/regress/cli/regress1/strings/tolower-find.smt2           | 2 +-
+ test/regress/cli/regress1/strings/type002.smt2                | 2 +-
+ test/regress/cli/regress1/strings/type003.smt2                | 2 +-
+ test/regress/cli/regress1/strings/update-ex1.smt2             | 2 +-
+ test/regress/cli/regress1/strings/update-ex2.smt2             | 2 +-
+ test/regress/cli/regress1/strings/username_checker_min.smt2   | 2 +-
+ test/regress/cli/regress1/strings/witness-model.smt2          | 2 +-
+ test/regress/cli/regress1/sygus/issue3247.smt2                | 2 +-
+ test/regress/cli/regress1/sygus/issue8976-interp-check.smt2   | 2 +-
+ test/regress/cli/regress1/sygus/proj-issue183.smt2            | 2 +-
+ test/regress/cli/regress1/sygus/rex-strings-alarm.sy          | 2 +-
+ test/regress/cli/regress2/seq/err-model-soundness.smt2        | 2 +-
+ test/regress/cli/regress2/strings/bidir_star.smt2             | 2 +-
+ test/regress/cli/regress2/strings/cmi-split-cm-fail.smt2      | 2 +-
+ test/regress/cli/regress2/strings/cmu-dis-0707-3.smt2         | 2 +-
+ test/regress/cli/regress2/strings/cmu-disagree-0707-dd.smt2   | 2 +-
+ test/regress/cli/regress2/strings/cmu-prereg-fmf.smt2         | 2 +-
+ test/regress/cli/regress2/strings/cmu-repl-len-nterm.smt2     | 2 +-
+ test/regress/cli/regress2/strings/dd.trust-subs.smt2          | 2 +-
+ test/regress/cli/regress2/strings/issue3203.smt2              | 2 +-
+ test/regress/cli/regress2/strings/issue5381.smt2              | 2 +-
+ .../regress2/strings/issue6057-replace-re-all-simplified.smt2 | 2 +-
+ .../cli/regress2/strings/issue6057-replace-re-all.smt2        | 2 +-
+ .../cli/regress2/strings/issue6636-replace-re-all.smt2        | 2 +-
+ .../cli/regress2/strings/issue6637-replace-re-all.smt2        | 2 +-
+ test/regress/cli/regress2/strings/issue918.smt2               | 2 +-
+ .../regress2/strings/non_termination_regular_expression6.smt2 | 2 +-
+ test/regress/cli/regress2/strings/range-perf.smt2             | 2 +-
+ test/regress/cli/regress2/strings/repl-repl-i-no-push.smt2    | 2 +-
+ test/regress/cli/regress2/strings/repl-repl.smt2              | 2 +-
+ test/regress/cli/regress2/strings/replace_re.smt2             | 2 +-
+ test/regress/cli/regress2/strings/replaceall-diffrange.smt2   | 2 +-
+ test/regress/cli/regress2/strings/replaceall-len-c.smt2       | 2 +-
+ test/regress/cli/regress2/strings/small-1.smt2                | 2 +-
+ test/regress/cli/regress2/strings/update-ex3.smt2             | 2 +-
+ test/regress/cli/regress2/strings/update-ex4-seq.smt2         | 2 +-
+ test/regress/cli/regress3/bags/reduce_constants_dup.smt2      | 2 +-
+ test/regress/cli/regress3/strings/extf_d_perf.smt2            | 2 +-
+ test/regress/cli/regress3/strings/indexof_re_red.smt2         | 2 +-
+ test/regress/cli/regress3/strings/norn-dis-0707-3.smt2        | 2 +-
+ test/regress/cli/regress3/strings/replace_re_all.smt2         | 2 +-
+ test/regress/cli/regress4/issue2429.smt2                      | 2 +-
+ test/regress/cli/regress4/unsat-circ-reduce.smt2              | 2 +-
+ 324 files changed, 328 insertions(+), 328 deletions(-)
+
+diff --git a/test/regress/cli/regress0/arith/projissue469-int-equality.smt2 b/test/regress/cli/regress0/arith/projissue469-int-equality.smt2
+index 9171cc385..9a6d0678c 100644
+--- a/test/regress/cli/regress0/arith/projissue469-int-equality.smt2
++++ b/test/regress/cli/regress0/arith/projissue469-int-equality.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-option :nl-ext-ent-conf true)
+diff --git a/test/regress/cli/regress0/deep-restart/dd.wrong-sat-020322.smt2 b/test/regress/cli/regress0/deep-restart/dd.wrong-sat-020322.smt2
+index ed8cbf55d..3ed19f61e 100644
+--- a/test/regress/cli/regress0/deep-restart/dd.wrong-sat-020322.smt2
++++ b/test/regress/cli/regress0/deep-restart/dd.wrong-sat-020322.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --deep-restart=input-and-prop --strings-exp
++; COMMAND-LINE: --deep-restart=input-and-prop
+ ; EXPECT: unsat
+ ; DISABLE-TESTER: unsat-core
+ ; DISABLE-TESTER: proof
+diff --git a/test/regress/cli/regress0/fp/proj-issue477-fp-set-comprehension.smt2 b/test/regress/cli/regress0/fp/proj-issue477-fp-set-comprehension.smt2
+index 2d1a3a796..a4730f34b 100644
+--- a/test/regress/cli/regress0/fp/proj-issue477-fp-set-comprehension.smt2
++++ b/test/regress/cli/regress0/fp/proj-issue477-fp-set-comprehension.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unknown
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-option :sets-exp true)
+ (assert (= (seq.nth (seq.unit false) (bag.count (_ NaN 11 53) (bag (_ +zero 11 53) 1))) (seq.nth (seq.extract (seq.unit false) (bag.count (_ NaN 11 53) (bag (_ +zero 11 53) 1)) (bag.count (set.choose (set.comprehension ((_x14 Float64)) false _x14)) (bag (_ +zero 11 53) 1))) 0)))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/ho/issue5371.smt2 b/test/regress/cli/regress0/ho/issue5371.smt2
+index 740a0dc23..9c2b48493 100644
+--- a/test/regress/cli/regress0/ho/issue5371.smt2
++++ b/test/regress/cli/regress0/ho/issue5371.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic HO_ALL)
+ (declare-fun a (Bool) Bool)
+diff --git a/test/regress/cli/regress0/ho/issue6536.smt2 b/test/regress/cli/regress0/ho/issue6536.smt2
+index 5f27e543a..2388f46f3 100644
+--- a/test/regress/cli/regress0/ho/issue6536.smt2
++++ b/test/regress/cli/regress0/ho/issue6536.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --mbqi
++; COMMAND-LINE: --mbqi
+ ; EXPECT: sat
+ (set-logic HO_ALL)
+ (declare-datatypes ((a 0) (b 0)) (((c) (d)) ((h (j b)) (e))))
+diff --git a/test/regress/cli/regress0/issue5187-div-justification.smt2 b/test/regress/cli/regress0/issue5187-div-justification.smt2
+index 5b6dd6a27..4586eb108 100644
+--- a/test/regress/cli/regress0/issue5187-div-justification.smt2
++++ b/test/regress/cli/regress0/issue5187-div-justification.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp -i
++; COMMAND-LINE: -i
+ ; EXPECT: unsat
+ ; EXPECT: unsat
+ ; EXPECT: unsat
+diff --git a/test/regress/cli/regress0/preprocess/issue5943-non-clausal-simp.smt2 b/test/regress/cli/regress0/preprocess/issue5943-non-clausal-simp.smt2
+index f3abedcdf..2c6c588f9 100644
+--- a/test/regress/cli/regress0/preprocess/issue5943-non-clausal-simp.smt2
++++ b/test/regress/cli/regress0/preprocess/issue5943-non-clausal-simp.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic QF_SLIA)
+ (declare-fun s () String)
+diff --git a/test/regress/cli/regress0/proofs/dsl-rule-comp-types.smt2 b/test/regress/cli/regress0/proofs/dsl-rule-comp-types.smt2
+index db87b3117..d684bb2a4 100644
+--- a/test/regress/cli/regress0/proofs/dsl-rule-comp-types.smt2
++++ b/test/regress/cli/regress0/proofs/dsl-rule-comp-types.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress0/proofs/issue9156-doublePropProof.smt2 b/test/regress/cli/regress0/proofs/issue9156-doublePropProof.smt2
+index a863d8bba..b378b2ace 100644
+--- a/test/regress/cli/regress0/proofs/issue9156-doublePropProof.smt2
++++ b/test/regress/cli/regress0/proofs/issue9156-doublePropProof.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --check-proofs --check-unsat-cores
++; COMMAND-LINE: --check-proofs --check-unsat-cores
+ ; EXPECT: unsat
+ (set-logic QF_SLIA)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress0/proofs/issue9172-doublePropProof.smt2 b/test/regress/cli/regress0/proofs/issue9172-doublePropProof.smt2
+index 508c9b1bb..de7bfec81 100644
+--- a/test/regress/cli/regress0/proofs/issue9172-doublePropProof.smt2
++++ b/test/regress/cli/regress0/proofs/issue9172-doublePropProof.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --check-proofs --check-unsat-cores
++; COMMAND-LINE: --check-proofs --check-unsat-cores
+ ; EXPECT: unsat
+ (set-logic QF_SLIA)
+ (declare-fun b () String)
+diff --git a/test/regress/cli/regress0/proofs/proj-issue462-sat-proof-option.smt2 b/test/regress/cli/regress0/proofs/proj-issue462-sat-proof-option.smt2
+index 2f04d62fa..d678550d6 100644
+--- a/test/regress/cli/regress0/proofs/proj-issue462-sat-proof-option.smt2
++++ b/test/regress/cli/regress0/proofs/proj-issue462-sat-proof-option.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/push-pop/bug654-dd.smt2 b/test/regress/cli/regress0/push-pop/bug654-dd.smt2
+index c1ca4f015..ec8af65b2 100644
+--- a/test/regress/cli/regress0/push-pop/bug654-dd.smt2
++++ b/test/regress/cli/regress0/push-pop/bug654-dd.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --incremental --fmf-fun --strings-exp
++; COMMAND-LINE: --incremental --fmf-fun
+ ; DISABLE-TESTER: model
+ (set-logic ALL)
+ (declare-datatypes ((List_T_C 0) (T_CustomerType 0)) (
+diff --git a/test/regress/cli/regress0/seq/array/array1.smt2 b/test/regress/cli/regress0/seq/array/array1.smt2
+index c447649c1..105d4987f 100644
+--- a/test/regress/cli/regress0/seq/array/array1.smt2
++++ b/test/regress/cli/regress0/seq/array/array1.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --incremental --strings-exp --seq-array=eager
++; COMMAND-LINE: --incremental --seq-array=eager
+ ; EXPECT: unsat
+ 
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress0/seq/array/array2.smt2 b/test/regress/cli/regress0/seq/array/array2.smt2
+index 51b98a6c9..1348e7a4b 100644
+--- a/test/regress/cli/regress0/seq/array/array2.smt2
++++ b/test/regress/cli/regress0/seq/array/array2.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --incremental --strings-exp --seq-array=eager
++; COMMAND-LINE: --incremental --seq-array=eager
+ ; EXPECT: unsat
+ 
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress0/seq/array/array3.smt2 b/test/regress/cli/regress0/seq/array/array3.smt2
+index 97a16a6fa..4acfc43c0 100644
+--- a/test/regress/cli/regress0/seq/array/array3.smt2
++++ b/test/regress/cli/regress0/seq/array/array3.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --incremental --strings-exp --seq-array=lazy
++; COMMAND-LINE: --incremental --seq-array=lazy
+ ; EXPECT: sat
+ 
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress0/seq/array/array4.smt2 b/test/regress/cli/regress0/seq/array/array4.smt2
+index 9a94fc13b..1f97b9053 100644
+--- a/test/regress/cli/regress0/seq/array/array4.smt2
++++ b/test/regress/cli/regress0/seq/array/array4.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --incremental --strings-exp --seq-array=eager
++; COMMAND-LINE: --incremental --seq-array=eager
+ ; EXPECT: unsat
+ 
+ (set-info :smt-lib-version 2.6)
+diff --git a/test/regress/cli/regress0/seq/array/distinct-update.smt2 b/test/regress/cli/regress0/seq/array/distinct-update.smt2
+index 3abd4de51..982c8ced6 100644
+--- a/test/regress/cli/regress0/seq/array/distinct-update.smt2
++++ b/test/regress/cli/regress0/seq/array/distinct-update.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=eager
++; COMMAND-LINE: --seq-array=eager
+ (set-logic QF_SLIA)
+ (set-info :status unsat)
+ 
+diff --git a/test/regress/cli/regress0/seq/array/model-dd-1220.smt2 b/test/regress/cli/regress0/seq/array/model-dd-1220.smt2
+index 411f0132f..c8a8dfa58 100644
+--- a/test/regress/cli/regress0/seq/array/model-dd-1220.smt2
++++ b/test/regress/cli/regress0/seq/array/model-dd-1220.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --seq-array=lazy --strings-exp
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/seq/array/nth-concat.smt2 b/test/regress/cli/regress0/seq/array/nth-concat.smt2
+index 039ee44b4..639f03ca8 100644
+--- a/test/regress/cli/regress0/seq/array/nth-concat.smt2
++++ b/test/regress/cli/regress0/seq/array/nth-concat.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --incremental --strings-exp --seq-array=eager
++; COMMAND-LINE: --incremental --seq-array=eager
+ ; EXPECT: unsat
+ 
+ (set-logic QF_SLIA)
+diff --git a/test/regress/cli/regress0/seq/array/update-fallback.smt2 b/test/regress/cli/regress0/seq/array/update-fallback.smt2
+index 6715f69d7..494d0618a 100644
+--- a/test/regress/cli/regress0/seq/array/update-fallback.smt2
++++ b/test/regress/cli/regress0/seq/array/update-fallback.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: unsat
+ 
+ (set-logic QF_SLIA)
+diff --git a/test/regress/cli/regress0/seq/array/update-word-eq.smt2 b/test/regress/cli/regress0/seq/array/update-word-eq.smt2
+index f81077c6f..009dfa71d 100644
+--- a/test/regress/cli/regress0/seq/array/update-word-eq.smt2
++++ b/test/regress/cli/regress0/seq/array/update-word-eq.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=eager
++; COMMAND-LINE: --seq-array=eager
+ (set-logic QF_SLIA)
+ (set-info :status unsat)
+ 
+diff --git a/test/regress/cli/regress0/seq/err1.smt2 b/test/regress/cli/regress0/seq/err1.smt2
+index 85f9c8903..428b2aff7 100644
+--- a/test/regress/cli/regress0/seq/err1.smt2
++++ b/test/regress/cli/regress0/seq/err1.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-sort E 0)
+diff --git a/test/regress/cli/regress0/seq/intseq.smt2 b/test/regress/cli/regress0/seq/intseq.smt2
+index 25bbd34d8..071f8ebb0 100644
+--- a/test/regress/cli/regress0/seq/intseq.smt2
++++ b/test/regress/cli/regress0/seq/intseq.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ;EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun tickleBool (Bool) Bool)
+diff --git a/test/regress/cli/regress0/seq/intseq_dt.smt2 b/test/regress/cli/regress0/seq/intseq_dt.smt2
+index e7bdcd94b..36d2f4842 100644
+--- a/test/regress/cli/regress0/seq/intseq_dt.smt2
++++ b/test/regress/cli/regress0/seq/intseq_dt.smt2
+@@ -1,4 +1,4 @@
+-;COMMAND-LINE: --dt-nested-rec --strings-exp
++;COMMAND-LINE: --dt-nested-rec
+ ;EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun tickleBool (Bool) Bool)
+diff --git a/test/regress/cli/regress0/seq/issue4370-bool-terms.smt2 b/test/regress/cli/regress0/seq/issue4370-bool-terms.smt2
+index 7d3a7a2d9..36ae809b2 100644
+--- a/test/regress/cli/regress0/seq/issue4370-bool-terms.smt2
++++ b/test/regress/cli/regress0/seq/issue4370-bool-terms.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp -q
++; COMMAND-LINE: -q
+ (set-logic ALL)
+ (set-info :status sat)
+ (declare-datatypes ((a 0)) (((b))))
+diff --git a/test/regress/cli/regress0/seq/issue5543-unit-cmv.smt2 b/test/regress/cli/regress0/seq/issue5543-unit-cmv.smt2
+index 8a9a2d416..0343d2ac8 100644
+--- a/test/regress/cli/regress0/seq/issue5543-unit-cmv.smt2
++++ b/test/regress/cli/regress0/seq/issue5543-unit-cmv.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () (Seq (Seq Int)))
+diff --git a/test/regress/cli/regress0/seq/issue5547-seq-len-unit.smt2 b/test/regress/cli/regress0/seq/issue5547-seq-len-unit.smt2
+index 40b43d318..b0684f089 100644
+--- a/test/regress/cli/regress0/seq/issue5547-seq-len-unit.smt2
++++ b/test/regress/cli/regress0/seq/issue5547-seq-len-unit.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-fun seq3 () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/issue5547-small-seq-len-unit.smt2 b/test/regress/cli/regress0/seq/issue5547-small-seq-len-unit.smt2
+index 848975c96..ef1756d73 100644
+--- a/test/regress/cli/regress0/seq/issue5547-small-seq-len-unit.smt2
++++ b/test/regress/cli/regress0/seq/issue5547-small-seq-len-unit.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --simplification=none --strings-exp
++; COMMAND-LINE: --simplification=none
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/nth-oob.smt2 b/test/regress/cli/regress0/seq/nth-oob.smt2
+index 723dd5831..c442f0f4b 100644
+--- a/test/regress/cli/regress0/seq/nth-oob.smt2
++++ b/test/regress/cli/regress0/seq/nth-oob.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: unsat
+ 
+ (set-logic QF_SLIA)
+diff --git a/test/regress/cli/regress0/seq/nth-update.smt2 b/test/regress/cli/regress0/seq/nth-update.smt2
+index 7774eb752..28d5b4b8e 100644
+--- a/test/regress/cli/regress0/seq/nth-update.smt2
++++ b/test/regress/cli/regress0/seq/nth-update.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-const x (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/proj-issue384-subtypes.smt2 b/test/regress/cli/regress0/seq/proj-issue384-subtypes.smt2
+index c76f7fa88..21b3ea178 100644
+--- a/test/regress/cli/regress0/seq/proj-issue384-subtypes.smt2
++++ b/test/regress/cli/regress0/seq/proj-issue384-subtypes.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+ (set-option :global-declarations true)
+-(set-option :strings-exp true)
++
+ (assert (let ((_let0 (seq.unit real.pi)))(seq.suffixof _let0 (seq.update _let0 (seq.len _let0) _let0))))
+ (assert (let ((_let0 real.pi))(let ((_let1 (- _let0)))(let ((_let2 (+ _let1 _let0)))(>= _let1 (* _let2 _let2) _let1)))))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/seq/quant_len_trigger.smt2 b/test/regress/cli/regress0/seq/quant_len_trigger.smt2
+index 08fdb4a43..fa4c70804 100644
+--- a/test/regress/cli/regress0/seq/quant_len_trigger.smt2
++++ b/test/regress/cli/regress0/seq/quant_len_trigger.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unsat
+ 
+-(set-option :strings-exp true)
++
+ (set-logic ALL)
+ 
+ (assert (forall ((x (Seq Int)) (xx (Seq Int)) ) (=> (and (= (seq.len x) (seq.len xx)) (forall ((i Int) )   (=> (and (<= 0 i) (< i (seq.len x))) (= (seq.nth x i) (seq.nth xx i))))) (= x xx))))
+diff --git a/test/regress/cli/regress0/seq/query0-subtype-skel.smt2 b/test/regress/cli/regress0/seq/query0-subtype-skel.smt2
+index 6eb7c2b9e..b250adc29 100644
+--- a/test/regress/cli/regress0/seq/query0-subtype-skel.smt2
++++ b/test/regress/cli/regress0/seq/query0-subtype-skel.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/seq/query1-subtype.smt2 b/test/regress/cli/regress0/seq/query1-subtype.smt2
+index 6039c62f2..d9a560116 100644
+--- a/test/regress/cli/regress0/seq/query1-subtype.smt2
++++ b/test/regress/cli/regress0/seq/query1-subtype.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --simplification=none
++; COMMAND-LINE: --simplification=none
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun x () (Seq Real))
+diff --git a/test/regress/cli/regress0/seq/query2-subtype.smt2 b/test/regress/cli/regress0/seq/query2-subtype.smt2
+index 10928d98f..e41ba77bc 100644
+--- a/test/regress/cli/regress0/seq/query2-subtype.smt2
++++ b/test/regress/cli/regress0/seq/query2-subtype.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --simplification=none --strings-fmf
++; COMMAND-LINE: --simplification=none --strings-fmf
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun x () (Seq Real))
+diff --git a/test/regress/cli/regress0/seq/seq-ex3.smt2 b/test/regress/cli/regress0/seq/seq-ex3.smt2
+index dfaa12301..ed1a2ff46 100644
+--- a/test/regress/cli/regress0/seq/seq-ex3.smt2
++++ b/test/regress/cli/regress0/seq/seq-ex3.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (set-info :status unsat)
+ (declare-fun x () (Seq (Seq Int)))
+diff --git a/test/regress/cli/regress0/seq/seq-ex4.smt2 b/test/regress/cli/regress0/seq/seq-ex4.smt2
+index 439a7b0e0..4e228d483 100644
+--- a/test/regress/cli/regress0/seq/seq-ex4.smt2
++++ b/test/regress/cli/regress0/seq/seq-ex4.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (set-info :status unsat)
+ (declare-fun z () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/seq-ex5-dd.smt2 b/test/regress/cli/regress0/seq/seq-ex5-dd.smt2
+index 8ec8efa9d..f67b368a1 100644
+--- a/test/regress/cli/regress0/seq/seq-ex5-dd.smt2
++++ b/test/regress/cli/regress0/seq/seq-ex5-dd.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+ (declare-fun z () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/seq-ex5.smt2 b/test/regress/cli/regress0/seq/seq-ex5.smt2
+index 9fa72bc6b..2a7763521 100644
+--- a/test/regress/cli/regress0/seq/seq-ex5.smt2
++++ b/test/regress/cli/regress0/seq/seq-ex5.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun z () (Seq Int))
+ (declare-fun w () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/seq-expand-defs.smt2 b/test/regress/cli/regress0/seq/seq-expand-defs.smt2
+index 3e51627c0..7d451b9da 100644
+--- a/test/regress/cli/regress0/seq/seq-expand-defs.smt2
++++ b/test/regress/cli/regress0/seq/seq-expand-defs.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ ; EXPECT: (((seq.nth y 7) 404))
+ ; EXPECT: (((str.from_code x) "?"))
+diff --git a/test/regress/cli/regress0/seq/seq-nth-uf-z.smt2 b/test/regress/cli/regress0/seq/seq-nth-uf-z.smt2
+index 6ab429324..ca6f07013 100644
+--- a/test/regress/cli/regress0/seq/seq-nth-uf-z.smt2
++++ b/test/regress/cli/regress0/seq/seq-nth-uf-z.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ;EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun a () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/seq-nth-uf.smt2 b/test/regress/cli/regress0/seq/seq-nth-uf.smt2
+index 9c569e6e7..60adf14ef 100644
+--- a/test/regress/cli/regress0/seq/seq-nth-uf.smt2
++++ b/test/regress/cli/regress0/seq/seq-nth-uf.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_UFSLIA)
+ (set-info :status unsat)
+ (declare-fun a () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/seq-nth-undef-unsat.smt2 b/test/regress/cli/regress0/seq/seq-nth-undef-unsat.smt2
+index 85382f90e..5b4bf600c 100644
+--- a/test/regress/cli/regress0/seq/seq-nth-undef-unsat.smt2
++++ b/test/regress/cli/regress0/seq/seq-nth-undef-unsat.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ;EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun s () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/seq-nth.smt2 b/test/regress/cli/regress0/seq/seq-nth.smt2
+index 3ff2ab096..07cc92f6d 100644
+--- a/test/regress/cli/regress0/seq/seq-nth.smt2
++++ b/test/regress/cli/regress0/seq/seq-nth.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ;EXPECT: sat
+ (set-logic ALL)
+ (declare-fun s () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/seq-types.smt2 b/test/regress/cli/regress0/seq/seq-types.smt2
+index 3facf688a..5ef6ce024 100644
+--- a/test/regress/cli/regress0/seq/seq-types.smt2
++++ b/test/regress/cli/regress0/seq/seq-types.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ;EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun s () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/seqa-model-unsound-dd.smt2 b/test/regress/cli/regress0/seq/seqa-model-unsound-dd.smt2
+index 0caf4701a..eff11f643 100644
+--- a/test/regress/cli/regress0/seq/seqa-model-unsound-dd.smt2
++++ b/test/regress/cli/regress0/seq/seqa-model-unsound-dd.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=eager
++; COMMAND-LINE: --seq-array=eager
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-sort T 0)
+diff --git a/test/regress/cli/regress0/seq/shared-term-registration.smt2 b/test/regress/cli/regress0/seq/shared-term-registration.smt2
+index 25f7ffcca..3e080062c 100644
+--- a/test/regress/cli/regress0/seq/shared-term-registration.smt2
++++ b/test/regress/cli/regress0/seq/shared-term-registration.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: unknown
+ (set-logic ALL)
+ (declare-sort T@$ 0)
+diff --git a/test/regress/cli/regress0/seq/update-concat-non-atomic.smt2 b/test/regress/cli/regress0/seq/update-concat-non-atomic.smt2
+index b7932042b..a992df823 100644
+--- a/test/regress/cli/regress0/seq/update-concat-non-atomic.smt2
++++ b/test/regress/cli/regress0/seq/update-concat-non-atomic.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-sort S 0)
+diff --git a/test/regress/cli/regress0/seq/update-concat-non-atomic2.smt2 b/test/regress/cli/regress0/seq/update-concat-non-atomic2.smt2
+index e4a581af9..feaeee316 100644
+--- a/test/regress/cli/regress0/seq/update-concat-non-atomic2.smt2
++++ b/test/regress/cli/regress0/seq/update-concat-non-atomic2.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-sort S 0)
+diff --git a/test/regress/cli/regress0/seq/update-eq-unsat.smt2 b/test/regress/cli/regress0/seq/update-eq-unsat.smt2
+index 554041a04..73da06806 100644
+--- a/test/regress/cli/regress0/seq/update-eq-unsat.smt2
++++ b/test/regress/cli/regress0/seq/update-eq-unsat.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=eager
++; COMMAND-LINE: --seq-array=eager
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun x () (Seq Int))
+diff --git a/test/regress/cli/regress0/seq/update-eq.smt2 b/test/regress/cli/regress0/seq/update-eq.smt2
+index 30d49ad4c..dcca37e01 100644
+--- a/test/regress/cli/regress0/seq/update-eq.smt2
++++ b/test/regress/cli/regress0/seq/update-eq.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ (set-logic QF_UFSLIA)
+ (declare-sort E 0)
+ (declare-fun x () (Seq E))
+diff --git a/test/regress/cli/regress0/seq/wrong-model-020322.smt2 b/test/regress/cli/regress0/seq/wrong-model-020322.smt2
+index f9e622ad0..b843e6433 100644
+--- a/test/regress/cli/regress0/seq/wrong-model-020322.smt2
++++ b/test/regress/cli/regress0/seq/wrong-model-020322.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/seq/wrong-sat-020322.smt2 b/test/regress/cli/regress0/seq/wrong-sat-020322.smt2
+index bce60534b..579eb20e6 100644
+--- a/test/regress/cli/regress0/seq/wrong-sat-020322.smt2
++++ b/test/regress/cli/regress0/seq/wrong-sat-020322.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress0/strings/bug002.smt2 b/test/regress/cli/regress0/strings/bug002.smt2
+index f35a5fffb..c45de2117 100644
+--- a/test/regress/cli/regress0/strings/bug002.smt2
++++ b/test/regress/cli/regress0/strings/bug002.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ASLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ ; regex = [\*-,\t\*-\|](.{6,}()?)+
+diff --git a/test/regress/cli/regress0/strings/bug612.smt2 b/test/regress/cli/regress0/strings/bug612.smt2
+index b627e2064..3b324518e 100644
+--- a/test/regress/cli/regress0/strings/bug612.smt2
++++ b/test/regress/cli/regress0/strings/bug612.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_S)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ 
+ (declare-fun s () String)
+diff --git a/test/regress/cli/regress0/strings/bug613.smt2 b/test/regress/cli/regress0/strings/bug613.smt2
+index 09c5e9a2a..cc7f79cf1 100644
+--- a/test/regress/cli/regress0/strings/bug613.smt2
++++ b/test/regress/cli/regress0/strings/bug613.smt2
+@@ -1,6 +1,6 @@
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun s () String)
+ (assert (= s "<a></a>"))
+diff --git a/test/regress/cli/regress0/strings/code-perf.smt2 b/test/regress/cli/regress0/strings/code-perf.smt2
+index e2b41c67f..39608c23c 100644
+--- a/test/regress/cli/regress0/strings/code-perf.smt2
++++ b/test/regress/cli/regress0/strings/code-perf.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+diff --git a/test/regress/cli/regress0/strings/delta-trust-subs.smt2 b/test/regress/cli/regress0/strings/delta-trust-subs.smt2
+index eb3c90374..371120f78 100644
+--- a/test/regress/cli/regress0/strings/delta-trust-subs.smt2
++++ b/test/regress/cli/regress0/strings/delta-trust-subs.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress0/strings/idof-rewrites.smt2 b/test/regress/cli/regress0/strings/idof-rewrites.smt2
+index ce77fed0a..2f2891aa7 100644
+--- a/test/regress/cli/regress0/strings/idof-rewrites.smt2
++++ b/test/regress/cli/regress0/strings/idof-rewrites.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-fun s () String)
+ (declare-fun t () String)
+ 
+diff --git a/test/regress/cli/regress0/strings/idof-sem.smt2 b/test/regress/cli/regress0/strings/idof-sem.smt2
+index 0de8f6a67..5fc95acfb 100644
+--- a/test/regress/cli/regress0/strings/idof-sem.smt2
++++ b/test/regress/cli/regress0/strings/idof-sem.smt2
+@@ -1,5 +1,5 @@
+ (set-logic SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun x () String)
+ (assert (not (= (str.indexof x "" 0) (- 1))))
+diff --git a/test/regress/cli/regress0/strings/ilc-like.smt2 b/test/regress/cli/regress0/strings/ilc-like.smt2
+index 6c7b0b501..7bca22756 100644
+--- a/test/regress/cli/regress0/strings/ilc-like.smt2
++++ b/test/regress/cli/regress0/strings/ilc-like.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+  
+ (declare-fun s () String)
+ (assert (= s "I like cookies."))
+diff --git a/test/regress/cli/regress0/strings/indexof-sym-simp.smt2 b/test/regress/cli/regress0/strings/indexof-sym-simp.smt2
+index f492ca2b0..64b55eb46 100644
+--- a/test/regress/cli/regress0/strings/indexof-sym-simp.smt2
++++ b/test/regress/cli/regress0/strings/indexof-sym-simp.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ (declare-fun s () String)
+ (declare-fun t () String)
+ (declare-fun r () String)
+diff --git a/test/regress/cli/regress0/strings/indexof_re-start-index.smt2 b/test/regress/cli/regress0/strings/indexof_re-start-index.smt2
+index 9f17c5bef..3f6cc2342 100644
+--- a/test/regress/cli/regress0/strings/indexof_re-start-index.smt2
++++ b/test/regress/cli/regress0/strings/indexof_re-start-index.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-fun i () Int)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress0/strings/indexof_re.smt2 b/test/regress/cli/regress0/strings/indexof_re.smt2
+index 72c5d7ee7..e244cf71e 100644
+--- a/test/regress/cli/regress0/strings/indexof_re.smt2
++++ b/test/regress/cli/regress0/strings/indexof_re.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-const x String)
+ (assert (or
+diff --git a/test/regress/cli/regress0/strings/issue1189.smt2 b/test/regress/cli/regress0/strings/issue1189.smt2
+index 18905ae65..70ff4af1a 100644
+--- a/test/regress/cli/regress0/strings/issue1189.smt2
++++ b/test/regress/cli/regress0/strings/issue1189.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ (declare-const x Int)
+ (assert (str.contains (str.++ "some text" (str.from_int x) "tor") "vector"))
+ (check-sat)
+diff --git a/test/regress/cli/regress0/strings/issue2958.smt2 b/test/regress/cli/regress0/strings/issue2958.smt2
+index f5e9e1cb1..d62d25dd8 100644
+--- a/test/regress/cli/regress0/strings/issue2958.smt2
++++ b/test/regress/cli/regress0/strings/issue2958.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; COMMAND-LINE: --conflict-process=min
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+diff --git a/test/regress/cli/regress0/strings/issue3497.smt2 b/test/regress/cli/regress0/strings/issue3497.smt2
+index 99597dffa..f40bb9966 100644
+--- a/test/regress/cli/regress0/strings/issue3497.smt2
++++ b/test/regress/cli/regress0/strings/issue3497.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-fun x () String)
+ (declare-fun y () String)
+ (assert (= (str.indexof x y 1) (str.len x)))
+diff --git a/test/regress/cli/regress0/strings/issue4376.smt2 b/test/regress/cli/regress0/strings/issue4376.smt2
+index 3547b071b..28f799c42 100644
+--- a/test/regress/cli/regress0/strings/issue4376.smt2
++++ b/test/regress/cli/regress0/strings/issue4376.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-info :status sat)
+ (set-logic QF_SLIA)
+ (declare-const i0 Int)
+diff --git a/test/regress/cli/regress0/strings/issue4915.smt2 b/test/regress/cli/regress0/strings/issue4915.smt2
+index e65db3c56..7a99354b9 100644
+--- a/test/regress/cli/regress0/strings/issue4915.smt2
++++ b/test/regress/cli/regress0/strings/issue4915.smt2
+@@ -1,5 +1,5 @@
+ ; EXPECT: unsat
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-const Str4 String)
+ (declare-const Str18 String)
+diff --git a/test/regress/cli/regress0/strings/issue5090.smt2 b/test/regress/cli/regress0/strings/issue5090.smt2
+index 44a57d4d2..0f887228d 100644
+--- a/test/regress/cli/regress0/strings/issue5090.smt2
++++ b/test/regress/cli/regress0/strings/issue5090.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --incremental
++; COMMAND-LINE: --incremental
+ (set-logic QF_S)
+ (declare-const Str0 String)
+ (declare-const Str1 String)
+diff --git a/test/regress/cli/regress0/strings/issue5384-double-conflict.smt2 b/test/regress/cli/regress0/strings/issue5384-double-conflict.smt2
+index bde9726bb..d2fd078dc 100644
+--- a/test/regress/cli/regress0/strings/issue5384-double-conflict.smt2
++++ b/test/regress/cli/regress0/strings/issue5384-double-conflict.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_S)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun _substvar_130_ () Bool)
+ (declare-fun _substvar_156_ () Bool)
+diff --git a/test/regress/cli/regress0/strings/issue5542-strings-seq-mix.smt2 b/test/regress/cli/regress0/strings/issue5542-strings-seq-mix.smt2
+index 56d1ddfb4..528e71dcc 100644
+--- a/test/regress/cli/regress0/strings/issue5542-strings-seq-mix.smt2
++++ b/test/regress/cli/regress0/strings/issue5542-strings-seq-mix.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/strings/issue5771-eager-pp.smt2 b/test/regress/cli/regress0/strings/issue5771-eager-pp.smt2
+index 8c4fc8a65..c3049e72f 100644
+--- a/test/regress/cli/regress0/strings/issue5771-eager-pp.smt2
++++ b/test/regress/cli/regress0/strings/issue5771-eager-pp.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --no-strings-lazy-pp --strings-exp
++; COMMAND-LINE: --no-strings-lazy-pp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () Int)
+diff --git a/test/regress/cli/regress0/strings/issue5915-repl-ctn-rewrite.smt2 b/test/regress/cli/regress0/strings/issue5915-repl-ctn-rewrite.smt2
+index 42326da28..459f0a064 100644
+--- a/test/regress/cli/regress0/strings/issue5915-repl-ctn-rewrite.smt2
++++ b/test/regress/cli/regress0/strings/issue5915-repl-ctn-rewrite.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress0/strings/issue6203-3-unfold-trivial-true.smt2 b/test/regress/cli/regress0/strings/issue6203-3-unfold-trivial-true.smt2
+index 1ef762df3..aacdd89b0 100644
+--- a/test/regress/cli/regress0/strings/issue6203-3-unfold-trivial-true.smt2
++++ b/test/regress/cli/regress0/strings/issue6203-3-unfold-trivial-true.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun s () String)
+diff --git a/test/regress/cli/regress0/strings/issue6510-seq-bool.smt2 b/test/regress/cli/regress0/strings/issue6510-seq-bool.smt2
+index 80bcea8a1..2fa43ff1d 100644
+--- a/test/regress/cli/regress0/strings/issue6510-seq-bool.smt2
++++ b/test/regress/cli/regress0/strings/issue6510-seq-bool.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp -q
++; COMMAND-LINE: -q
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun e () (Seq Bool))
+diff --git a/test/regress/cli/regress0/strings/issue6560-indexof-reduction.smt2 b/test/regress/cli/regress0/strings/issue6560-indexof-reduction.smt2
+index bdb9d2877..ee0b62811 100644
+--- a/test/regress/cli/regress0/strings/issue6560-indexof-reduction.smt2
++++ b/test/regress/cli/regress0/strings/issue6560-indexof-reduction.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress0/strings/issue6604-re-elim.smt2 b/test/regress/cli/regress0/strings/issue6604-re-elim.smt2
+index f3ba20457..2a78c7015 100644
+--- a/test/regress/cli/regress0/strings/issue6604-re-elim.smt2
++++ b/test/regress/cli/regress0/strings/issue6604-re-elim.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --re-elim=on --strings-exp
++; COMMAND-LINE: --re-elim=on
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress0/strings/issue6643-ctn-decompose-conflict.smt2 b/test/regress/cli/regress0/strings/issue6643-ctn-decompose-conflict.smt2
+index 41a515640..fb6e5dd59 100644
+--- a/test/regress/cli/regress0/strings/issue6643-ctn-decompose-conflict.smt2
++++ b/test/regress/cli/regress0/strings/issue6643-ctn-decompose-conflict.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-fun y () String)
+ (declare-fun z () String)
+diff --git a/test/regress/cli/regress0/strings/issue8346-idof-max.smt2 b/test/regress/cli/regress0/strings/issue8346-idof-max.smt2
+index badb97e1a..516a21051 100644
+--- a/test/regress/cli/regress0/strings/issue8346-idof-max.smt2
++++ b/test/regress/cli/regress0/strings/issue8346-idof-max.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp -q
++; COMMAND-LINE: -q
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/strings/issue8722-learned-rew.smt2 b/test/regress/cli/regress0/strings/issue8722-learned-rew.smt2
+index 03cae69d2..ed1d73035 100644
+--- a/test/regress/cli/regress0/strings/issue8722-learned-rew.smt2
++++ b/test/regress/cli/regress0/strings/issue8722-learned-rew.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --learned-rewrite --strings-exp
++; COMMAND-LINE: --learned-rewrite
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-const a String) 
+diff --git a/test/regress/cli/regress0/strings/itos-entail.smt2 b/test/regress/cli/regress0/strings/itos-entail.smt2
+index aca5e4f6a..fb0898a44 100644
+--- a/test/regress/cli/regress0/strings/itos-entail.smt2
++++ b/test/regress/cli/regress0/strings/itos-entail.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-fun x () Int)
+ (declare-fun y () String)
+ (declare-fun z () String)
+diff --git a/test/regress/cli/regress0/strings/leadingzero001.smt2 b/test/regress/cli/regress0/strings/leadingzero001.smt2
+index d646a8930..5b75220b1 100644
+--- a/test/regress/cli/regress0/strings/leadingzero001.smt2
++++ b/test/regress/cli/regress0/strings/leadingzero001.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ (declare-fun Y () String)
+diff --git a/test/regress/cli/regress0/strings/leq.smt2 b/test/regress/cli/regress0/strings/leq.smt2
+index b3bd40739..529c01dfb 100644
+--- a/test/regress/cli/regress0/strings/leq.smt2
++++ b/test/regress/cli/regress0/strings/leq.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-const x String)
+ (declare-const y String)
+diff --git a/test/regress/cli/regress0/strings/norn-31.smt2 b/test/regress/cli/regress0/strings/norn-31.smt2
+index be759a885..55980cb0c 100644
+--- a/test/regress/cli/regress0/strings/norn-31.smt2
++++ b/test/regress/cli/regress0/strings/norn-31.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ 
+ (declare-fun var_0 () String)
+diff --git a/test/regress/cli/regress0/strings/norn-simp-rew.smt2 b/test/regress/cli/regress0/strings/norn-simp-rew.smt2
+index 4ef281ce9..9b7bac0fc 100644
+--- a/test/regress/cli/regress0/strings/norn-simp-rew.smt2
++++ b/test/regress/cli/regress0/strings/norn-simp-rew.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ 
+ (declare-fun var_0 () String)
+diff --git a/test/regress/cli/regress0/strings/re.all.smt2 b/test/regress/cli/regress0/strings/re.all.smt2
+index 01d57a6e1..c3bff6880 100644
+--- a/test/regress/cli/regress0/strings/re.all.smt2
++++ b/test/regress/cli/regress0/strings/re.all.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (set-info :status unsat)
+ (declare-const x String)
+diff --git a/test/regress/cli/regress0/strings/regexp_inclusion.smt2 b/test/regress/cli/regress0/strings/regexp_inclusion.smt2
+index b1a07413b..e883c1915 100644
+--- a/test/regress/cli/regress0/strings/regexp_inclusion.smt2
++++ b/test/regress/cli/regress0/strings/regexp_inclusion.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-info :status unsat)
+ (set-logic ALL)
+ (declare-const actionName String)
+diff --git a/test/regress/cli/regress0/strings/regexp_inclusion_reduction.smt2 b/test/regress/cli/regress0/strings/regexp_inclusion_reduction.smt2
+index 70bb1c68a..9bfe74f6e 100644
+--- a/test/regress/cli/regress0/strings/regexp_inclusion_reduction.smt2
++++ b/test/regress/cli/regress0/strings/regexp_inclusion_reduction.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-info :status sat)
+ (set-logic QF_SLIA)
+ (declare-const x String)
+diff --git a/test/regress/cli/regress0/strings/repl-rewrites2.smt2 b/test/regress/cli/regress0/strings/repl-rewrites2.smt2
+index e56a8ea44..50ffdb3da 100644
+--- a/test/regress/cli/regress0/strings/repl-rewrites2.smt2
++++ b/test/regress/cli/regress0/strings/repl-rewrites2.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress0/strings/rewrites-v2.smt2 b/test/regress/cli/regress0/strings/rewrites-v2.smt2
+index be9f18681..c2a32ed10 100644
+--- a/test/regress/cli/regress0/strings/rewrites-v2.smt2
++++ b/test/regress/cli/regress0/strings/rewrites-v2.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-info :smt-lib-version 2.6)
+ (set-logic SLIA)
+diff --git a/test/regress/cli/regress0/strings/std2.6.1.smt2 b/test/regress/cli/regress0/strings/std2.6.1.smt2
+index 8881f874d..81ecf4256 100644
+--- a/test/regress/cli/regress0/strings/std2.6.1.smt2
++++ b/test/regress/cli/regress0/strings/std2.6.1.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --lang=smt2.6
++; COMMAND-LINE: --lang=smt2.6
+ ; EXPECT: sat
+ (set-logic QF_UFSLIA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/strings/strings-charat.cvc.smt2 b/test/regress/cli/regress0/strings/strings-charat.cvc.smt2
+index 440172172..810706f37 100644
+--- a/test/regress/cli/regress0/strings/strings-charat.cvc.smt2
++++ b/test/regress/cli/regress0/strings/strings-charat.cvc.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-option :incremental false)
+diff --git a/test/regress/cli/regress0/strings/strip-endpoint-itos.smt2 b/test/regress/cli/regress0/strings/strip-endpoint-itos.smt2
+index 4f098e319..b9cb03081 100644
+--- a/test/regress/cli/regress0/strings/strip-endpoint-itos.smt2
++++ b/test/regress/cli/regress0/strings/strip-endpoint-itos.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun x () Int)
+ (assert (str.contains "Ducati100" (str.from_int x)))
+diff --git a/test/regress/cli/regress0/strings/substr-rewrites.smt2 b/test/regress/cli/regress0/strings/substr-rewrites.smt2
+index c4f19b7b4..89954815f 100644
+--- a/test/regress/cli/regress0/strings/substr-rewrites.smt2
++++ b/test/regress/cli/regress0/strings/substr-rewrites.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic SLIA)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress0/strings/tolower-rrs.smt2 b/test/regress/cli/regress0/strings/tolower-rrs.smt2
+index 4eb4bce6f..d8618e0f9 100644
+--- a/test/regress/cli/regress0/strings/tolower-rrs.smt2
++++ b/test/regress/cli/regress0/strings/tolower-rrs.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress0/strings/tolower-simple.smt2 b/test/regress/cli/regress0/strings/tolower-simple.smt2
+index 4252d7d0d..ac8a1f85b 100644
+--- a/test/regress/cli/regress0/strings/tolower-simple.smt2
++++ b/test/regress/cli/regress0/strings/tolower-simple.smt2
+@@ -1,5 +1,5 @@
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-const x String)
+ (declare-const y String)
+diff --git a/test/regress/cli/regress0/strings/type001.smt2 b/test/regress/cli/regress0/strings/type001.smt2
+index 168d066ea..6cac299c5 100644
+--- a/test/regress/cli/regress0/strings/type001.smt2
++++ b/test/regress/cli/regress0/strings/type001.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun x () String)
+ (declare-fun y () String)
+diff --git a/test/regress/cli/regress0/strings/unicode-esc.smt2 b/test/regress/cli/regress0/strings/unicode-esc.smt2
+index 4039ecd0a..2afbbbffd 100644
+--- a/test/regress/cli/regress0/strings/unicode-esc.smt2
++++ b/test/regress/cli/regress0/strings/unicode-esc.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --lang=smt2.6
++; COMMAND-LINE: --lang=smt2.6
+ ; EXPECT: sat
+ (set-logic ALL)
+ 
+diff --git a/test/regress/cli/regress0/strings/unsound-0908.smt2 b/test/regress/cli/regress0/strings/unsound-0908.smt2
+index 632c6713d..147c807ef 100644
+--- a/test/regress/cli/regress0/strings/unsound-0908.smt2
++++ b/test/regress/cli/regress0/strings/unsound-0908.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress0/strings/unsound-repl-rewrite.smt2 b/test/regress/cli/regress0/strings/unsound-repl-rewrite.smt2
+index 02e4cc0b2..df7ae31d2 100644
+--- a/test/regress/cli/regress0/strings/unsound-repl-rewrite.smt2
++++ b/test/regress/cli/regress0/strings/unsound-repl-rewrite.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_S)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/bags/fold2.smt2 b/test/regress/cli/regress1/bags/fold2.smt2
+index 9863a11c6..4f21d64ae 100644
+--- a/test/regress/cli/regress1/bags/fold2.smt2
++++ b/test/regress/cli/regress1/bags/fold2.smt2
+@@ -2,7 +2,7 @@
+ (set-info :status sat)
+ (set-option :fmf-bound true)
+ (set-option :uf-lazy-ll true)
+-(set-option :strings-exp true)
++
+ (define-fun min ((x String) (y String)) String (ite (str.< x y) x y))
+ (declare-fun A () (Bag String))
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/bags/fold3.smt2 b/test/regress/cli/regress1/bags/fold3.smt2
+index baecc5be5..6448eb5c1 100644
+--- a/test/regress/cli/regress1/bags/fold3.smt2
++++ b/test/regress/cli/regress1/bags/fold3.smt2
+@@ -2,7 +2,7 @@
+ (set-info :status sat)
+ (set-option :fmf-bound true)
+ (set-option :uf-lazy-ll true)
+-(set-option :strings-exp true)
++
+ (define-fun min ((x String) (y String)) String (ite (str.< x y) x y))
+ (declare-fun A () (Bag String))
+ (declare-fun minimum () String)
+diff --git a/test/regress/cli/regress1/bags/map4.smt2 b/test/regress/cli/regress1/bags/map4.smt2
+index 2534d1991..186500357 100644
+--- a/test/regress/cli/regress1/bags/map4.smt2
++++ b/test/regress/cli/regress1/bags/map4.smt2
+@@ -2,7 +2,7 @@
+ (set-info :status sat)
+ (set-option :fmf-bound true)
+ (set-option :uf-lazy-ll true)
+-(set-option :strings-exp true)
++
+ (set-option :simplification none)
+ (declare-const A (Bag (Tuple Int)))
+ (declare-const B (Bag (Tuple Int)))
+diff --git a/test/regress/cli/regress1/bags/murxla2.smt2 b/test/regress/cli/regress1/bags/murxla2.smt2
+index 82ca2e90c..4969d07e4 100644
+--- a/test/regress/cli/regress1/bags/murxla2.smt2
++++ b/test/regress/cli/regress1/bags/murxla2.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-const x Int)
+ (assert (seq.contains (seq.at (seq.unit (bag false x)) x) (seq.unit (bag false x))))
+ (check-sat)
+diff --git a/test/regress/cli/regress1/bug590.smt2 b/test/regress/cli/regress1/bug590.smt2
+index c63140415..82275edaf 100644
+--- a/test/regress/cli/regress1/bug590.smt2
++++ b/test/regress/cli/regress1/bug590.smt2
+@@ -3,7 +3,7 @@
+ ; EXPECT: ((charlst2 (
+ 
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-option :produce-models true)
+ (set-info :smt-lib-version 2.6)
+ (set-info :status unknown)
+diff --git a/test/regress/cli/regress1/cores/issue5604.smt2 b/test/regress/cli/regress1/cores/issue5604.smt2
+index d45eebdcb..5c90db09f 100644
+--- a/test/regress/cli/regress1/cores/issue5604.smt2
++++ b/test/regress/cli/regress1/cores/issue5604.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/fmf/issue8096-non-const-rep.smt2 b/test/regress/cli/regress1/fmf/issue8096-non-const-rep.smt2
+index 7caebd54b..df0a2141f 100644
+--- a/test/regress/cli/regress1/fmf/issue8096-non-const-rep.smt2
++++ b/test/regress/cli/regress1/fmf/issue8096-non-const-rep.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp -q
++; COMMAND-LINE: -q
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/nl/issue9183-3.smt2 b/test/regress/cli/regress1/nl/issue9183-3.smt2
+index bde4a5526..f3131db43 100644
+--- a/test/regress/cli/regress1/nl/issue9183-3.smt2
++++ b/test/regress/cli/regress1/nl/issue9183-3.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --decision=stoponly --strings-exp
++; COMMAND-LINE: --decision=stoponly
+ ; EXPECT: sat
+ (set-logic QF_NRA) 
+ (declare-const a Real) 
+diff --git a/test/regress/cli/regress1/quantifiers/issue2970-string-var-elim.smt2 b/test/regress/cli/regress1/quantifiers/issue2970-string-var-elim.smt2
+index a1b1dc628..b36f4d8a7 100644
+--- a/test/regress/cli/regress1/quantifiers/issue2970-string-var-elim.smt2
++++ b/test/regress/cli/regress1/quantifiers/issue2970-string-var-elim.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic ALL)
+ (set-info :status unsat)
+ (declare-fun s () String)
+diff --git a/test/regress/cli/regress1/quantifiers/issue3537.smt2 b/test/regress/cli/regress1/quantifiers/issue3537.smt2
+index 442eb65ac..d4877566d 100644
+--- a/test/regress/cli/regress1/quantifiers/issue3537.smt2
++++ b/test/regress/cli/regress1/quantifiers/issue3537.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --finite-model-find --fmf-bound
++; COMMAND-LINE: --finite-model-find --fmf-bound
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-datatypes ((UNIT 0)) (((Unit))
+diff --git a/test/regress/cli/regress1/quantifiers/issue5288-vts-real-int.smt2 b/test/regress/cli/regress1/quantifiers/issue5288-vts-real-int.smt2
+index d99cb51d0..3ac181d86 100644
+--- a/test/regress/cli/regress1/quantifiers/issue5288-vts-real-int.smt2
++++ b/test/regress/cli/regress1/quantifiers/issue5288-vts-real-int.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/quantifiers/issue5378-witness.smt2 b/test/regress/cli/regress1/quantifiers/issue5378-witness.smt2
+index 74c52f756..bb16e0460 100644
+--- a/test/regress/cli/regress1/quantifiers/issue5378-witness.smt2
++++ b/test/regress/cli/regress1/quantifiers/issue5378-witness.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --sygus-inst --strings-exp
++; COMMAND-LINE: --sygus-inst
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (assert (forall ((a Int) (b Int)) (or (> (to_real a) (/ 0.0 (to_real b))) (exists ((c Int)) (< a c b)))))
+diff --git a/test/regress/cli/regress1/quantifiers/issue5469-aext.smt2 b/test/regress/cli/regress1/quantifiers/issue5469-aext.smt2
+index 3549a770f..e0356f0d8 100644
+--- a/test/regress/cli/regress1/quantifiers/issue5469-aext.smt2
++++ b/test/regress/cli/regress1/quantifiers/issue5469-aext.smt2
+@@ -1,8 +1,8 @@
+-; COMMAND-LINE: --sygus-inst --strings-exp -q
++; COMMAND-LINE: --sygus-inst -q
+ ; EXPECT: sat
+ (set-logic NIA)
+ (set-option :sygus-inst true)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun d () Int)
+ (assert (forall ((g Int)) (or (> 1 g) (> g (div 1 d)))))
+diff --git a/test/regress/cli/regress1/quantifiers/issue5470-aext.smt2 b/test/regress/cli/regress1/quantifiers/issue5470-aext.smt2
+index e60500833..4395bade8 100644
+--- a/test/regress/cli/regress1/quantifiers/issue5470-aext.smt2
++++ b/test/regress/cli/regress1/quantifiers/issue5470-aext.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: sat
+ ; DISABLE-TESTER: model
+ (set-logic NIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun b () Int)
+ (assert (exists ((c Int)) (< 0 c (div 0 b))))
+diff --git a/test/regress/cli/regress1/quantifiers/issue5471-aext.smt2 b/test/regress/cli/regress1/quantifiers/issue5471-aext.smt2
+index c420359fc..922e0fcb6 100644
+--- a/test/regress/cli/regress1/quantifiers/issue5471-aext.smt2
++++ b/test/regress/cli/regress1/quantifiers/issue5471-aext.smt2
+@@ -1,6 +1,6 @@
+ (set-logic NRA)
+ (set-option :sygus-inst true)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ (declare-fun a () Real)
+ (declare-fun b () Real)
+diff --git a/test/regress/cli/regress1/quantifiers/issue8572-sygus-inst-ic-purify.smt2 b/test/regress/cli/regress1/quantifiers/issue8572-sygus-inst-ic-purify.smt2
+index 28dd91254..d4b2c62cc 100644
+--- a/test/regress/cli/regress1/quantifiers/issue8572-sygus-inst-ic-purify.smt2
++++ b/test/regress/cli/regress1/quantifiers/issue8572-sygus-inst-ic-purify.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --sygus-inst
++; COMMAND-LINE: --sygus-inst
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (assert (forall ((e String)) (= 0 (ite (str.contains (str.substr e 0 (- (str.len e) 1)) "/") 1 0))))
+diff --git a/test/regress/cli/regress1/quantifiers/proj-issue295.smt2 b/test/regress/cli/regress1/quantifiers/proj-issue295.smt2
+index e1fcd9854..2f70cab68 100644
+--- a/test/regress/cli/regress1/quantifiers/proj-issue295.smt2
++++ b/test/regress/cli/regress1/quantifiers/proj-issue295.smt2
+@@ -1,7 +1,7 @@
+ ; COMMAND-LINE: -q --sygus-inst
+ ; EXPECT: sat
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (assert (forall ((x Int)) (not (= (str.++ "V" "s") (str.++ "V" (str.substr (str.substr "VZ" 0 x) 0 1))))))
+ (check-sat)
+diff --git a/test/regress/cli/regress1/quantifiers/seq-solved-enum.smt2 b/test/regress/cli/regress1/quantifiers/seq-solved-enum.smt2
+index cff3d3ca0..b8b76a9f6 100644
+--- a/test/regress/cli/regress1/quantifiers/seq-solved-enum.smt2
++++ b/test/regress/cli/regress1/quantifiers/seq-solved-enum.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --full-saturate-quant
++; COMMAND-LINE: --full-saturate-quant
+ ; EXPECT: unsat
+ (set-logic ALL)
+ 
+diff --git a/test/regress/cli/regress1/quantifiers/seq-unsolved-ematch.smt2 b/test/regress/cli/regress1/quantifiers/seq-unsolved-ematch.smt2
+index 044607dfe..7f7041c7d 100644
+--- a/test/regress/cli/regress1/quantifiers/seq-unsolved-ematch.smt2
++++ b/test/regress/cli/regress1/quantifiers/seq-unsolved-ematch.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --full-saturate-quant
++; COMMAND-LINE: --full-saturate-quant
+ ; EXPECT: unsat
+ (set-logic ALL)
+ 
+diff --git a/test/regress/cli/regress1/quantifiers/seqa-unsat-unknown-110921.smt2 b/test/regress/cli/regress1/quantifiers/seqa-unsat-unknown-110921.smt2
+index b7ab4613f..2a07e8e57 100644
+--- a/test/regress/cli/regress1/quantifiers/seqa-unsat-unknown-110921.smt2
++++ b/test/regress/cli/regress1/quantifiers/seqa-unsat-unknown-110921.smt2
+@@ -1,6 +1,6 @@
+ ; DISABLE-TESTER: lfsc
+ ; DISABLE-TESTER: cpc
+-; COMMAND-LINE: --strings-exp --seq-array=eager
++; COMMAND-LINE: --seq-array=eager
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-sort T 0)
+diff --git a/test/regress/cli/regress1/seq/issue8148-2-const-mv.smt2 b/test/regress/cli/regress1/seq/issue8148-2-const-mv.smt2
+index c26a74f22..74d3ae18f 100644
+--- a/test/regress/cli/regress1/seq/issue8148-2-const-mv.smt2
++++ b/test/regress/cli/regress1/seq/issue8148-2-const-mv.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/seq/issue8148-const-mv.smt2 b/test/regress/cli/regress1/seq/issue8148-const-mv.smt2
+index efc357523..579a21b62 100644
+--- a/test/regress/cli/regress1/seq/issue8148-const-mv.smt2
++++ b/test/regress/cli/regress1/seq/issue8148-const-mv.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/seq/issue8936-nth-eager-red.smt2 b/test/regress/cli/regress1/seq/issue8936-nth-eager-red.smt2
+index acbb67b80..badba1aa7 100644
+--- a/test/regress/cli/regress1/seq/issue8936-nth-eager-red.smt2
++++ b/test/regress/cli/regress1/seq/issue8936-nth-eager-red.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --no-strings-lazy-pp
++; COMMAND-LINE: --no-strings-lazy-pp
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun a () (Seq Int))
+diff --git a/test/regress/cli/regress1/sets/issue5942-witness.smt2 b/test/regress/cli/regress1/sets/issue5942-witness.smt2
+index efe02117f..f07a88d61 100644
+--- a/test/regress/cli/regress1/sets/issue5942-witness.smt2
++++ b/test/regress/cli/regress1/sets/issue5942-witness.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/sets/issue8987-ho-exception.smt2 b/test/regress/cli/regress1/sets/issue8987-ho-exception.smt2
+index 243651901..246817f65 100644
+--- a/test/regress/cli/regress1/sets/issue8987-ho-exception.smt2
++++ b/test/regress/cli/regress1/sets/issue8987-ho-exception.smt2
+@@ -1,7 +1,7 @@
+ ; EXPECT: (error "Term of kind rel.project are only supported with higher-order logic. Try adding the logic prefix HO_.")
+ ; EXIT: 1
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (declare-fun e () (Relation String))
+ (declare-fun v () Int)
+ (assert (and (= (str.from_int v) (str.from_int 0)) (= (rel.project e) (rel.project (set.singleton (tuple ""))))))
+diff --git a/test/regress/cli/regress1/sets/issue8987-ho.smt2 b/test/regress/cli/regress1/sets/issue8987-ho.smt2
+index 454b3a656..58faa264d 100644
+--- a/test/regress/cli/regress1/sets/issue8987-ho.smt2
++++ b/test/regress/cli/regress1/sets/issue8987-ho.smt2
+@@ -1,7 +1,7 @@
+ ; COMMAND-LINE: --uf-lazy-ll
+ ; EXPECT: sat
+ (set-logic HO_ALL)
+-(set-option :strings-exp true)
++
+ (declare-fun e () (Relation String))
+ (declare-fun v () Int)
+ (assert (and (= (str.from_int v) (str.from_int 0)) (= (rel.project e) (rel.project (set.singleton (tuple ""))))))
+diff --git a/test/regress/cli/regress1/sets/proj-issue494-finite-leafof.smt2 b/test/regress/cli/regress1/sets/proj-issue494-finite-leafof.smt2
+index 02f499e80..f0c3fcf80 100644
+--- a/test/regress/cli/regress1/sets/proj-issue494-finite-leafof.smt2
++++ b/test/regress/cli/regress1/sets/proj-issue494-finite-leafof.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ (set-option :sets-exp true)
+ (declare-const x (Array (Set RoundingMode) (Set RoundingMode)))
+ (check-sat-assuming (
+diff --git a/test/regress/cli/regress1/sets/set_fold3.smt2 b/test/regress/cli/regress1/sets/set_fold3.smt2
+index a5d80f980..22431d0f2 100644
+--- a/test/regress/cli/regress1/sets/set_fold3.smt2
++++ b/test/regress/cli/regress1/sets/set_fold3.smt2
+@@ -2,7 +2,7 @@
+ (set-info :status sat)
+ (set-option :fmf-bound true)
+ (set-option :uf-lazy-ll true)
+-(set-option :strings-exp true)
++
+ (define-fun min ((x String) (y String)) String (ite (str.< x y) x y))
+ (declare-fun A () (Set String))
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/artemis-0512-nonterm.smt2 b/test/regress/cli/regress1/strings/artemis-0512-nonterm.smt2
+index 1d76f3ca0..38e8f9475 100644
+--- a/test/regress/cli/regress1/strings/artemis-0512-nonterm.smt2
++++ b/test/regress/cli/regress1/strings/artemis-0512-nonterm.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ 
+ (declare-const Y String)
+diff --git a/test/regress/cli/regress1/strings/at001.smt2 b/test/regress/cli/regress1/strings/at001.smt2
+index 8dd84a55c..2bc8c5d2b 100644
+--- a/test/regress/cli/regress1/strings/at001.smt2
++++ b/test/regress/cli/regress1/strings/at001.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+ 
+diff --git a/test/regress/cli/regress1/strings/bug615.smt2 b/test/regress/cli/regress1/strings/bug615.smt2
+index 3098a59ba..5f4aeb1a8 100644
+--- a/test/regress/cli/regress1/strings/bug615.smt2
++++ b/test/regress/cli/regress1/strings/bug615.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ (declare-fun s () String)
+diff --git a/test/regress/cli/regress1/strings/bug682.smt2 b/test/regress/cli/regress1/strings/bug682.smt2
+index 6617b6b97..62ac026d9 100644
+--- a/test/regress/cli/regress1/strings/bug682.smt2
++++ b/test/regress/cli/regress1/strings/bug682.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --incremental --strings-exp
++; COMMAND-LINE: --incremental
+ (set-logic QF_S)
+ 
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/bug799-min.smt2 b/test/regress/cli/regress1/strings/bug799-min.smt2
+index d6054925d..3bfc8619a 100644
+--- a/test/regress/cli/regress1/strings/bug799-min.smt2
++++ b/test/regress/cli/regress1/strings/bug799-min.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --incremental --strings-exp
++; COMMAND-LINE: --incremental
+ ; EXPECT: sat
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress1/strings/cee-norn-aes-trivially.smt2 b/test/regress/cli/regress1/strings/cee-norn-aes-trivially.smt2
+index 5d59358c8..2f8d9904d 100644
+--- a/test/regress/cli/regress1/strings/cee-norn-aes-trivially.smt2
++++ b/test/regress/cli/regress1/strings/cee-norn-aes-trivially.smt2
+@@ -1,5 +1,5 @@
+-; COMMAND-LINE: --arith-eq-solver --ee-mode=distributed --strings-exp
+-; COMMAND-LINE: --arith-eq-solver --ee-mode=central --strings-exp
++; COMMAND-LINE: --arith-eq-solver --ee-mode=distributed
++; COMMAND-LINE: --arith-eq-solver --ee-mode=central
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun v () String)
+diff --git a/test/regress/cli/regress1/strings/chapman150408.smt2 b/test/regress/cli/regress1/strings/chapman150408.smt2
+index e6047498e..a5aff1cca 100644
+--- a/test/regress/cli/regress1/strings/chapman150408.smt2
++++ b/test/regress/cli/regress1/strings/chapman150408.smt2
+@@ -1,6 +1,6 @@
+ (set-logic SLIA)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-fun string () String)
+ (assert (and
+      (and (not (not (not (= (ite (> (str.indexof string ";" 0) 0) 1 0)
+diff --git a/test/regress/cli/regress1/strings/cmu-2db2-extf-reg.smt2 b/test/regress/cli/regress1/strings/cmu-2db2-extf-reg.smt2
+index b3d108ef7..3c4d859b3 100644
+--- a/test/regress/cli/regress1/strings/cmu-2db2-extf-reg.smt2
++++ b/test/regress/cli/regress1/strings/cmu-2db2-extf-reg.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun s () String)
+ 
+diff --git a/test/regress/cli/regress1/strings/cmu-5042-0707-2.smt2 b/test/regress/cli/regress1/strings/cmu-5042-0707-2.smt2
+index 4b3e08eae..97a45b1d6 100644
+--- a/test/regress/cli/regress1/strings/cmu-5042-0707-2.smt2
++++ b/test/regress/cli/regress1/strings/cmu-5042-0707-2.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun key2 () String)
+ (declare-fun key1 () String)
+diff --git a/test/regress/cli/regress1/strings/cmu-inc-nlpp-071516.smt2 b/test/regress/cli/regress1/strings/cmu-inc-nlpp-071516.smt2
+index f41e68d2d..daa30357d 100644
+--- a/test/regress/cli/regress1/strings/cmu-inc-nlpp-071516.smt2
++++ b/test/regress/cli/regress1/strings/cmu-inc-nlpp-071516.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun url () String)
+ 
+diff --git a/test/regress/cli/regress1/strings/cmu-substr-rw.smt2 b/test/regress/cli/regress1/strings/cmu-substr-rw.smt2
+index 4f7e61948..813af8129 100644
+--- a/test/regress/cli/regress1/strings/cmu-substr-rw.smt2
++++ b/test/regress/cli/regress1/strings/cmu-substr-rw.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun uri () String)
+ 
+diff --git a/test/regress/cli/regress1/strings/code-sequence.smt2 b/test/regress/cli/regress1/strings/code-sequence.smt2
+index e378f9850..ab493283e 100644
+--- a/test/regress/cli/regress1/strings/code-sequence.smt2
++++ b/test/regress/cli/regress1/strings/code-sequence.smt2
+@@ -1,5 +1,5 @@
+ (set-logic SLIA)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ (set-option :fmf-bound true)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/complement-test.smt2 b/test/regress/cli/regress1/strings/complement-test.smt2
+index 0bb74a239..520f434b5 100644
+--- a/test/regress/cli/regress1/strings/complement-test.smt2
++++ b/test/regress/cli/regress1/strings/complement-test.smt2
+@@ -1,5 +1,5 @@
+ (set-logic SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun x () String)
+ (declare-fun y () String)
+diff --git a/test/regress/cli/regress1/strings/crash-1019.smt2 b/test/regress/cli/regress1/strings/crash-1019.smt2
+index ae7c79ee7..7f18c031e 100644
+--- a/test/regress/cli/regress1/strings/crash-1019.smt2
++++ b/test/regress/cli/regress1/strings/crash-1019.smt2
+@@ -1,5 +1,5 @@
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+  
+ (declare-fun s () String)
+diff --git a/test/regress/cli/regress1/strings/double-replace.smt2 b/test/regress/cli/regress1/strings/double-replace.smt2
+index bfbc3afc1..bb60a1c18 100644
+--- a/test/regress/cli/regress1/strings/double-replace.smt2
++++ b/test/regress/cli/regress1/strings/double-replace.smt2
+@@ -1,6 +1,6 @@
+ (set-logic SLIA)
+ (set-option :strings-fmf true)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun x () String)
+ (declare-fun y () String)
+diff --git a/test/regress/cli/regress1/strings/fmf001.smt2 b/test/regress/cli/regress1/strings/fmf001.smt2
+index 4c6b2091b..05cf5debc 100644
+--- a/test/regress/cli/regress1/strings/fmf001.smt2
++++ b/test/regress/cli/regress1/strings/fmf001.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ (set-info :status sat)
+ 
+diff --git a/test/regress/cli/regress1/strings/fmf002.smt2 b/test/regress/cli/regress1/strings/fmf002.smt2
+index 8daaa6ee4..c78614272 100644
+--- a/test/regress/cli/regress1/strings/fmf002.smt2
++++ b/test/regress/cli/regress1/strings/fmf002.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ (set-info :status sat)
+ 
+diff --git a/test/regress/cli/regress1/strings/gm-inc-071516-2.smt2 b/test/regress/cli/regress1/strings/gm-inc-071516-2.smt2
+index 305bdd58a..4107b8852 100644
+--- a/test/regress/cli/regress1/strings/gm-inc-071516-2.smt2
++++ b/test/regress/cli/regress1/strings/gm-inc-071516-2.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun value2 () String)
+ (declare-fun key2 () String)
+diff --git a/test/regress/cli/regress1/strings/goodAI.smt2 b/test/regress/cli/regress1/strings/goodAI.smt2
+index 0dc5c8ab1..8ad91c642 100644
+--- a/test/regress/cli/regress1/strings/goodAI.smt2
++++ b/test/regress/cli/regress1/strings/goodAI.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_S)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-const input_0_1000 String)
+ (assert (= (str.substr input_0_1000 0 4) "good"))
+diff --git a/test/regress/cli/regress1/strings/idof-handg.smt2 b/test/regress/cli/regress1/strings/idof-handg.smt2
+index 3766a6d85..68b9093a4 100644
+--- a/test/regress/cli/regress1/strings/idof-handg.smt2
++++ b/test/regress/cli/regress1/strings/idof-handg.smt2
+@@ -1,5 +1,5 @@
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun s () String)
+ (assert (str.contains s "Hello and goodbye!"))
+diff --git a/test/regress/cli/regress1/strings/idof-nconst-index.smt2 b/test/regress/cli/regress1/strings/idof-nconst-index.smt2
+index 954d446d2..1080d8265 100644
+--- a/test/regress/cli/regress1/strings/idof-nconst-index.smt2
++++ b/test/regress/cli/regress1/strings/idof-nconst-index.smt2
+@@ -1,5 +1,5 @@
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun s () String)
+ (assert (str.contains s "Hello and goodbye!"))
+diff --git a/test/regress/cli/regress1/strings/idof-neg-index.smt2 b/test/regress/cli/regress1/strings/idof-neg-index.smt2
+index e886a53fd..9aaf97b75 100644
+--- a/test/regress/cli/regress1/strings/idof-neg-index.smt2
++++ b/test/regress/cli/regress1/strings/idof-neg-index.smt2
+@@ -1,5 +1,5 @@
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ (declare-fun s () String)
+ (declare-fun x () Int)
+diff --git a/test/regress/cli/regress1/strings/idof-triv.smt2 b/test/regress/cli/regress1/strings/idof-triv.smt2
+index ce8439f0c..bb9fdba68 100644
+--- a/test/regress/cli/regress1/strings/idof-triv.smt2
++++ b/test/regress/cli/regress1/strings/idof-triv.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-fun string () String)
+ ;(assert (= string "::")) 
+ (assert (> (str.indexof string ":" 0) 0))
+diff --git a/test/regress/cli/regress1/strings/ilc-l-nt.smt2 b/test/regress/cli/regress1/strings/ilc-l-nt.smt2
+index efd733530..916f79035 100644
+--- a/test/regress/cli/regress1/strings/ilc-l-nt.smt2
++++ b/test/regress/cli/regress1/strings/ilc-l-nt.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+  
+ (declare-fun s () String)
+ (assert (or (= s "Id like cookies.") (= s "Id not like cookies.")))
+diff --git a/test/regress/cli/regress1/strings/indexof_re_red.smt2 b/test/regress/cli/regress1/strings/indexof_re_red.smt2
+index f32a6723b..a9011d7af 100644
+--- a/test/regress/cli/regress1/strings/indexof_re_red.smt2
++++ b/test/regress/cli/regress1/strings/indexof_re_red.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --incremental
++; COMMAND-LINE: --incremental
+ (set-logic QF_SLIA)
+ (declare-const x String)
+ (declare-const i Int)
+diff --git a/test/regress/cli/regress1/strings/instance1079-re-loop-cong.smt2 b/test/regress/cli/regress1/strings/instance1079-re-loop-cong.smt2
+index 50b32b26f..78dbc1afd 100644
+--- a/test/regress/cli/regress1/strings/instance1079-re-loop-cong.smt2
++++ b/test/regress/cli/regress1/strings/instance1079-re-loop-cong.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic QF_S)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/instance6561-dd-concat-unify-char.smt2 b/test/regress/cli/regress1/strings/instance6561-dd-concat-unify-char.smt2
+index 13bb64e5c..d13a6e83c 100644
+--- a/test/regress/cli/regress1/strings/instance6561-dd-concat-unify-char.smt2
++++ b/test/regress/cli/regress1/strings/instance6561-dd-concat-unify-char.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/issue1105.smt2 b/test/regress/cli/regress1/strings/issue1105.smt2
+index b8ffbc503..ee86f05e0 100644
+--- a/test/regress/cli/regress1/strings/issue1105.smt2
++++ b/test/regress/cli/regress1/strings/issue1105.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: sat
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-datatype Val
+     ((Str (str String))
+diff --git a/test/regress/cli/regress1/strings/issue1684-regex.smt2 b/test/regress/cli/regress1/strings/issue1684-regex.smt2
+index 41fa27120..992cb7d58 100644
+--- a/test/regress/cli/regress1/strings/issue1684-regex.smt2
++++ b/test/regress/cli/regress1/strings/issue1684-regex.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-const s String)
+ (assert (str.in_re s (re.* (re.range "\u{0}" "\u{ff}"))))
+ (assert (str.in_re s (re.range "\u{0}" "\u{ff}")))
+diff --git a/test/regress/cli/regress1/strings/issue2429-code.smt2 b/test/regress/cli/regress1/strings/issue2429-code.smt2
+index f86083767..059fbf515 100644
+--- a/test/regress/cli/regress1/strings/issue2429-code.smt2
++++ b/test/regress/cli/regress1/strings/issue2429-code.smt2
+@@ -1,6 +1,6 @@
+ ; COMMAND-LINE: -q
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-option :produce-models true)
+ (set-info :status sat)
+ 
+diff --git a/test/regress/cli/regress1/strings/issue2981.smt2 b/test/regress/cli/regress1/strings/issue2981.smt2
+index 615140fc9..a4d4b393b 100644
+--- a/test/regress/cli/regress1/strings/issue2981.smt2
++++ b/test/regress/cli/regress1/strings/issue2981.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-const x String)
+ (declare-const y String)
+diff --git a/test/regress/cli/regress1/strings/issue2982.smt2 b/test/regress/cli/regress1/strings/issue2982.smt2
+index 289ea0931..1fb5ab0b7 100644
+--- a/test/regress/cli/regress1/strings/issue2982.smt2
++++ b/test/regress/cli/regress1/strings/issue2982.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --re-elim=agg
++; COMMAND-LINE: --re-elim=agg
+ ; EXPECT: unsat
+ (set-logic QF_SLIA)
+ 
+diff --git a/test/regress/cli/regress1/strings/issue3090.smt2 b/test/regress/cli/regress1/strings/issue3090.smt2
+index dc89ea650..990b4b640 100644
+--- a/test/regress/cli/regress1/strings/issue3090.smt2
++++ b/test/regress/cli/regress1/strings/issue3090.smt2
+@@ -1,5 +1,5 @@
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ (declare-const id String)
+ (assert (and (str.in_re id (re.+ (re.range "0" "9"))) (str.contains id "value")))
+diff --git a/test/regress/cli/regress1/strings/issue3217.smt2 b/test/regress/cli/regress1/strings/issue3217.smt2
+index 7e9acbd78..4efc16d1c 100644
+--- a/test/regress/cli/regress1/strings/issue3217.smt2
++++ b/test/regress/cli/regress1/strings/issue3217.smt2
+@@ -1,5 +1,5 @@
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ (declare-fun a () String)
+ (declare-fun b () String)
+diff --git a/test/regress/cli/regress1/strings/issue3272.smt2 b/test/regress/cli/regress1/strings/issue3272.smt2
+index 0fc8cee26..2990781f2 100644
+--- a/test/regress/cli/regress1/strings/issue3272.smt2
++++ b/test/regress/cli/regress1/strings/issue3272.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun a () String) 
+ (declare-fun b () String) 
+diff --git a/test/regress/cli/regress1/strings/issue3357.smt2 b/test/regress/cli/regress1/strings/issue3357.smt2
+index ca80f7f81..9bd862b0f 100644
+--- a/test/regress/cli/regress1/strings/issue3357.smt2
++++ b/test/regress/cli/regress1/strings/issue3357.smt2
+@@ -1,5 +1,5 @@
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ (declare-fun a () String)
+ (declare-fun b () String)
+diff --git a/test/regress/cli/regress1/strings/issue3657-unexpectedUnsatCVC4.smt2 b/test/regress/cli/regress1/strings/issue3657-unexpectedUnsatCVC4.smt2
+index ec948d55a..192a1e5b9 100644
+--- a/test/regress/cli/regress1/strings/issue3657-unexpectedUnsatCVC4.smt2
++++ b/test/regress/cli/regress1/strings/issue3657-unexpectedUnsatCVC4.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --fmf-fun-rlv -i
++; COMMAND-LINE: --fmf-fun-rlv -i
+ ; EXPECT: sat
+ ; EXPECT: sat
+ ; EXPECT: sat
+diff --git a/test/regress/cli/regress1/strings/issue4379.smt2 b/test/regress/cli/regress1/strings/issue4379.smt2
+index 964a128fa..6ee6e2c37 100644
+--- a/test/regress/cli/regress1/strings/issue4379.smt2
++++ b/test/regress/cli/regress1/strings/issue4379.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/issue4701_substr_splice.smt2 b/test/regress/cli/regress1/strings/issue4701_substr_splice.smt2
+index 28e89588f..a42cf5cc1 100644
+--- a/test/regress/cli/regress1/strings/issue4701_substr_splice.smt2
++++ b/test/regress/cli/regress1/strings/issue4701_substr_splice.smt2
+@@ -1,6 +1,6 @@
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-fun a () String)
+ (declare-fun b () String)
+ (declare-fun c () String)
+diff --git a/test/regress/cli/regress1/strings/issue5330.smt2 b/test/regress/cli/regress1/strings/issue5330.smt2
+index aa0db8591..302945cef 100644
+--- a/test/regress/cli/regress1/strings/issue5330.smt2
++++ b/test/regress/cli/regress1/strings/issue5330.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-fun str1 () String)
+diff --git a/test/regress/cli/regress1/strings/issue5330_2.smt2 b/test/regress/cli/regress1/strings/issue5330_2.smt2
+index f67a95335..d54bb54d4 100644
+--- a/test/regress/cli/regress1/strings/issue5330_2.smt2
++++ b/test/regress/cli/regress1/strings/issue5330_2.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-fun seq11 () (Seq Int))
+diff --git a/test/regress/cli/regress1/strings/issue5510-re-consume.smt2 b/test/regress/cli/regress1/strings/issue5510-re-consume.smt2
+index 3b7aaf344..06dc197ca 100644
+--- a/test/regress/cli/regress1/strings/issue5510-re-consume.smt2
++++ b/test/regress/cli/regress1/strings/issue5510-re-consume.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_S)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/issue5520-re-consume.smt2 b/test/regress/cli/regress1/strings/issue5520-re-consume.smt2
+index 3fc4fe8e5..3a132bad8 100644
+--- a/test/regress/cli/regress1/strings/issue5520-re-consume.smt2
++++ b/test/regress/cli/regress1/strings/issue5520-re-consume.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_S)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/issue5610-2-infer-proxy.smt2 b/test/regress/cli/regress1/strings/issue5610-2-infer-proxy.smt2
+index 810498e03..5ddde65d0 100644
+--- a/test/regress/cli/regress1/strings/issue5610-2-infer-proxy.smt2
++++ b/test/regress/cli/regress1/strings/issue5610-2-infer-proxy.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun r () String)
+diff --git a/test/regress/cli/regress1/strings/issue5610-infer-proxy.smt2 b/test/regress/cli/regress1/strings/issue5610-infer-proxy.smt2
+index 5f4ca326f..468246481 100644
+--- a/test/regress/cli/regress1/strings/issue5610-infer-proxy.smt2
++++ b/test/regress/cli/regress1/strings/issue5610-infer-proxy.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun str5 () String)
+diff --git a/test/regress/cli/regress1/strings/issue5611-deq-norm-emp.smt2 b/test/regress/cli/regress1/strings/issue5611-deq-norm-emp.smt2
+index bf23a9275..9914ac83b 100644
+--- a/test/regress/cli/regress1/strings/issue5611-deq-norm-emp.smt2
++++ b/test/regress/cli/regress1/strings/issue5611-deq-norm-emp.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: -i --strings-exp -q
++; COMMAND-LINE: -i -q
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun str7 () String)
+diff --git a/test/regress/cli/regress1/strings/issue5692-infer-proxy.smt2 b/test/regress/cli/regress1/strings/issue5692-infer-proxy.smt2
+index 54a77ec82..1253f75cc 100644
+--- a/test/regress/cli/regress1/strings/issue5692-infer-proxy.smt2
++++ b/test/regress/cli/regress1/strings/issue5692-infer-proxy.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/issue5940-2-skc-len-conc.smt2 b/test/regress/cli/regress1/strings/issue5940-2-skc-len-conc.smt2
+index 793381503..5bfdfbf62 100644
+--- a/test/regress/cli/regress1/strings/issue5940-2-skc-len-conc.smt2
++++ b/test/regress/cli/regress1/strings/issue5940-2-skc-len-conc.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/issue5940-skc-len-conc.smt2 b/test/regress/cli/regress1/strings/issue5940-skc-len-conc.smt2
+index f78a12deb..a02dbad5e 100644
+--- a/test/regress/cli/regress1/strings/issue5940-skc-len-conc.smt2
++++ b/test/regress/cli/regress1/strings/issue5940-skc-len-conc.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (define-fun z () Int 0)                                                            
+diff --git a/test/regress/cli/regress1/strings/issue6057-replace-re-all-jiwonparc.smt2 b/test/regress/cli/regress1/strings/issue6057-replace-re-all-jiwonparc.smt2
+index c9d93d024..af7a0e58b 100644
+--- a/test/regress/cli/regress1/strings/issue6057-replace-re-all-jiwonparc.smt2
++++ b/test/regress/cli/regress1/strings/issue6057-replace-re-all-jiwonparc.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-fun a () String)
+ ; A complicated way of saying a = "b"
+diff --git a/test/regress/cli/regress1/strings/issue6072-inc-no-const-reg.smt2 b/test/regress/cli/regress1/strings/issue6072-inc-no-const-reg.smt2
+index 178c8f6ac..e52fe0c75 100644
+--- a/test/regress/cli/regress1/strings/issue6072-inc-no-const-reg.smt2
++++ b/test/regress/cli/regress1/strings/issue6072-inc-no-const-reg.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: -i --strings-exp
++; COMMAND-LINE: -i
+ ; EXPECT: sat
+ ; EXPECT: sat
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress1/strings/issue6075-repl-len-one-rr.smt2 b/test/regress/cli/regress1/strings/issue6075-repl-len-one-rr.smt2
+index f60fe9168..e8544a0a4 100644
+--- a/test/regress/cli/regress1/strings/issue6075-repl-len-one-rr.smt2
++++ b/test/regress/cli/regress1/strings/issue6075-repl-len-one-rr.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/issue6101-2.smt2 b/test/regress/cli/regress1/strings/issue6101-2.smt2
+index 782558cd4..d50ab2baa 100644
+--- a/test/regress/cli/regress1/strings/issue6101-2.smt2
++++ b/test/regress/cli/regress1/strings/issue6101-2.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/issue6101.smt2 b/test/regress/cli/regress1/strings/issue6101.smt2
+index 532c6b1e0..a728f3d6e 100644
+--- a/test/regress/cli/regress1/strings/issue6101.smt2
++++ b/test/regress/cli/regress1/strings/issue6101.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/issue6132-non-unique-skolem.smt2 b/test/regress/cli/regress1/strings/issue6132-non-unique-skolem.smt2
+index 29d0e9469..baed001f1 100644
+--- a/test/regress/cli/regress1/strings/issue6132-non-unique-skolem.smt2
++++ b/test/regress/cli/regress1/strings/issue6132-non-unique-skolem.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun str () String)                                                        
+diff --git a/test/regress/cli/regress1/strings/issue6142-repl-inv-rew.smt2 b/test/regress/cli/regress1/strings/issue6142-repl-inv-rew.smt2
+index fdd4f0c78..cb2319439 100644
+--- a/test/regress/cli/regress1/strings/issue6142-repl-inv-rew.smt2
++++ b/test/regress/cli/regress1/strings/issue6142-repl-inv-rew.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/issue6180-2-proxy-vars.smt2 b/test/regress/cli/regress1/strings/issue6180-2-proxy-vars.smt2
+index eb991433f..16749e233 100644
+--- a/test/regress/cli/regress1/strings/issue6180-2-proxy-vars.smt2
++++ b/test/regress/cli/regress1/strings/issue6180-2-proxy-vars.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/issue6180-proxy-vars.smt2 b/test/regress/cli/regress1/strings/issue6180-proxy-vars.smt2
+index 4503b3144..007685e9c 100644
+--- a/test/regress/cli/regress1/strings/issue6180-proxy-vars.smt2
++++ b/test/regress/cli/regress1/strings/issue6180-proxy-vars.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/issue6184-unsat-core.smt2 b/test/regress/cli/regress1/strings/issue6184-unsat-core.smt2
+index 8dcfe81f8..92c13c8dd 100644
+--- a/test/regress/cli/regress1/strings/issue6184-unsat-core.smt2
++++ b/test/regress/cli/regress1/strings/issue6184-unsat-core.smt2
+@@ -1,6 +1,6 @@
+ ; EXPECT: unsat
+-; COMMAND-LINE: --strings-exp
+-; COMMAND-LINE: --strings-exp --produce-proofs
++; COMMAND-LINE:
++; COMMAND-LINE: --produce-proofs
+ ;; The second command line option is to test unsat core checking with
+ ;; proofs, which at one point had issues for this benchmark due to
+ ;; cycle detection in LazyCDProofChain
+diff --git a/test/regress/cli/regress1/strings/issue6191-replace-all.smt2 b/test/regress/cli/regress1/strings/issue6191-replace-all.smt2
+index cd4428db0..a5ddabce6 100644
+--- a/test/regress/cli/regress1/strings/issue6191-replace-all.smt2
++++ b/test/regress/cli/regress1/strings/issue6191-replace-all.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --no-strings-lazy-pp
++; COMMAND-LINE: --no-strings-lazy-pp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun x_9 () String)                                                        
+diff --git a/test/regress/cli/regress1/strings/issue6203-1-substr-ctn-strip.smt2 b/test/regress/cli/regress1/strings/issue6203-1-substr-ctn-strip.smt2
+index 9ee5a95c8..a152645db 100644
+--- a/test/regress/cli/regress1/strings/issue6203-1-substr-ctn-strip.smt2
++++ b/test/regress/cli/regress1/strings/issue6203-1-substr-ctn-strip.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6203-2-re-ccache.smt2 b/test/regress/cli/regress1/strings/issue6203-2-re-ccache.smt2
+index 2deffdadd..98cc2bfcd 100644
+--- a/test/regress/cli/regress1/strings/issue6203-2-re-ccache.smt2
++++ b/test/regress/cli/regress1/strings/issue6203-2-re-ccache.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6203-6-replace-re.smt2 b/test/regress/cli/regress1/strings/issue6203-6-replace-re.smt2
+index d5e6acd45..bd63b7b8a 100644
+--- a/test/regress/cli/regress1/strings/issue6203-6-replace-re.smt2
++++ b/test/regress/cli/regress1/strings/issue6203-6-replace-re.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-fun a () String)
+ (assert (not (str.in_re (str.replace_re a (re.++ (re.* (re.union (str.to_re "a") (str.to_re ""))) (str.to_re "b")) "") (str.to_re ""))))
+diff --git a/test/regress/cli/regress1/strings/issue6214-2-sym-re-inc.smt2 b/test/regress/cli/regress1/strings/issue6214-2-sym-re-inc.smt2
+index 0e74394ee..da610aa7d 100644
+--- a/test/regress/cli/regress1/strings/issue6214-2-sym-re-inc.smt2
++++ b/test/regress/cli/regress1/strings/issue6214-2-sym-re-inc.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6214-3-sym-re-inc.smt2 b/test/regress/cli/regress1/strings/issue6214-3-sym-re-inc.smt2
+index c203c256f..c009963e5 100644
+--- a/test/regress/cli/regress1/strings/issue6214-3-sym-re-inc.smt2
++++ b/test/regress/cli/regress1/strings/issue6214-3-sym-re-inc.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6214-4-sym-re-inc.smt2 b/test/regress/cli/regress1/strings/issue6214-4-sym-re-inc.smt2
+index c203c256f..c009963e5 100644
+--- a/test/regress/cli/regress1/strings/issue6214-4-sym-re-inc.smt2
++++ b/test/regress/cli/regress1/strings/issue6214-4-sym-re-inc.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6270.smt2 b/test/regress/cli/regress1/strings/issue6270.smt2
+index 1c073fc12..23e52a224 100644
+--- a/test/regress/cli/regress1/strings/issue6270.smt2
++++ b/test/regress/cli/regress1/strings/issue6270.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --nl-ext-tplanes
++; COMMAND-LINE: --nl-ext-tplanes
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun i9 () Int)
+diff --git a/test/regress/cli/regress1/strings/issue6271-2-rnf.smt2 b/test/regress/cli/regress1/strings/issue6271-2-rnf.smt2
+index 788322166..97fbec7eb 100644
+--- a/test/regress/cli/regress1/strings/issue6271-2-rnf.smt2
++++ b/test/regress/cli/regress1/strings/issue6271-2-rnf.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun str4 () String)
+diff --git a/test/regress/cli/regress1/strings/issue6271-rnf.smt2 b/test/regress/cli/regress1/strings/issue6271-rnf.smt2
+index f2db302d7..511bdf148 100644
+--- a/test/regress/cli/regress1/strings/issue6271-rnf.smt2
++++ b/test/regress/cli/regress1/strings/issue6271-rnf.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --strings-fmf
++; COMMAND-LINE: --strings-fmf
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-option :strings-fmf true)
+diff --git a/test/regress/cli/regress1/strings/issue6337-replace-re-all.smt2 b/test/regress/cli/regress1/strings/issue6337-replace-re-all.smt2
+index 9ae168b63..56fa1deca 100644
+--- a/test/regress/cli/regress1/strings/issue6337-replace-re-all.smt2
++++ b/test/regress/cli/regress1/strings/issue6337-replace-re-all.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-fun str3 () String)
+ (declare-fun str8 () String)
+diff --git a/test/regress/cli/regress1/strings/issue6337-replace-re.smt2 b/test/regress/cli/regress1/strings/issue6337-replace-re.smt2
+index 78895b24e..3983b04d5 100644
+--- a/test/regress/cli/regress1/strings/issue6337-replace-re.smt2
++++ b/test/regress/cli/regress1/strings/issue6337-replace-re.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-fun a () String)
+ (declare-fun b () String)
+diff --git a/test/regress/cli/regress1/strings/issue6604-2.smt2 b/test/regress/cli/regress1/strings/issue6604-2.smt2
+index 91da234ab..60d2044e2 100644
+--- a/test/regress/cli/regress1/strings/issue6604-2.smt2
++++ b/test/regress/cli/regress1/strings/issue6604-2.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --re-elim=on
++; COMMAND-LINE: --re-elim=on
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-const a String)
+diff --git a/test/regress/cli/regress1/strings/issue6635-rre.smt2 b/test/regress/cli/regress1/strings/issue6635-rre.smt2
+index 368b4fc87..9f7aaae69 100644
+--- a/test/regress/cli/regress1/strings/issue6635-rre.smt2
++++ b/test/regress/cli/regress1/strings/issue6635-rre.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --re-elim=agg
++; COMMAND-LINE: --re-elim=agg
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6653-4-rre.smt2 b/test/regress/cli/regress1/strings/issue6653-4-rre.smt2
+index f9f7dea22..722c46a71 100644
+--- a/test/regress/cli/regress1/strings/issue6653-4-rre.smt2
++++ b/test/regress/cli/regress1/strings/issue6653-4-rre.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --re-elim=agg
++; COMMAND-LINE: --re-elim=agg
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/issue6653-rre-small.smt2 b/test/regress/cli/regress1/strings/issue6653-rre-small.smt2
+index bc1d4bbd9..66c08e0d4 100644
+--- a/test/regress/cli/regress1/strings/issue6653-rre-small.smt2
++++ b/test/regress/cli/regress1/strings/issue6653-rre-small.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --strings-fmf --re-elim=agg
++; COMMAND-LINE: --strings-fmf --re-elim=agg
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6653-rre.smt2 b/test/regress/cli/regress1/strings/issue6653-rre.smt2
+index 22513c99b..6b0f9f2cc 100644
+--- a/test/regress/cli/regress1/strings/issue6653-rre.smt2
++++ b/test/regress/cli/regress1/strings/issue6653-rre.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --re-elim=agg
++; COMMAND-LINE: --re-elim=agg
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6654-indexof_re_red.smt2 b/test/regress/cli/regress1/strings/issue6654-indexof_re_red.smt2
+index 73607e424..c863ba992 100644
+--- a/test/regress/cli/regress1/strings/issue6654-indexof_re_red.smt2
++++ b/test/regress/cli/regress1/strings/issue6654-indexof_re_red.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6766-re-elim-bv.smt2 b/test/regress/cli/regress1/strings/issue6766-re-elim-bv.smt2
+index 72cb45af4..01b713e9a 100644
+--- a/test/regress/cli/regress1/strings/issue6766-re-elim-bv.smt2
++++ b/test/regress/cli/regress1/strings/issue6766-re-elim-bv.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --re-elim=agg
++; COMMAND-LINE: --re-elim=agg
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue6777-seq-nth-eval-cm.smt2 b/test/regress/cli/regress1/strings/issue6777-seq-nth-eval-cm.smt2
+index a8b1f8b23..ac1ac18f1 100644
+--- a/test/regress/cli/regress1/strings/issue6777-seq-nth-eval-cm.smt2
++++ b/test/regress/cli/regress1/strings/issue6777-seq-nth-eval-cm.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/issue6913.smt2 b/test/regress/cli/regress1/strings/issue6913.smt2
+index c8ee5aa69..421ae4a67 100644
+--- a/test/regress/cli/regress1/strings/issue6913.smt2
++++ b/test/regress/cli/regress1/strings/issue6913.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ ;; repeated assumption in local proof lead to confusion with
+ ;; discharge. Disabling for now while the use of "discharge" is not
+diff --git a/test/regress/cli/regress1/strings/issue6973-dup-lemma-conc.smt2 b/test/regress/cli/regress1/strings/issue6973-dup-lemma-conc.smt2
+index c6fa580f0..670dc672e 100644
+--- a/test/regress/cli/regress1/strings/issue6973-dup-lemma-conc.smt2
++++ b/test/regress/cli/regress1/strings/issue6973-dup-lemma-conc.smt2
+@@ -1,5 +1,5 @@
+-; COMMAND-LINE: --strings-exp
+-; COMMAND-LINE: --strings-exp --re-elim=agg
++; COMMAND-LINE:
++; COMMAND-LINE: --re-elim=agg
+ (set-logic QF_SLIA)
+ (set-info :status unsat)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue8094-witness-model.smt2 b/test/regress/cli/regress1/strings/issue8094-witness-model.smt2
+index 44da3d501..1552bf238 100644
+--- a/test/regress/cli/regress1/strings/issue8094-witness-model.smt2
++++ b/test/regress/cli/regress1/strings/issue8094-witness-model.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp -q
++; COMMAND-LINE: -q
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/issue8347-has-skolem.smt2 b/test/regress/cli/regress1/strings/issue8347-has-skolem.smt2
+index 68b096a1a..432ffcc4f 100644
+--- a/test/regress/cli/regress1/strings/issue8347-has-skolem.smt2
++++ b/test/regress/cli/regress1/strings/issue8347-has-skolem.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp -i
++; COMMAND-LINE: -i
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun uf6_2 (Bool Bool Bool Bool Bool Bool) Bool)
+diff --git a/test/regress/cli/regress1/strings/issue8434-nterm-str-rw.smt2 b/test/regress/cli/regress1/strings/issue8434-nterm-str-rw.smt2
+index 7a680cd2a..2d4de25d8 100644
+--- a/test/regress/cli/regress1/strings/issue8434-nterm-str-rw.smt2
++++ b/test/regress/cli/regress1/strings/issue8434-nterm-str-rw.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun T_7 () String)                                                     
+diff --git a/test/regress/cli/regress1/strings/issue8890-inj-oob.smt2 b/test/regress/cli/regress1/strings/issue8890-inj-oob.smt2
+index 4705a91e5..998cc99f7 100644
+--- a/test/regress/cli/regress1/strings/issue8890-inj-oob.smt2
++++ b/test/regress/cli/regress1/strings/issue8890-inj-oob.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --mbqi --strings-fmf
++; COMMAND-LINE: --mbqi --strings-fmf
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun b (Int) Bool)
+diff --git a/test/regress/cli/regress1/strings/issue8906-oob-exp.smt2 b/test/regress/cli/regress1/strings/issue8906-oob-exp.smt2
+index d2a61faf9..d161c5f19 100644
+--- a/test/regress/cli/regress1/strings/issue8906-oob-exp.smt2
++++ b/test/regress/cli/regress1/strings/issue8906-oob-exp.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unknown
+ (set-logic ALL)
+ (declare-const x1 Bool)
+diff --git a/test/regress/cli/regress1/strings/issue8915-str-unit-model.smt2 b/test/regress/cli/regress1/strings/issue8915-str-unit-model.smt2
+index 75b468e39..8d2f5349d 100644
+--- a/test/regress/cli/regress1/strings/issue8915-str-unit-model.smt2
++++ b/test/regress/cli/regress1/strings/issue8915-str-unit-model.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue8916-str-unit-pairs.smt2 b/test/regress/cli/regress1/strings/issue8916-str-unit-pairs.smt2
+index b4515928d..4ca1e2a22 100644
+--- a/test/regress/cli/regress1/strings/issue8916-str-unit-pairs.smt2
++++ b/test/regress/cli/regress1/strings/issue8916-str-unit-pairs.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --no-strings-lazy-pp
++; COMMAND-LINE: --no-strings-lazy-pp
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun v () String)
+diff --git a/test/regress/cli/regress1/strings/issue8918-str-nth-crange-red.smt2 b/test/regress/cli/regress1/strings/issue8918-str-nth-crange-red.smt2
+index 168648a4f..e1787f22f 100644
+--- a/test/regress/cli/regress1/strings/issue8918-str-nth-crange-red.smt2
++++ b/test/regress/cli/regress1/strings/issue8918-str-nth-crange-red.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --no-strings-lazy-pp
++; COMMAND-LINE: --no-strings-lazy-pp
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun a () String)
+diff --git a/test/regress/cli/regress1/strings/issue9040-re-inter-comp.smt2 b/test/regress/cli/regress1/strings/issue9040-re-inter-comp.smt2
+index f1cf46997..f8b00c3be 100644
+--- a/test/regress/cli/regress1/strings/issue9040-re-inter-comp.smt2
++++ b/test/regress/cli/regress1/strings/issue9040-re-inter-comp.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --re-inter=all --strings-exp
++; COMMAND-LINE: --re-inter=all
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun e () String)
+diff --git a/test/regress/cli/regress1/strings/loop007.smt2 b/test/regress/cli/regress1/strings/loop007.smt2
+index 492162ae6..52a529503 100644
+--- a/test/regress/cli/regress1/strings/loop007.smt2
++++ b/test/regress/cli/regress1/strings/loop007.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/loop008.smt2 b/test/regress/cli/regress1/strings/loop008.smt2
+index 672ecd371..dce1d1b62 100644
+--- a/test/regress/cli/regress1/strings/loop008.smt2
++++ b/test/regress/cli/regress1/strings/loop008.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/loop009.smt2 b/test/regress/cli/regress1/strings/loop009.smt2
+index 30fc6cebc..4e0d87b78 100644
+--- a/test/regress/cli/regress1/strings/loop009.smt2
++++ b/test/regress/cli/regress1/strings/loop009.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_S)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/no-lazy-pp-quant.smt2 b/test/regress/cli/regress1/strings/no-lazy-pp-quant.smt2
+index 60f7e575e..e401e5a19 100644
+--- a/test/regress/cli/regress1/strings/no-lazy-pp-quant.smt2
++++ b/test/regress/cli/regress1/strings/no-lazy-pp-quant.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --no-strings-lazy-pp
++; COMMAND-LINE: --no-strings-lazy-pp
+ ; EXPECT: sat
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress1/strings/non-terminating-rewrite-aent.smt2 b/test/regress/cli/regress1/strings/non-terminating-rewrite-aent.smt2
+index 211209255..a2b7ec02d 100644
+--- a/test/regress/cli/regress1/strings/non-terminating-rewrite-aent.smt2
++++ b/test/regress/cli/regress1/strings/non-terminating-rewrite-aent.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/non_termination_regular_expression4.smt2 b/test/regress/cli/regress1/strings/non_termination_regular_expression4.smt2
+index 356ce9ba7..4809aaf43 100644
+--- a/test/regress/cli/regress1/strings/non_termination_regular_expression4.smt2
++++ b/test/regress/cli/regress1/strings/non_termination_regular_expression4.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ (set-option :re-elim on)
+ (declare-const actionName String)
+ (declare-const actionNamespace String)
+diff --git a/test/regress/cli/regress1/strings/norn-13.smt2 b/test/regress/cli/regress1/strings/norn-13.smt2
+index 2a8d9f323..5e246fc76 100644
+--- a/test/regress/cli/regress1/strings/norn-13.smt2
++++ b/test/regress/cli/regress1/strings/norn-13.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_S)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ (declare-fun var_0 () String)
+diff --git a/test/regress/cli/regress1/strings/norn-360.smt2 b/test/regress/cli/regress1/strings/norn-360.smt2
+index bdbca494d..a0b0f7cf6 100644
+--- a/test/regress/cli/regress1/strings/norn-360.smt2
++++ b/test/regress/cli/regress1/strings/norn-360.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ (declare-fun var_0 () String)
+diff --git a/test/regress/cli/regress1/strings/norn-ab.smt2 b/test/regress/cli/regress1/strings/norn-ab.smt2
+index 6109a01dd..16e1f999f 100644
+--- a/test/regress/cli/regress1/strings/norn-ab.smt2
++++ b/test/regress/cli/regress1/strings/norn-ab.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic SLIA)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun var_0 () String)
+ (declare-fun var_1 () String)
+diff --git a/test/regress/cli/regress1/strings/norn-nel-bug-052116.smt2 b/test/regress/cli/regress1/strings/norn-nel-bug-052116.smt2
+index 883f7c4dd..4d3b61c98 100644
+--- a/test/regress/cli/regress1/strings/norn-nel-bug-052116.smt2
++++ b/test/regress/cli/regress1/strings/norn-nel-bug-052116.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun var_0 () String)
+ (declare-fun var_1 () String)
+diff --git a/test/regress/cli/regress1/strings/norn-simp-rew-sat.smt2 b/test/regress/cli/regress1/strings/norn-simp-rew-sat.smt2
+index f7cad1c09..5b8378fa9 100644
+--- a/test/regress/cli/regress1/strings/norn-simp-rew-sat.smt2
++++ b/test/regress/cli/regress1/strings/norn-simp-rew-sat.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ (declare-fun var_0 () String)
+diff --git a/test/regress/cli/regress1/strings/nt6-dd.smt2 b/test/regress/cli/regress1/strings/nt6-dd.smt2
+index 4b74bfe20..043d795c2 100644
+--- a/test/regress/cli/regress1/strings/nt6-dd.smt2
++++ b/test/regress/cli/regress1/strings/nt6-dd.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --re-elim=on
++; COMMAND-LINE: --re-elim=on
+ ; EXPECT: sat
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress1/strings/nterm-re-inter-sigma.smt2 b/test/regress/cli/regress1/strings/nterm-re-inter-sigma.smt2
+index 63d6a1391..60396cc52 100644
+--- a/test/regress/cli/regress1/strings/nterm-re-inter-sigma.smt2
++++ b/test/regress/cli/regress1/strings/nterm-re-inter-sigma.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-fun x () String)
+ 
+ (assert
+diff --git a/test/regress/cli/regress1/strings/pierre150331.smt2 b/test/regress/cli/regress1/strings/pierre150331.smt2
+index 562904366..fcc45f3d5 100644
+--- a/test/regress/cli/regress1/strings/pierre150331.smt2
++++ b/test/regress/cli/regress1/strings/pierre150331.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic SLIA)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (define-fun stringEval ((?s String)) Bool (str.in_re ?s 
+ (re.union 
+ (str.to_re "H")
+diff --git a/test/regress/cli/regress1/strings/policy_variable.smt2 b/test/regress/cli/regress1/strings/policy_variable.smt2
+index 2ffe62aad..8b4f9bdd6 100644
+--- a/test/regress/cli/regress1/strings/policy_variable.smt2
++++ b/test/regress/cli/regress1/strings/policy_variable.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ (set-option :re-elim on)
+ (declare-const actionName String)
+ (declare-const actionNamespace String)
+diff --git a/test/regress/cli/regress1/strings/pre_ctn_no_skolem_share.smt2 b/test/regress/cli/regress1/strings/pre_ctn_no_skolem_share.smt2
+index 87c7a8de7..b71d31349 100644
+--- a/test/regress/cli/regress1/strings/pre_ctn_no_skolem_share.smt2
++++ b/test/regress/cli/regress1/strings/pre_ctn_no_skolem_share.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ (set-info :status sat)
+ (declare-fun z () String)
+diff --git a/test/regress/cli/regress1/strings/proj-issue281.smt2 b/test/regress/cli/regress1/strings/proj-issue281.smt2
+index a0e3e3ef0..03f88ce11 100644
+--- a/test/regress/cli/regress1/strings/proj-issue281.smt2
++++ b/test/regress/cli/regress1/strings/proj-issue281.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-const x Bool)
+ (declare-fun c () Int)
+ (declare-fun c_ () Int)
+diff --git a/test/regress/cli/regress1/strings/proj-issue331.smt2 b/test/regress/cli/regress1/strings/proj-issue331.smt2
+index 49ceea42b..f0553e12c 100644
+--- a/test/regress/cli/regress1/strings/proj-issue331.smt2
++++ b/test/regress/cli/regress1/strings/proj-issue331.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/proj-issue502-merge-type.smt2 b/test/regress/cli/regress1/strings/proj-issue502-merge-type.smt2
+index 9d6bb61b6..147c3fe9b 100644
+--- a/test/regress/cli/regress1/strings/proj-issue502-merge-type.smt2
++++ b/test/regress/cli/regress1/strings/proj-issue502-merge-type.smt2
+@@ -2,5 +2,5 @@
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (check-sat-assuming ((seq.nth (seq.unit (is_int (seq.nth (seq.unit real.pi) 1))) (to_int (seq.nth (seq.unit real.pi) 1)))))
+diff --git a/test/regress/cli/regress1/strings/proj254-re-elim-agg.smt2 b/test/regress/cli/regress1/strings/proj254-re-elim-agg.smt2
+index 1894e6987..7fb7cad72 100644
+--- a/test/regress/cli/regress1/strings/proj254-re-elim-agg.smt2
++++ b/test/regress/cli/regress1/strings/proj254-re-elim-agg.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status sat)
+ (set-option :produce-models true)
+-(set-option :strings-exp true)
++
+ (set-option :re-elim agg)
+ (declare-fun a () String)
+ (assert (str.in_re a (re.++ (re.+ (str.to_re "AB")) (str.to_re "B"))))
+diff --git a/test/regress/cli/regress1/strings/prop-engine-order.smt2 b/test/regress/cli/regress1/strings/prop-engine-order.smt2
+index ae26c32d1..4ebd53dac 100644
+--- a/test/regress/cli/regress1/strings/prop-engine-order.smt2
++++ b/test/regress/cli/regress1/strings/prop-engine-order.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-const x3 Bool)
+diff --git a/test/regress/cli/regress1/strings/query4674.smt2 b/test/regress/cli/regress1/strings/query4674.smt2
+index 2f3ccc6e9..17867e85b 100644
+--- a/test/regress/cli/regress1/strings/query4674.smt2
++++ b/test/regress/cli/regress1/strings/query4674.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :re-elim off)
+ (declare-fun x () String)
+ (assert (let ((_let_0 (re.* re.allchar ))) (and (not (= (str.in_re x (re.++ _let_0 re.allchar  _let_0 (str.to_re (str.++ "A" (str.++ "B" (str.++ "C" "A")))) _let_0 re.allchar  _let_0)) (str.in_re x (re.++ _let_0 re.allchar  _let_0 re.allchar  _let_0 (str.to_re (str.++ "B" (str.++ "C" (str.++ "B" "B")))) _let_0)))) (not (= (str.in_re x (re.++ _let_0 re.allchar  _let_0 (str.to_re (str.++ "C" (str.++ "B" "C"))) _let_0 (str.to_re "B") _let_0)) (str.in_re x (re.++ _let_0 re.allchar  _let_0 (str.to_re "C") _let_0 (str.to_re (str.++ "B" (str.++ "C" "B"))) _let_0)))))))
+diff --git a/test/regress/cli/regress1/strings/query8485.smt2 b/test/regress/cli/regress1/strings/query8485.smt2
+index e9bf2c7c7..c749790b9 100644
+--- a/test/regress/cli/regress1/strings/query8485.smt2
++++ b/test/regress/cli/regress1/strings/query8485.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :re-elim off)
+ (declare-fun x () String)
+ (assert (let ((_let_0 (re.* re.allchar ))) (and (not (= (str.in_re x (re.++ _let_0 re.allchar  _let_0 (str.to_re (str.++ "B" (str.++ "A" (str.++ "C" "B")))) _let_0 re.allchar  _let_0)) (str.in_re x (re.++ _let_0 re.allchar  _let_0 (str.to_re (str.++ "A" (str.++ "B" (str.++ "C" "C")))) _let_0 re.allchar  _let_0)))) (not (= (str.in_re x (re.++ _let_0 re.allchar  _let_0 (str.to_re (str.++ "C" (str.++ "B" (str.++ "A" "B")))) _let_0 re.allchar  _let_0)) (str.in_re x (re.++ _let_0 re.allchar  _let_0 (str.to_re (str.++ "C" (str.++ "B" "A"))) _let_0 (str.to_re "B") _let_0)))))))
+diff --git a/test/regress/cli/regress1/strings/re-agg-total1.smt2 b/test/regress/cli/regress1/strings/re-agg-total1.smt2
+index 8090d6508..8281bd55d 100644
+--- a/test/regress/cli/regress1/strings/re-agg-total1.smt2
++++ b/test/regress/cli/regress1/strings/re-agg-total1.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ (set-option :re-elim agg)
+ (declare-const x String)
+ (declare-const y String)
+diff --git a/test/regress/cli/regress1/strings/re-agg-total2.smt2 b/test/regress/cli/regress1/strings/re-agg-total2.smt2
+index f1bad3def..69aa9d511 100644
+--- a/test/regress/cli/regress1/strings/re-agg-total2.smt2
++++ b/test/regress/cli/regress1/strings/re-agg-total2.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ (set-option :re-elim agg)
+ (declare-const x String)
+ (declare-const y String)
+diff --git a/test/regress/cli/regress1/strings/re-elim-exact.smt2 b/test/regress/cli/regress1/strings/re-elim-exact.smt2
+index 003ee08a4..e0278ffe2 100644
+--- a/test/regress/cli/regress1/strings/re-elim-exact.smt2
++++ b/test/regress/cli/regress1/strings/re-elim-exact.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :re-elim on)
+ (declare-fun x () String)
+ 
+diff --git a/test/regress/cli/regress1/strings/re-mod-eq.smt2 b/test/regress/cli/regress1/strings/re-mod-eq.smt2
+index ff20ec9d4..e474406ec 100644
+--- a/test/regress/cli/regress1/strings/re-mod-eq.smt2
++++ b/test/regress/cli/regress1/strings/re-mod-eq.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ (declare-fun x () String)
+ (declare-fun y () String)
+diff --git a/test/regress/cli/regress1/strings/re-neg-concat-reduct.smt2 b/test/regress/cli/regress1/strings/re-neg-concat-reduct.smt2
+index 0f20f80a3..9f36d3a07 100644
+--- a/test/regress/cli/regress1/strings/re-neg-concat-reduct.smt2
++++ b/test/regress/cli/regress1/strings/re-neg-concat-reduct.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun x () String)
+ 
+diff --git a/test/regress/cli/regress1/strings/re-neg-unfold-rev-a.smt2 b/test/regress/cli/regress1/strings/re-neg-unfold-rev-a.smt2
+index 0f869f155..5058aecf8 100644
+--- a/test/regress/cli/regress1/strings/re-neg-unfold-rev-a.smt2
++++ b/test/regress/cli/regress1/strings/re-neg-unfold-rev-a.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-const x String)
+ (declare-const y String)
+diff --git a/test/regress/cli/regress1/strings/re-unsound-080718.smt2 b/test/regress/cli/regress1/strings/re-unsound-080718.smt2
+index 3c9d2ac8f..aefb766f2 100644
+--- a/test/regress/cli/regress1/strings/re-unsound-080718.smt2
++++ b/test/regress/cli/regress1/strings/re-unsound-080718.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress1/strings/regexp-050-multiply-graft-fuzz-dd.smt2 b/test/regress/cli/regress1/strings/regexp-050-multiply-graft-fuzz-dd.smt2
+index f453d933c..2a44452f3 100644
+--- a/test/regress/cli/regress1/strings/regexp-050-multiply-graft-fuzz-dd.smt2
++++ b/test/regress/cli/regress1/strings/regexp-050-multiply-graft-fuzz-dd.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/regexp-strat-fix.smt2 b/test/regress/cli/regress1/strings/regexp-strat-fix.smt2
+index 349774663..769b7a68a 100644
+--- a/test/regress/cli/regress1/strings/regexp-strat-fix.smt2
++++ b/test/regress/cli/regress1/strings/regexp-strat-fix.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+ (set-info :status unsat)
+-(set-option :strings-exp true)
++
+ (declare-fun var0 () String)
+ (assert (str.in_re var0 (re.* (re.* (str.to_re "0")))))
+ (assert (not (str.in_re var0 (re.union (re.+ (str.to_re "0")) (re.* (str.to_re "1"))))))
+diff --git a/test/regress/cli/regress1/strings/regexp001.smt2 b/test/regress/cli/regress1/strings/regexp001.smt2
+index 0562e6655..e88668d49 100644
+--- a/test/regress/cli/regress1/strings/regexp001.smt2
++++ b/test/regress/cli/regress1/strings/regexp001.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun x () String)
+ 
+diff --git a/test/regress/cli/regress1/strings/regexp002.smt2 b/test/regress/cli/regress1/strings/regexp002.smt2
+index 7bb4e8aca..f3cdf0461 100644
+--- a/test/regress/cli/regress1/strings/regexp002.smt2
++++ b/test/regress/cli/regress1/strings/regexp002.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun x () String)
+ (declare-fun y () String)
+diff --git a/test/regress/cli/regress1/strings/regexp003.smt2 b/test/regress/cli/regress1/strings/regexp003.smt2
+index fa3828745..cfa043041 100644
+--- a/test/regress/cli/regress1/strings/regexp003.smt2
++++ b/test/regress/cli/regress1/strings/regexp003.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-const s String)
+ 
+diff --git a/test/regress/cli/regress1/strings/reloop.smt2 b/test/regress/cli/regress1/strings/reloop.smt2
+index 1e9050178..f1d09e91d 100644
+--- a/test/regress/cli/regress1/strings/reloop.smt2
++++ b/test/regress/cli/regress1/strings/reloop.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ 
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/repl-empty-sem.smt2 b/test/regress/cli/regress1/strings/repl-empty-sem.smt2
+index 56d4f1b86..703ee5973 100644
+--- a/test/regress/cli/regress1/strings/repl-empty-sem.smt2
++++ b/test/regress/cli/regress1/strings/repl-empty-sem.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/repl-soundness-sem.smt2 b/test/regress/cli/regress1/strings/repl-soundness-sem.smt2
+index f65b3b56a..17182c201 100644
+--- a/test/regress/cli/regress1/strings/repl-soundness-sem.smt2
++++ b/test/regress/cli/regress1/strings/repl-soundness-sem.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/replaceall-len.smt2 b/test/regress/cli/regress1/strings/replaceall-len.smt2
+index 3c0d7e8e5..fbbfa8a2e 100644
+--- a/test/regress/cli/regress1/strings/replaceall-len.smt2
++++ b/test/regress/cli/regress1/strings/replaceall-len.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ (set-option :produce-models true)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/replaceall-replace.smt2 b/test/regress/cli/regress1/strings/replaceall-replace.smt2
+index 5f62ff4d5..94c4cd4c9 100644
+--- a/test/regress/cli/regress1/strings/replaceall-replace.smt2
++++ b/test/regress/cli/regress1/strings/replaceall-replace.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ (set-option :produce-models true)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/rev-conv1.smt2 b/test/regress/cli/regress1/strings/rev-conv1.smt2
+index 9ee103895..bf8c37c85 100644
+--- a/test/regress/cli/regress1/strings/rev-conv1.smt2
++++ b/test/regress/cli/regress1/strings/rev-conv1.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/rev-ex1.smt2 b/test/regress/cli/regress1/strings/rev-ex1.smt2
+index 36d40fcdd..c5abbdb32 100644
+--- a/test/regress/cli/regress1/strings/rev-ex1.smt2
++++ b/test/regress/cli/regress1/strings/rev-ex1.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/rev-ex2.smt2 b/test/regress/cli/regress1/strings/rev-ex2.smt2
+index 163785bdc..813c41869 100644
+--- a/test/regress/cli/regress1/strings/rev-ex2.smt2
++++ b/test/regress/cli/regress1/strings/rev-ex2.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/rev-ex3.smt2 b/test/regress/cli/regress1/strings/rev-ex3.smt2
+index e317191ad..b1b4b33dd 100644
+--- a/test/regress/cli/regress1/strings/rev-ex3.smt2
++++ b/test/regress/cli/regress1/strings/rev-ex3.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/rev-ex4.smt2 b/test/regress/cli/regress1/strings/rev-ex4.smt2
+index a3eed8e35..f75896a68 100644
+--- a/test/regress/cli/regress1/strings/rev-ex4.smt2
++++ b/test/regress/cli/regress1/strings/rev-ex4.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --strings-fmf
++; COMMAND-LINE: --strings-fmf
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/rev-ex5.smt2 b/test/regress/cli/regress1/strings/rev-ex5.smt2
+index 74a374962..5aad408b2 100644
+--- a/test/regress/cli/regress1/strings/rev-ex5.smt2
++++ b/test/regress/cli/regress1/strings/rev-ex5.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/rew-020618.smt2 b/test/regress/cli/regress1/strings/rew-020618.smt2
+index 95dbf4d29..75f148263 100644
+--- a/test/regress/cli/regress1/strings/rew-020618.smt2
++++ b/test/regress/cli/regress1/strings/rew-020618.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress1/strings/seq-quant-infinite-branch.smt2 b/test/regress/cli/regress1/strings/seq-quant-infinite-branch.smt2
+index 9816301d4..08c8814ae 100644
+--- a/test/regress/cli/regress1/strings/seq-quant-infinite-branch.smt2
++++ b/test/regress/cli/regress1/strings/seq-quant-infinite-branch.smt2
+@@ -1,7 +1,7 @@
+ (set-logic ALL)
+ (set-info :status unsat)
+ (declare-const x8 Bool)
+-(set-option :strings-exp true)
++
+ (declare-fun s () (Seq Int))
+ (declare-fun x () Int)
+ (declare-fun i () Int)
+diff --git a/test/regress/cli/regress1/strings/seq-skeleton-gap.smt2 b/test/regress/cli/regress1/strings/seq-skeleton-gap.smt2
+index 30fd01a26..0945de1fc 100644
+--- a/test/regress/cli/regress1/strings/seq-skeleton-gap.smt2
++++ b/test/regress/cli/regress1/strings/seq-skeleton-gap.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun a () (Seq Int))
+diff --git a/test/regress/cli/regress1/strings/stoi-400million.smt2 b/test/regress/cli/regress1/strings/stoi-400million.smt2
+index 42dfb1bfc..c5c763e39 100644
+--- a/test/regress/cli/regress1/strings/stoi-400million.smt2
++++ b/test/regress/cli/regress1/strings/stoi-400million.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --no-jh-rlv-order
++; COMMAND-LINE: --no-jh-rlv-order
+ ; EXPECT: sat
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress1/strings/stoi-solve.smt2 b/test/regress/cli/regress1/strings/stoi-solve.smt2
+index e84f5b42c..1b9279bd4 100644
+--- a/test/regress/cli/regress1/strings/stoi-solve.smt2
++++ b/test/regress/cli/regress1/strings/stoi-solve.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-fun x () String)
+ (assert (= (str.to_int x) 12345)) 
+ (check-sat)
+diff --git a/test/regress/cli/regress1/strings/str-rev-simple-s.smt2 b/test/regress/cli/regress1/strings/str-rev-simple-s.smt2
+index 5445a19ea..7cd89f41a 100644
+--- a/test/regress/cli/regress1/strings/str-rev-simple-s.smt2
++++ b/test/regress/cli/regress1/strings/str-rev-simple-s.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/string-unsound-sem.smt2 b/test/regress/cli/regress1/strings/string-unsound-sem.smt2
+index 59c2d4a17..ee4a4e78a 100644
+--- a/test/regress/cli/regress1/strings/string-unsound-sem.smt2
++++ b/test/regress/cli/regress1/strings/string-unsound-sem.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun x () String)
+ (declare-fun y () String)
+diff --git a/test/regress/cli/regress1/strings/strings-index-empty.smt2 b/test/regress/cli/regress1/strings/strings-index-empty.smt2
+index a726d9cab..bc6364c17 100644
+--- a/test/regress/cli/regress1/strings/strings-index-empty.smt2
++++ b/test/regress/cli/regress1/strings/strings-index-empty.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --simplification=none --strings-exp --no-strings-lazy-pp
++; COMMAND-LINE: --simplification=none --no-strings-lazy-pp
+ ; EXPECT: sat
+ (set-logic SLIA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/strings-leq-trans-unsat.smt2 b/test/regress/cli/regress1/strings/strings-leq-trans-unsat.smt2
+index c5188e27d..c7cab6265 100644
+--- a/test/regress/cli/regress1/strings/strings-leq-trans-unsat.smt2
++++ b/test/regress/cli/regress1/strings/strings-leq-trans-unsat.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ ; DISABLE-TESTER: unsat-core
+ ; timeout with unsat cores
+diff --git a/test/regress/cli/regress1/strings/strings-lt-len5.smt2 b/test/regress/cli/regress1/strings/strings-lt-len5.smt2
+index aeabfdf75..199d894c1 100644
+--- a/test/regress/cli/regress1/strings/strings-lt-len5.smt2
++++ b/test/regress/cli/regress1/strings/strings-lt-len5.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/strings-lt-simple.smt2 b/test/regress/cli/regress1/strings/strings-lt-simple.smt2
+index e077cf1f7..58f122d3b 100644
+--- a/test/regress/cli/regress1/strings/strings-lt-simple.smt2
++++ b/test/regress/cli/regress1/strings/strings-lt-simple.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/strings/strip-endpt-sound.smt2 b/test/regress/cli/regress1/strings/strip-endpt-sound.smt2
+index 0c1dd123c..fd6ea0b38 100644
+--- a/test/regress/cli/regress1/strings/strip-endpt-sound.smt2
++++ b/test/regress/cli/regress1/strings/strip-endpt-sound.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_S)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress1/strings/substr001.smt2 b/test/regress/cli/regress1/strings/substr001.smt2
+index 00caf42ce..a7c05bd83 100644
+--- a/test/regress/cli/regress1/strings/substr001.smt2
++++ b/test/regress/cli/regress1/strings/substr001.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+ 
+diff --git a/test/regress/cli/regress1/strings/timeout-no-resp.smt2 b/test/regress/cli/regress1/strings/timeout-no-resp.smt2
+index 65608da62..568d2dcee 100644
+--- a/test/regress/cli/regress1/strings/timeout-no-resp.smt2
++++ b/test/regress/cli/regress1/strings/timeout-no-resp.smt2
+@@ -1,6 +1,6 @@
+ (set-logic SLIA)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (declare-const x String)
+ (declare-const y String)
+ (assert (not (= (str.replace "A" (str.replace x "A" y) x) (str.replace "A" x (str.replace x y x)))))
+diff --git a/test/regress/cli/regress1/strings/to_upper_12.smt2 b/test/regress/cli/regress1/strings/to_upper_12.smt2
+index 293195c97..c98bac0c9 100644
+--- a/test/regress/cli/regress1/strings/to_upper_12.smt2
++++ b/test/regress/cli/regress1/strings/to_upper_12.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-const X String)
+diff --git a/test/regress/cli/regress1/strings/to_upper_over_concat.smt2 b/test/regress/cli/regress1/strings/to_upper_over_concat.smt2
+index 57a370f36..111268e0b 100644
+--- a/test/regress/cli/regress1/strings/to_upper_over_concat.smt2
++++ b/test/regress/cli/regress1/strings/to_upper_over_concat.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --seq-array=lazy
++; COMMAND-LINE: --seq-array=lazy
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-const x String)
+diff --git a/test/regress/cli/regress1/strings/tolower-find.smt2 b/test/regress/cli/regress1/strings/tolower-find.smt2
+index 821812b4f..e2d0c0eb1 100644
+--- a/test/regress/cli/regress1/strings/tolower-find.smt2
++++ b/test/regress/cli/regress1/strings/tolower-find.smt2
+@@ -1,5 +1,5 @@
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-const x String)
+ (declare-const y String)
+diff --git a/test/regress/cli/regress1/strings/type002.smt2 b/test/regress/cli/regress1/strings/type002.smt2
+index af2e293c2..48be829be 100644
+--- a/test/regress/cli/regress1/strings/type002.smt2
++++ b/test/regress/cli/regress1/strings/type002.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun x () String)
+ (declare-fun y () String)
+diff --git a/test/regress/cli/regress1/strings/type003.smt2 b/test/regress/cli/regress1/strings/type003.smt2
+index 87c8b3903..94ae44a32 100644
+--- a/test/regress/cli/regress1/strings/type003.smt2
++++ b/test/regress/cli/regress1/strings/type003.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ 
+ (declare-fun i () Int)
+ (declare-fun s () String)
+diff --git a/test/regress/cli/regress1/strings/update-ex1.smt2 b/test/regress/cli/regress1/strings/update-ex1.smt2
+index deff4b6c2..967eabeaa 100644
+--- a/test/regress/cli/regress1/strings/update-ex1.smt2
++++ b/test/regress/cli/regress1/strings/update-ex1.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun s () String)
+ 
+diff --git a/test/regress/cli/regress1/strings/update-ex2.smt2 b/test/regress/cli/regress1/strings/update-ex2.smt2
+index dedba68b2..c1381085b 100644
+--- a/test/regress/cli/regress1/strings/update-ex2.smt2
++++ b/test/regress/cli/regress1/strings/update-ex2.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ (declare-fun s () String)
+ 
+diff --git a/test/regress/cli/regress1/strings/username_checker_min.smt2 b/test/regress/cli/regress1/strings/username_checker_min.smt2
+index c4c21dfac..6e1ef57f0 100644
+--- a/test/regress/cli/regress1/strings/username_checker_min.smt2
++++ b/test/regress/cli/regress1/strings/username_checker_min.smt2
+@@ -1,6 +1,6 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_S)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ 
+ (declare-const buff String)
+diff --git a/test/regress/cli/regress1/strings/witness-model.smt2 b/test/regress/cli/regress1/strings/witness-model.smt2
+index 22e7aa7f4..cb796e38f 100644
+--- a/test/regress/cli/regress1/strings/witness-model.smt2
++++ b/test/regress/cli/regress1/strings/witness-model.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp -q
++; COMMAND-LINE: -q
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress1/sygus/issue3247.smt2 b/test/regress/cli/regress1/sygus/issue3247.smt2
+index 0b5809fbd..a23360703 100644
+--- a/test/regress/cli/regress1/sygus/issue3247.smt2
++++ b/test/regress/cli/regress1/sygus/issue3247.smt2
+@@ -1,5 +1,5 @@
+ ; EXPECT: unsat
+-; COMMAND-LINE: --sygus-inference=try --strings-exp -q
++; COMMAND-LINE: --sygus-inference=try -q
+ ; DISABLE-TESTER: unsat-core
+ ; DISABLE-TESTER: proof
+ (set-logic ALL)
+diff --git a/test/regress/cli/regress1/sygus/issue8976-interp-check.smt2 b/test/regress/cli/regress1/sygus/issue8976-interp-check.smt2
+index b147fcd50..c977f0df4 100644
+--- a/test/regress/cli/regress1/sygus/issue8976-interp-check.smt2
++++ b/test/regress/cli/regress1/sygus/issue8976-interp-check.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --produce-interpolants -q --strings-exp --check-models
++; COMMAND-LINE: --produce-interpolants -q --check-models
+ ; EXPECT: fail
+ (set-logic ALL)
+ (declare-fun a () String)                                                       
+diff --git a/test/regress/cli/regress1/sygus/proj-issue183.smt2 b/test/regress/cli/regress1/sygus/proj-issue183.smt2
+index 167783b0b..158b0a26f 100644
+--- a/test/regress/cli/regress1/sygus/proj-issue183.smt2
++++ b/test/regress/cli/regress1/sygus/proj-issue183.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-option :sygus-inference try)
+diff --git a/test/regress/cli/regress1/sygus/rex-strings-alarm.sy b/test/regress/cli/regress1/sygus/rex-strings-alarm.sy
+index 25854886f..2f61a3295 100644
+--- a/test/regress/cli/regress1/sygus/rex-strings-alarm.sy
++++ b/test/regress/cli/regress1/sygus/rex-strings-alarm.sy
+@@ -1,5 +1,5 @@
+ ; EXPECT: feasible
+-; COMMAND-LINE: --sygus-out=status --lang=sygus2 --strings-exp
++; COMMAND-LINE: --sygus-out=status --lang=sygus2
+ 
+ (set-logic S)
+ 
+diff --git a/test/regress/cli/regress2/seq/err-model-soundness.smt2 b/test/regress/cli/regress2/seq/err-model-soundness.smt2
+index 22af48935..edc349cf2 100644
+--- a/test/regress/cli/regress2/seq/err-model-soundness.smt2
++++ b/test/regress/cli/regress2/seq/err-model-soundness.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic ALL)
+ (declare-sort E 0)
+ (declare-fun x () (Seq E))
+diff --git a/test/regress/cli/regress2/strings/bidir_star.smt2 b/test/regress/cli/regress2/strings/bidir_star.smt2
+index 8a13ed085..3859ce535 100644
+--- a/test/regress/cli/regress2/strings/bidir_star.smt2
++++ b/test/regress/cli/regress2/strings/bidir_star.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic SLIA)
+ (declare-fun a () String)
+ (assert (>= (str.len a) 2))
+diff --git a/test/regress/cli/regress2/strings/cmi-split-cm-fail.smt2 b/test/regress/cli/regress2/strings/cmi-split-cm-fail.smt2
+index 4782fa7f8..95375763a 100644
+--- a/test/regress/cli/regress2/strings/cmi-split-cm-fail.smt2
++++ b/test/regress/cli/regress2/strings/cmi-split-cm-fail.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-info :smt-lib-version 2.6)
+ (set-logic QF_SLIA)
+diff --git a/test/regress/cli/regress2/strings/cmu-dis-0707-3.smt2 b/test/regress/cli/regress2/strings/cmu-dis-0707-3.smt2
+index 4df45e833..a9b314155 100644
+--- a/test/regress/cli/regress2/strings/cmu-dis-0707-3.smt2
++++ b/test/regress/cli/regress2/strings/cmu-dis-0707-3.smt2
+@@ -2,7 +2,7 @@
+ (set-logic ALL)
+ (set-info :status sat)
+ (set-info :smt-lib-version 2.6)
+-(set-option :strings-exp true)
++
+ (declare-fun value () String)
+ (declare-fun name () String)
+ (assert (not (not (not (= (ite (str.contains value "?") 1 0) 0))))) 
+diff --git a/test/regress/cli/regress2/strings/cmu-disagree-0707-dd.smt2 b/test/regress/cli/regress2/strings/cmu-disagree-0707-dd.smt2
+index 02e5f6492..2cb85cbb8 100644
+--- a/test/regress/cli/regress2/strings/cmu-disagree-0707-dd.smt2
++++ b/test/regress/cli/regress2/strings/cmu-disagree-0707-dd.smt2
+@@ -1,6 +1,6 @@
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ 
+ 
+diff --git a/test/regress/cli/regress2/strings/cmu-prereg-fmf.smt2 b/test/regress/cli/regress2/strings/cmu-prereg-fmf.smt2
+index 30ea49f4b..8617c938d 100644
+--- a/test/regress/cli/regress2/strings/cmu-prereg-fmf.smt2
++++ b/test/regress/cli/regress2/strings/cmu-prereg-fmf.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --strings-fmf
++; COMMAND-LINE: --strings-fmf
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress2/strings/cmu-repl-len-nterm.smt2 b/test/regress/cli/regress2/strings/cmu-repl-len-nterm.smt2
+index f55a61b2e..207348a3c 100644
+--- a/test/regress/cli/regress2/strings/cmu-repl-len-nterm.smt2
++++ b/test/regress/cli/regress2/strings/cmu-repl-len-nterm.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic ALL)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress2/strings/dd.trust-subs.smt2 b/test/regress/cli/regress2/strings/dd.trust-subs.smt2
+index 28c980036..5e7e40c10 100644
+--- a/test/regress/cli/regress2/strings/dd.trust-subs.smt2
++++ b/test/regress/cli/regress2/strings/dd.trust-subs.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (declare-fun x () String)
+diff --git a/test/regress/cli/regress2/strings/issue3203.smt2 b/test/regress/cli/regress2/strings/issue3203.smt2
+index 25785f100..f84e24da1 100644
+--- a/test/regress/cli/regress2/strings/issue3203.smt2
++++ b/test/regress/cli/regress2/strings/issue3203.smt2
+@@ -1,7 +1,7 @@
+ ; Temporarily disable checking of unsat cores (see issue #3606)
+ ; DISABLE-TESTER: unsat-core
+ (set-logic ALL)
+-(set-option :strings-exp true)
++
+ (set-info :status unsat)
+ (declare-fun a () String)
+ (declare-fun b () String)
+diff --git a/test/regress/cli/regress2/strings/issue5381.smt2 b/test/regress/cli/regress2/strings/issue5381.smt2
+index 6efd22a6e..6ac15943b 100644
+--- a/test/regress/cli/regress2/strings/issue5381.smt2
++++ b/test/regress/cli/regress2/strings/issue5381.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-fmf --strings-exp
++; COMMAND-LINE: --strings-fmf
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (set-info :status sat)
+diff --git a/test/regress/cli/regress2/strings/issue6057-replace-re-all-simplified.smt2 b/test/regress/cli/regress2/strings/issue6057-replace-re-all-simplified.smt2
+index 83860ef86..06234c002 100644
+--- a/test/regress/cli/regress2/strings/issue6057-replace-re-all-simplified.smt2
++++ b/test/regress/cli/regress2/strings/issue6057-replace-re-all-simplified.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-fun literal_5 () String)                                               
+ (assert (not (=
+diff --git a/test/regress/cli/regress2/strings/issue6057-replace-re-all.smt2 b/test/regress/cli/regress2/strings/issue6057-replace-re-all.smt2
+index 269a89e61..007fc31b5 100644
+--- a/test/regress/cli/regress2/strings/issue6057-replace-re-all.smt2
++++ b/test/regress/cli/regress2/strings/issue6057-replace-re-all.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --no-jh-rlv-order
++; COMMAND-LINE: --no-jh-rlv-order
+ (set-logic QF_SLIA)
+ (declare-fun literal_0 () String)
+ (assert (and (str.<= (str.++ literal_0 "\u{2f}\u{71}\u{75}\u{65}\u{73}\u{74}\u{69}\u{6f}\u{6e}\u{2f}\u{74}\u{79}\u{70}\u{65}\u{2f}\u{6e}\u{75}\u{6d}\u{65}\u{72}\u{69}\u{63}\u{61}\u{6c}\u{2f}\u{65}\u{64}\u{69}\u{74}\u{71}\u{75}\u{65}\u{73}\u{74}\u{69}\u{6f}\u{6e}\u{2e}\u{68}\u{74}\u{6d}\u{6c}") 
+diff --git a/test/regress/cli/regress2/strings/issue6636-replace-re-all.smt2 b/test/regress/cli/regress2/strings/issue6636-replace-re-all.smt2
+index 779ef3af6..057e2412a 100644
+--- a/test/regress/cli/regress2/strings/issue6636-replace-re-all.smt2
++++ b/test/regress/cli/regress2/strings/issue6636-replace-re-all.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-fun a () String)
+ (assert (not (= a (str.replace_re_all a (re.++ (re.* re.allchar) (str.to_re a) (re.* re.allchar)) a))))
+diff --git a/test/regress/cli/regress2/strings/issue6637-replace-re-all.smt2 b/test/regress/cli/regress2/strings/issue6637-replace-re-all.smt2
+index df4e0bd0e..32ef94ac6 100644
+--- a/test/regress/cli/regress2/strings/issue6637-replace-re-all.smt2
++++ b/test/regress/cli/regress2/strings/issue6637-replace-re-all.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-fun a () String)
+ (assert (= (str.len a) 2))
+diff --git a/test/regress/cli/regress2/strings/issue918.smt2 b/test/regress/cli/regress2/strings/issue918.smt2
+index 2aad9b2f4..b0cb0d37d 100644
+--- a/test/regress/cli/regress2/strings/issue918.smt2
++++ b/test/regress/cli/regress2/strings/issue918.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --re-elim=on
++; COMMAND-LINE: --re-elim=on
+ ; EXPECT: sat
+ (set-info :smt-lib-version 2.6)
+ (set-option :produce-models true)
+diff --git a/test/regress/cli/regress2/strings/non_termination_regular_expression6.smt2 b/test/regress/cli/regress2/strings/non_termination_regular_expression6.smt2
+index e3b260d7c..eefc53357 100644
+--- a/test/regress/cli/regress2/strings/non_termination_regular_expression6.smt2
++++ b/test/regress/cli/regress2/strings/non_termination_regular_expression6.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --re-elim=on
++; COMMAND-LINE: --re-elim=on
+ ; EXPECT: unsat
+ (set-logic ALL)
+ (set-info :status unsat)
+diff --git a/test/regress/cli/regress2/strings/range-perf.smt2 b/test/regress/cli/regress2/strings/range-perf.smt2
+index c8a8f42fa..6cac5b942 100644
+--- a/test/regress/cli/regress2/strings/range-perf.smt2
++++ b/test/regress/cli/regress2/strings/range-perf.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: sat
+ (set-logic QF_SLIA)
+ (declare-const x String)
+diff --git a/test/regress/cli/regress2/strings/repl-repl-i-no-push.smt2 b/test/regress/cli/regress2/strings/repl-repl-i-no-push.smt2
+index 0076af392..e392aaa6b 100644
+--- a/test/regress/cli/regress2/strings/repl-repl-i-no-push.smt2
++++ b/test/regress/cli/regress2/strings/repl-repl-i-no-push.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --strings-fmf --incremental
++; COMMAND-LINE: --strings-fmf --incremental
+ ; EXPECT: sat
+ ; EXPECT: unsat
+ ; EXPECT: sat
+diff --git a/test/regress/cli/regress2/strings/repl-repl.smt2 b/test/regress/cli/regress2/strings/repl-repl.smt2
+index baa4a31d7..439ad0f30 100644
+--- a/test/regress/cli/regress2/strings/repl-repl.smt2
++++ b/test/regress/cli/regress2/strings/repl-repl.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --strings-fmf --incremental
++; COMMAND-LINE: --strings-fmf --incremental
+ ; EXPECT: sat
+ ; EXPECT: unsat
+ ; EXPECT: sat
+diff --git a/test/regress/cli/regress2/strings/replace_re.smt2 b/test/regress/cli/regress2/strings/replace_re.smt2
+index a58314150..0fe817e97 100644
+--- a/test/regress/cli/regress2/strings/replace_re.smt2
++++ b/test/regress/cli/regress2/strings/replace_re.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-option :incremental true)
+ (set-logic SLIA)
+ (declare-const x String)
+diff --git a/test/regress/cli/regress2/strings/replaceall-diffrange.smt2 b/test/regress/cli/regress2/strings/replaceall-diffrange.smt2
+index 507c97218..b9884a893 100644
+--- a/test/regress/cli/regress2/strings/replaceall-diffrange.smt2
++++ b/test/regress/cli/regress2/strings/replaceall-diffrange.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ (declare-fun x () String)
+ (declare-fun y () String)
+diff --git a/test/regress/cli/regress2/strings/replaceall-len-c.smt2 b/test/regress/cli/regress2/strings/replaceall-len-c.smt2
+index 75840a52f..6c1f0821c 100644
+--- a/test/regress/cli/regress2/strings/replaceall-len-c.smt2
++++ b/test/regress/cli/regress2/strings/replaceall-len-c.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ (declare-fun x () String)
+ (assert (= (str.len (str.replace_all "ABBABAAB" x "C")) 5))
+diff --git a/test/regress/cli/regress2/strings/small-1.smt2 b/test/regress/cli/regress2/strings/small-1.smt2
+index 82748c169..6118cec76 100644
+--- a/test/regress/cli/regress2/strings/small-1.smt2
++++ b/test/regress/cli/regress2/strings/small-1.smt2
+@@ -1,7 +1,7 @@
+ (set-info :smt-lib-version 2.6)
+ (set-logic ALL)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :re-elim on)
+ (declare-const x String)
+ (assert (str.in_re x (re.++ (str.to_re "example-bucket/") (re.* re.allchar) (str.to_re "/") re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar (str.to_re "-") re.allchar re.allchar re.allchar re.allchar (str.to_re "-") re.allchar re.allchar re.allchar re.allchar (str.to_re "-") re.allchar re.allchar re.allchar re.allchar (str.to_re "-") re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar re.allchar (str.to_re "/foo"))))
+diff --git a/test/regress/cli/regress2/strings/update-ex3.smt2 b/test/regress/cli/regress2/strings/update-ex3.smt2
+index e21a2f445..d4e282657 100644
+--- a/test/regress/cli/regress2/strings/update-ex3.smt2
++++ b/test/regress/cli/regress2/strings/update-ex3.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun s () String)
+ (declare-fun x () Int)
+diff --git a/test/regress/cli/regress2/strings/update-ex4-seq.smt2 b/test/regress/cli/regress2/strings/update-ex4-seq.smt2
+index d28df8534..a773f3693 100644
+--- a/test/regress/cli/regress2/strings/update-ex4-seq.smt2
++++ b/test/regress/cli/regress2/strings/update-ex4-seq.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-info :status sat)
+ (declare-fun s () (Seq Int))
+ (declare-fun x () Int)
+diff --git a/test/regress/cli/regress3/bags/reduce_constants_dup.smt2 b/test/regress/cli/regress3/bags/reduce_constants_dup.smt2
+index e9bfe3d47..e38dd1ee9 100644
+--- a/test/regress/cli/regress3/bags/reduce_constants_dup.smt2
++++ b/test/regress/cli/regress3/bags/reduce_constants_dup.smt2
+@@ -12,7 +12,7 @@
+ (set-option :uf-lazy-ll true)
+ (set-option :fmf-bound true)
+ (set-option :tlimit-per 10000)
+-(set-option :strings-exp true)
++
+ 
+ (declare-const EMP (Bag (Tuple (Nullable Int) (Nullable String) (Nullable String) (Nullable Int) (Nullable Int) (Nullable Int) (Nullable Int) (Nullable Int) (Nullable Int))))
+ (declare-const q1 (Bag (Tuple (Nullable Int) (Nullable String) (Nullable String) (Nullable Int) (Nullable Int) (Nullable Int) (Nullable Int) (Nullable Int) (Nullable Int))))
+diff --git a/test/regress/cli/regress3/strings/extf_d_perf.smt2 b/test/regress/cli/regress3/strings/extf_d_perf.smt2
+index 7ad094dcb..050426ac1 100644
+--- a/test/regress/cli/regress3/strings/extf_d_perf.smt2
++++ b/test/regress/cli/regress3/strings/extf_d_perf.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp --strings-fmf
++; COMMAND-LINE: --strings-fmf
+ ; EXPECT: sat
+ (set-logic ALL)
+ (declare-fun _substvar_140_ () String)
+diff --git a/test/regress/cli/regress3/strings/indexof_re_red.smt2 b/test/regress/cli/regress3/strings/indexof_re_red.smt2
+index 0e115cfd3..b3931923f 100644
+--- a/test/regress/cli/regress3/strings/indexof_re_red.smt2
++++ b/test/regress/cli/regress3/strings/indexof_re_red.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-logic QF_SLIA)
+ (declare-const x String)
+ (declare-const i Int)
+diff --git a/test/regress/cli/regress3/strings/norn-dis-0707-3.smt2 b/test/regress/cli/regress3/strings/norn-dis-0707-3.smt2
+index 242d7e958..4a6d659ad 100644
+--- a/test/regress/cli/regress3/strings/norn-dis-0707-3.smt2
++++ b/test/regress/cli/regress3/strings/norn-dis-0707-3.smt2
+@@ -1,6 +1,6 @@
+ (set-logic QF_S)
+ (set-info :status sat)
+-(set-option :strings-exp true)
++
+ (set-option :strings-fmf true)
+ 
+ (declare-fun var_0 () String)
+diff --git a/test/regress/cli/regress3/strings/replace_re_all.smt2 b/test/regress/cli/regress3/strings/replace_re_all.smt2
+index cf2b674c3..24f3f381a 100644
+--- a/test/regress/cli/regress3/strings/replace_re_all.smt2
++++ b/test/regress/cli/regress3/strings/replace_re_all.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ (set-option :incremental true)
+ (set-logic SLIA)
+ (declare-const x String)
+diff --git a/test/regress/cli/regress4/issue2429.smt2 b/test/regress/cli/regress4/issue2429.smt2
+index 9fe07b6f4..2a038553e 100644
+--- a/test/regress/cli/regress4/issue2429.smt2
++++ b/test/regress/cli/regress4/issue2429.smt2
+@@ -1,5 +1,5 @@
+ (set-logic QF_SLIA)
+-(set-option :strings-exp true)
++
+ (set-option :produce-models true)
+ (set-info :status sat)
+ 
+diff --git a/test/regress/cli/regress4/unsat-circ-reduce.smt2 b/test/regress/cli/regress4/unsat-circ-reduce.smt2
+index 2db29693d..8f8312a51 100644
+--- a/test/regress/cli/regress4/unsat-circ-reduce.smt2
++++ b/test/regress/cli/regress4/unsat-circ-reduce.smt2
+@@ -1,4 +1,4 @@
+-; COMMAND-LINE: --strings-exp
++; COMMAND-LINE:
+ ; EXPECT: unsat
+ (set-logic QF_SLIA)
+ (set-info :status unsat)
+-- 
+2.47.1
+

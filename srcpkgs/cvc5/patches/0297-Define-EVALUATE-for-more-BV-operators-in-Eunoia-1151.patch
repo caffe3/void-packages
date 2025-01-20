@@ -1,0 +1,100 @@
+From a7e17dc81c9fc2daf653f980e3ed55c4bd86f83c Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Mon, 13 Jan 2025 14:24:41 -0600
+Subject: [PATCH 297/312] Define EVALUATE for more BV operators in Eunoia
+ (#11517)
+
+---
+ proofs/eo/cpc/Cpc.eo                 | 33 ++++++++++++++++++++++++++++
+ proofs/eo/cpc/programs/BitVectors.eo |  7 ++++++
+ src/proof/alf/alf_printer.cpp        |  5 +++++
+ 3 files changed, 45 insertions(+)
+
+diff --git a/proofs/eo/cpc/Cpc.eo b/proofs/eo/cpc/Cpc.eo
+index f29b9cf79..a096505b0 100644
+--- a/proofs/eo/cpc/Cpc.eo
++++ b/proofs/eo/cpc/Cpc.eo
+@@ -193,6 +193,16 @@
+       (($run_evaluate (bvneg xb))          (eo::neg ($run_evaluate xb)))
+       (($run_evaluate (bvadd xb ybs))      (eo::add ($run_evaluate xb) ($run_evaluate ybs)))
+       (($run_evaluate (bvmul xb ybs))      (eo::mul ($run_evaluate xb) ($run_evaluate ybs)))
++      (($run_evaluate (bvudiv xb yb))      (eo::define ((ex ($run_evaluate xb)))
++                                           (eo::define ((ey ($run_evaluate yb)))
++                                           (eo::ite (eo::is_eq (eo::to_z ey) 0)
++                                             ($bv_ones ($bv_bitwidth (eo::typeof xb)))
++                                             (eo::zdiv ex ey)))))
++      (($run_evaluate (bvurem xb yb))      (eo::define ((ex ($run_evaluate xb)))
++                                           (eo::define ((ey ($run_evaluate yb)))
++                                           (eo::ite (eo::is_eq (eo::to_z ey) 0)
++                                             ex
++                                             (eo::zmod ex ey)))))
+       (($run_evaluate (bvand xb ybs))      (eo::and ($run_evaluate xb) ($run_evaluate ybs)))
+       (($run_evaluate (bvor xb ybs))       (eo::or ($run_evaluate xb) ($run_evaluate ybs)))
+       (($run_evaluate (bvxor xb ybs))      (eo::xor ($run_evaluate xb) ($run_evaluate ybs)))
+@@ -215,6 +225,29 @@
+       (($run_evaluate (bvsge xb yb))       (eo::define ((ex ($bv_to_signed_int ($run_evaluate xb))))
+                                            (eo::define ((ey ($bv_to_signed_int ($run_evaluate yb))))
+                                              (eo::or (eo::gt ex ey) (eo::is_eq ex ey)))))
++      (($run_evaluate (bvshl xb yb))       (eo::define ((ex ($run_evaluate xb)))
++                                           (eo::define ((ey ($run_evaluate yb)))
++                                           (eo::define ((eyz (eo::to_z ey)))
++                                           (eo::define ((w ($bv_bitwidth (eo::typeof xb))))
++                                           (eo::ite (eo::gt eyz w)
++                                             (eo::to_bin w 0)
++                                             (eo::to_bin w (eo::mul (eo::to_z ex) ($arith_eval_int_pow_2 eyz)))
++                                           ))))))
++      (($run_evaluate (bvlshr xb yb))      (eo::define ((ex ($run_evaluate xb)))
++                                           (eo::define ((ey ($run_evaluate yb)))
++                                           (eo::define ((eyz (eo::to_z ey)))
++                                           (eo::define ((w ($bv_bitwidth (eo::typeof xb))))
++                                           (eo::ite (eo::gt eyz w)
++                                             (eo::to_bin w 0)
++                                             (eo::to_bin w (eo::zdiv (eo::to_z ex) ($arith_eval_int_pow_2 eyz)))
++                                           ))))))
++      (($run_evaluate (bvashr xb yb))      (eo::define ((ex ($run_evaluate xb)))
++                                           (eo::define ((ey ($run_evaluate yb)))
++                                           (eo::define ((sb ($bv_sign_bit ex)))
++                                           (eo::ite (eo::is_eq sb #b0)
++                                             ($run_evaluate (bvlshr ex ey))
++                                             ($run_evaluate (bvnot (bvlshr (bvnot ex) ey)))
++                                           )))))
+       (($run_evaluate (repeat n xb))       ($run_evaluate ($bv_unfold_repeat ($run_evaluate n) ($run_evaluate xb))))
+       (($run_evaluate (sign_extend n xb))  (eo::define ((ex ($run_evaluate xb)))
+                                               (eo::concat ($run_evaluate ($bv_unfold_repeat ($run_evaluate n) ($bv_sign_bit ex))) ex)))
+diff --git a/proofs/eo/cpc/programs/BitVectors.eo b/proofs/eo/cpc/programs/BitVectors.eo
+index 5315db08b..ef8420cd5 100644
+--- a/proofs/eo/cpc/programs/BitVectors.eo
++++ b/proofs/eo/cpc/programs/BitVectors.eo
+@@ -10,6 +10,13 @@
+   (eo::define ((wm1 (eo::add w -1)))
+     (eo::extract b wm1 wm1)))))
+ 
++; define: $bv_ones
++; args:
++; - m Int: The bitwidth.
++; return: The bitvector of width m containing all ones.
++(define $bv_ones ((m Int))
++  (eo::to_bin m (eo::add ($arith_eval_int_pow_2 m) -1)))
++
+ ; define: $bv_to_signed_int
+ ; args:
+ ; - b (BitVec m): The bitvector term.
+diff --git a/src/proof/alf/alf_printer.cpp b/src/proof/alf/alf_printer.cpp
+index 3552a03d8..20dbe59cf 100644
+--- a/src/proof/alf/alf_printer.cpp
++++ b/src/proof/alf/alf_printer.cpp
+@@ -387,6 +387,11 @@ bool AlfPrinter::canEvaluate(Node n)
+         case Kind::BITVECTOR_NEG:
+         case Kind::BITVECTOR_NOT:
+         case Kind::BITVECTOR_MULT:
++        case Kind::BITVECTOR_UDIV:
++        case Kind::BITVECTOR_UREM:
++        case Kind::BITVECTOR_SHL:
++        case Kind::BITVECTOR_LSHR:
++        case Kind::BITVECTOR_ASHR:
+         case Kind::BITVECTOR_AND:
+         case Kind::BITVECTOR_OR:
+         case Kind::BITVECTOR_XOR:
+-- 
+2.47.1
+

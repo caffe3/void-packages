@@ -1,0 +1,23 @@
+From 6c1b9d26cad7cf5c75cefd16107e231916cdf6bf Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Wed, 18 Dec 2024 10:08:00 -0600
+Subject: [PATCH 252/312] Disable unsat-core tester on t3_rw903 (#11458)
+
+This fixes a timeout in the nightlies.
+---
+ test/regress/cli/regress0/proofs/t3_rw903.smt2 | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/test/regress/cli/regress0/proofs/t3_rw903.smt2 b/test/regress/cli/regress0/proofs/t3_rw903.smt2
+index 052e207ed..93cc7ebfb 100644
+--- a/test/regress/cli/regress0/proofs/t3_rw903.smt2
++++ b/test/regress/cli/regress0/proofs/t3_rw903.smt2
+@@ -1,4 +1,5 @@
+ ; EXPECT: unsat
++; DISABLE-TESTER: unsat-core
+ (set-logic UFNIA)
+ (declare-fun pow2 (Int) Int)
+ (declare-fun intor (Int Int Int) Int)
+-- 
+2.47.1
+

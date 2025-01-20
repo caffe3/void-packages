@@ -1,0 +1,244 @@
+From b0382ba12a4f5d2b436956d179db89e0d67da055 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Fri, 20 Dec 2024 10:12:13 -0600
+Subject: [PATCH 258/312] Add proof support for quantifiers term indexing
+ conflicts (#11454)
+
+A term indexing conflict can be explained by congruence.
+
+A simple regression is added.
+
+This should cover all remaining theory lemmas from quantifiers when safe
+mode is enabled.
+---
+ src/theory/quantifiers/ho_term_database.cpp   |  3 +-
+ src/theory/quantifiers/term_database.cpp      | 84 +++++++++++++++++--
+ src/theory/quantifiers/term_database.h        |  7 +-
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../regress1/quantifiers/pivc-deq-cong.smt2   | 10 +++
+ 5 files changed, 94 insertions(+), 11 deletions(-)
+ create mode 100644 test/regress/cli/regress1/quantifiers/pivc-deq-cong.smt2
+
+diff --git a/src/theory/quantifiers/ho_term_database.cpp b/src/theory/quantifiers/ho_term_database.cpp
+index dfd81376a..7a057c779 100644
+--- a/src/theory/quantifiers/ho_term_database.cpp
++++ b/src/theory/quantifiers/ho_term_database.cpp
+@@ -155,7 +155,6 @@ bool HoTermDb::checkCongruentDisequal(TNode a, TNode b, std::vector<Node>& exp)
+   {
+     return false;
+   }
+-  exp.push_back(a.eqNode(b));
+   // operators might be disequal
+   Node af = getMatchOperator(a);
+   Node bf = getMatchOperator(b);
+@@ -163,7 +162,7 @@ bool HoTermDb::checkCongruentDisequal(TNode a, TNode b, std::vector<Node>& exp)
+   {
+     if (a.getKind() == Kind::APPLY_UF && b.getKind() == Kind::APPLY_UF)
+     {
+-      exp.push_back(af.eqNode(bf).negate());
++      exp.push_back(af.eqNode(bf));
+       Assert(d_qstate.areEqual(af, bf))
+           << af << " and " << bf << " are not equal";
+     }
+diff --git a/src/theory/quantifiers/term_database.cpp b/src/theory/quantifiers/term_database.cpp
+index 915d46b03..4402c9017 100644
+--- a/src/theory/quantifiers/term_database.cpp
++++ b/src/theory/quantifiers/term_database.cpp
+@@ -23,6 +23,10 @@
+ #include "options/smt_options.h"
+ #include "options/theory_options.h"
+ #include "options/uf_options.h"
++#include "proof/proof.h"
++#include "proof/proof_generator.h"
++#include "proof/proof_node_algorithm.h"
++#include "proof/proof_node_manager.h"
+ #include "theory/quantifiers/ematching/trigger_term_info.h"
+ #include "theory/quantifiers/quantifiers_attributes.h"
+ #include "theory/quantifiers/quantifiers_inference_manager.h"
+@@ -39,6 +43,68 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace quantifiers {
+ 
++/**
++ * A proof generator for proving simple congruence lemmas discovered by TermDb.
++ */
++class DeqCongProofGenerator : protected EnvObj, public ProofGenerator
++{
++ public:
++  DeqCongProofGenerator(Env& env) : EnvObj(env) {}
++  virtual ~DeqCongProofGenerator() {}
++  /**
++   * The lemma is of the form:
++   * (=> (and (= ti si) .. (= tj sj)) (= (f t1 ... tn) (f s1 ... sn)))
++   * which can be proven by a congruence step.
++   */
++  std::shared_ptr<ProofNode> getProofFor(Node fact) override
++  {
++    Assert(fact.getKind() == Kind::IMPLIES);
++    Assert(fact[1].getKind() == Kind::EQUAL);
++    Node a = fact[1][0];
++    Node b = fact[1][1];
++    std::vector<Node> assumps;
++    if (fact[0].getKind() == Kind::AND)
++    {
++      assumps.insert(assumps.end(), fact[0].begin(), fact[0].end());
++    }
++    else
++    {
++      assumps.push_back(fact[0]);
++    }
++    CDProof cdp(d_env);
++    if (a.getOperator() != b.getOperator())
++    {
++      // TODO: wishue #158, likely corresponds to a higher-order term
++      // indexing conflict.
++      cdp.addTrustedStep(fact, TrustId::QUANTIFIERS_PREPROCESS, {}, {});
++      return cdp.getProofFor(fact);
++    }
++    Assert(a.getNumChildren() == b.getNumChildren());
++    std::vector<Node> cargs;
++    ProofRule cr = expr::getCongRule(a, cargs);
++    size_t nchild = a.getNumChildren();
++    std::vector<Node> premises;
++    for (size_t i = 0; i < nchild; i++)
++    {
++      Node eq = a[i].eqNode(b[i]);
++      premises.push_back(eq);
++      if (a[i] == b[i])
++      {
++        cdp.addStep(eq, ProofRule::REFL, {}, {a[i]});
++      }
++      else
++      {
++        Assert(std::find(assumps.begin(), assumps.end(), eq) != assumps.end());
++      }
++    }
++    cdp.addStep(fact[1], cr, premises, cargs);
++    std::shared_ptr<ProofNode> pfn = cdp.getProofFor(fact[1]);
++    return d_env.getProofNodeManager()->mkScope(pfn, assumps);
++  }
++  /** identify */
++  std::string identify() const override { return "DeqCongProofGenerator"; }
++};
++
+ TermDb::TermDb(Env& env, QuantifiersState& qs, QuantifiersRegistry& qr)
+     : QuantifiersUtil(env),
+       d_qstate(qs),
+@@ -48,7 +114,9 @@ TermDb::TermDb(Env& env, QuantifiersState& qs, QuantifiersRegistry& qr)
+       d_typeMap(context()),
+       d_ops(context()),
+       d_opMap(context()),
+-      d_inactive_map(context())
++      d_inactive_map(context()),
++      d_dcproof(options().smt.produceProofs ? new DeqCongProofGenerator(d_env)
++                                            : nullptr)
+ {
+   d_true = nodeManager()->mkConst(true);
+   d_false = nodeManager()->mkConst(false);
+@@ -390,19 +458,19 @@ void TermDb::computeUfTerms( TNode f ) {
+         congruentCount++;
+         continue;
+       }
+-      std::vector<Node> lits;
+-      if (checkCongruentDisequal(at, n, lits))
++      std::vector<Node> antec;
++      if (checkCongruentDisequal(at, n, antec))
+       {
+         Assert(at.getNumChildren() == n.getNumChildren());
+         for (size_t k = 0, size = at.getNumChildren(); k < size; k++)
+         {
+           if (at[k] != n[k])
+           {
+-            lits.push_back(nm->mkNode(Kind::EQUAL, at[k], n[k]).negate());
++            antec.push_back(nm->mkNode(Kind::EQUAL, at[k], n[k]));
+             Assert(d_qstate.areEqual(at[k], n[k]));
+           }
+         }
+-        Node lem = nm->mkOr(lits);
++        Node lem = nm->mkNode(Kind::IMPLIES, nm->mkAnd(antec), at.eqNode(n));
+         if (TraceIsOn("term-db-lemma"))
+         {
+           Trace("term-db-lemma") << "Disequal congruent terms : " << at << " "
+@@ -415,7 +483,10 @@ void TermDb::computeUfTerms( TNode f ) {
+           }
+           Trace("term-db-lemma") << "  add lemma : " << lem << std::endl;
+         }
+-        d_qim->addPendingLemma(lem, InferenceId::QUANTIFIERS_TDB_DEQ_CONG);
++        d_qim->addPendingLemma(lem,
++                               InferenceId::QUANTIFIERS_TDB_DEQ_CONG,
++                               LemmaProperty::NONE,
++                               d_dcproof.get());
+         d_qstate.notifyInConflict();
+         return;
+       }
+@@ -442,7 +513,6 @@ bool TermDb::checkCongruentDisequal(TNode a, TNode b, std::vector<Node>& exp)
+ {
+   if (d_qstate.areDisequal(a, b))
+   {
+-    exp.push_back(a.eqNode(b));
+     return true;
+   }
+   return false;
+diff --git a/src/theory/quantifiers/term_database.h b/src/theory/quantifiers/term_database.h
+index baa52fa20..957fb56cf 100644
+--- a/src/theory/quantifiers/term_database.h
++++ b/src/theory/quantifiers/term_database.h
+@@ -36,6 +36,7 @@ namespace quantifiers {
+ class QuantifiersState;
+ class QuantifiersInferenceManager;
+ class QuantifiersRegistry;
++class DeqCongProofGenerator;
+ 
+ /** Context-dependent list of nodes */
+ class DbList
+@@ -263,6 +264,8 @@ class TermDb : public QuantifiersUtil {
+    * of equality engine (for higher-order).
+    */
+   std::map<TypeNode, Node> d_ho_type_match_pred;
++  /** A proof generator for disequal congruent terms */
++  std::shared_ptr<DeqCongProofGenerator> d_dcproof;
+   //----------------------------- implementation-specific
+   /**
+    * Finish reset internal, called at the end of reset(e). Returning false will
+@@ -279,8 +282,8 @@ class TermDb : public QuantifiersUtil {
+    * This method is called when terms a and b are indexed by the same operator,
+    * and have equivalent arguments. This method checks if we are in conflict,
+    * which is the case if a and b are disequal in the equality engine.
+-   * If so, it adds the set of literals that are implied but do not hold, e.g.
+-   * the equality (= a b).
++   * If so, it adds any additional arguments that explain why a = b, e.g. the
++   * equivalence of their operators if their operators are different.
+    */
+   virtual bool checkCongruentDisequal(TNode a, TNode b, std::vector<Node>& exp);
+   //----------------------------- end implementation-specific
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 71ae0c13d..138f90df7 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -2878,6 +2878,7 @@ set(regress_1_tests
+   regress1/quantifiers/nra-interleave-inst.smt2
+   regress1/quantifiers/opisavailable-12.smt2
+   regress1/quantifiers/parametric-lists.smt2
++  regress1/quantifiers/pivc-deq-cong.smt2
+   regress1/quantifiers/pool-decidable-arrays-1.smt2
+   regress1/quantifiers/pool-example.smt2
+   regress1/quantifiers/pool-tuple.smt2
+diff --git a/test/regress/cli/regress1/quantifiers/pivc-deq-cong.smt2 b/test/regress/cli/regress1/quantifiers/pivc-deq-cong.smt2
+new file mode 100644
+index 000000000..8597415da
+--- /dev/null
++++ b/test/regress/cli/regress1/quantifiers/pivc-deq-cong.smt2
+@@ -0,0 +1,10 @@
++; COMMAND-LINE: --enum-inst
++; EXPECT: unsat
++(set-logic ALL)
++(declare-fun V () Int)
++(declare-fun e () Int)
++(declare-fun a2 () (Array Int Int))
++(declare-fun a () (Array Int Int))
++(declare-fun i () Int)
++(assert (and (< i V) (<= 0 i) (forall ((? Int)) (= 1 (select a2 i))) (forall ((? Int)) (= (select a ?) (select a2 ?))) (forall ((? Int)) (forall ((? Int)) (= 1 (select a2 ?)))) (forall ((? Int)) (or (distinct e (select a ?)) (> ? (- i 1)))) (or (and (= 1 V) (exists ((? Int)) (> 1 (select a 0)))) (exists ((? Int)) (and (<= ? i) (= e (select a ?)))))))
++(check-sat)
+-- 
+2.47.1
+

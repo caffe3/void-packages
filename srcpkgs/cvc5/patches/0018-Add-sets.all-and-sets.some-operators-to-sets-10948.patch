@@ -1,0 +1,693 @@
+From 0a4895827815bed1a43c4c2121a619c7c7293bdf Mon Sep 17 00:00:00 2001
+From: mudathirmahgoub <mudathirmahgoub@gmail.com>
+Date: Mon, 12 Aug 2024 12:29:22 -0500
+Subject: [PATCH 018/312] Add sets.all and sets.some operators to sets (#10948)
+
+Co-authored-by: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+---
+ include/cvc5/cvc5_kind.h                   | 54 +++++++++++++++
+ proofs/eo/cpc/theories/Sets.eo             |  2 +
+ proofs/lfsc/signatures/theory_def.plf      |  4 ++
+ src/api/cpp/cvc5.cpp                       |  4 ++
+ src/parser/smt2/smt2_state.cpp             |  2 +
+ src/printer/enum_to_string.cpp             |  3 +-
+ src/printer/smt2/smt2_printer.cpp          |  2 +
+ src/theory/sets/kinds                      | 14 +++-
+ src/theory/sets/solver_state.cpp           | 15 +++--
+ src/theory/sets/theory_sets.cpp            |  4 +-
+ src/theory/sets/theory_sets_private.cpp    |  7 +-
+ src/theory/sets/theory_sets_private.h      |  3 +-
+ src/theory/sets/theory_sets_rewriter.cpp   | 77 ++++++++++++++++++++++
+ src/theory/sets/theory_sets_rewriter.h     | 21 ++++++
+ src/theory/sets/theory_sets_type_rules.cpp | 47 +++++++++++++
+ src/theory/sets/theory_sets_type_rules.h   | 15 +++++
+ test/regress/cli/CMakeLists.txt            |  4 ++
+ test/regress/cli/regress1/sets/all1.smt2   | 20 ++++++
+ test/regress/cli/regress1/sets/all2.smt2   | 20 ++++++
+ test/regress/cli/regress1/sets/all3.smt2   | 18 +++++
+ test/regress/cli/regress1/sets/some1.smt2  | 26 ++++++++
+ 21 files changed, 344 insertions(+), 18 deletions(-)
+ create mode 100644 test/regress/cli/regress1/sets/all1.smt2
+ create mode 100644 test/regress/cli/regress1/sets/all2.smt2
+ create mode 100644 test/regress/cli/regress1/sets/all3.smt2
+ create mode 100644 test/regress/cli/regress1/sets/some1.smt2
+
+diff --git a/include/cvc5/cvc5_kind.h b/include/cvc5/cvc5_kind.h
+index 51edded2b..496431b90 100644
+--- a/include/cvc5/cvc5_kind.h
++++ b/include/cvc5/cvc5_kind.h
+@@ -3570,6 +3570,60 @@ enum ENUM(Kind)
+    */
+    EVALUE(SET_FILTER),
+    /**
++   * Set all.
++   *
++   * \rst
++   * This operator checks whether all elements of a set satisfy a predicate. 
++   * (set.all :math:`p \; A`) takes a predicate :math:`p` of Sort
++   * :math:`(\rightarrow T \; Bool)` as a first argument, and a set :math:`A`
++   * of Sort (Set :math:`T`) as a second argument, and returns true iff all 
++   * elements of :math:`A` satisfy predicate :math:`p`. 
++   *
++   * - Arity: ``2``
++   *
++   *   - ``1:`` Term of function Sort :math:`(\rightarrow T \; Bool)`
++   *   - ``2:`` Term of bag Sort (Set :math:`T`)
++   * \endrst
++   *
++   * - Create Term of this Kind with:
++   *
++   *   - Solver::mkTerm(Kind, const std::vector<Term>&) const
++   *   - Solver::mkTerm(const Op&, const std::vector<Term>&) const
++   *
++   * \rst
++   * .. warning:: This kind is experimental and may be changed or removed in
++   *              future versions.
++   * \endrst
++   */
++   EVALUE(SET_ALL),
++   /**
++   * Set some.
++   *
++   * \rst
++   * This operator checks whether at least one element of a set satisfies a predicate. 
++   * (set.some :math:`p \; A`) takes a predicate :math:`p` of Sort
++   * :math:`(\rightarrow T \; Bool)` as a first argument, and a set :math:`A`
++   * of Sort (Set :math:`T`) as a second argument, and returns true iff at least  
++   * one element of :math:`A` satisfies predicate :math:`p`. 
++   *
++   * - Arity: ``2``
++   *
++   *   - ``1:`` Term of function Sort :math:`(\rightarrow T \; Bool)`
++   *   - ``2:`` Term of bag Sort (Set :math:`T`)
++   * \endrst
++   *
++   * - Create Term of this Kind with:
++   *
++   *   - Solver::mkTerm(Kind, const std::vector<Term>&) const
++   *   - Solver::mkTerm(const Op&, const std::vector<Term>&) const
++   *
++   * \rst
++   * .. warning:: This kind is experimental and may be changed or removed in
++   *              future versions.
++   * \endrst
++   */
++   EVALUE(SET_SOME),
++   /**
+    * Set fold.
+    *
+    * \rst
+diff --git a/proofs/eo/cpc/theories/Sets.eo b/proofs/eo/cpc/theories/Sets.eo
+index 8b09f61e8..04584b982 100644
+--- a/proofs/eo/cpc/theories/Sets.eo
++++ b/proofs/eo/cpc/theories/Sets.eo
+@@ -28,6 +28,8 @@
+ 
+ ; Higher-order sets operators.
+ (declare-const set.filter (-> (! Type :var T :implicit) (-> T Bool) (Set T) (Set T)))
++(declare-const set.all (-> (! Type :var T :implicit) (-> T Bool) (Set T) Bool))
++(declare-const set.some (-> (! Type :var T :implicit) (-> T Bool) (Set T) Bool))
+ (declare-const set.map (-> (! Type :var T :implicit) (! Type :var U :implicit) (-> T U) (Set T) (Set U)))
+ (declare-const set.fold (-> (! Type :var T :implicit) (! Type :var U :implicit) (-> T U U) U (Set T) U))
+ 
+diff --git a/proofs/lfsc/signatures/theory_def.plf b/proofs/lfsc/signatures/theory_def.plf
+index bea3a9ef1..a05aab585 100644
+--- a/proofs/lfsc/signatures/theory_def.plf
++++ b/proofs/lfsc/signatures/theory_def.plf
+@@ -515,6 +515,10 @@
+ (define set.insert (# x term (# y term (apply (apply f_set.insert x) y))))
+ (declare f_set.filter term)
+ (define set.filter (# x term (# y term (apply (apply f_set.filter x) y))))
++(declare f_set.all term)
++(define set.all (# x term (# y term (apply (apply f_set.all x) y))))
++(declare f_set.some term)
++(define set.some (# x term (# y term (apply (apply f_set.some x) y))))
+ (declare f_set.map term)
+ (define set.map (# x term (# y term (apply (apply f_set.map x) y))))
+ (declare f_set.fold term)
+diff --git a/src/api/cpp/cvc5.cpp b/src/api/cpp/cvc5.cpp
+index ba4f246cb..4cd84ba0b 100644
+--- a/src/api/cpp/cvc5.cpp
++++ b/src/api/cpp/cvc5.cpp
+@@ -342,6 +342,8 @@ const static std::unordered_map<Kind, std::pair<internal::Kind, std::string>>
+         KIND_ENUM(Kind::SET_IS_SINGLETON, internal::Kind::SET_IS_SINGLETON),
+         KIND_ENUM(Kind::SET_MAP, internal::Kind::SET_MAP),
+         KIND_ENUM(Kind::SET_FILTER, internal::Kind::SET_FILTER),
++        KIND_ENUM(Kind::SET_ALL, internal::Kind::SET_ALL),
++        KIND_ENUM(Kind::SET_SOME, internal::Kind::SET_SOME),
+         KIND_ENUM(Kind::SET_FOLD, internal::Kind::SET_FOLD),
+         /* Relations -------------------------------------------------------- */
+         KIND_ENUM(Kind::RELATION_JOIN, internal::Kind::RELATION_JOIN),
+@@ -744,6 +746,8 @@ const static std::unordered_map<internal::Kind,
+         {internal::Kind::SET_IS_SINGLETON, Kind::SET_IS_SINGLETON},
+         {internal::Kind::SET_MAP, Kind::SET_MAP},
+         {internal::Kind::SET_FILTER, Kind::SET_FILTER},
++        {internal::Kind::SET_ALL, Kind::SET_ALL},
++        {internal::Kind::SET_SOME, Kind::SET_SOME},
+         {internal::Kind::SET_FOLD, Kind::SET_FOLD},
+         /* Relations ------------------------------------------------------- */
+         {internal::Kind::RELATION_JOIN, Kind::RELATION_JOIN},
+diff --git a/src/parser/smt2/smt2_state.cpp b/src/parser/smt2/smt2_state.cpp
+index 460810b1c..abf0f5063 100644
+--- a/src/parser/smt2/smt2_state.cpp
++++ b/src/parser/smt2/smt2_state.cpp
+@@ -898,6 +898,8 @@ void Smt2State::setLogic(std::string name)
+     addOperator(Kind::SET_IS_SINGLETON, "set.is_singleton");
+     addOperator(Kind::SET_MAP, "set.map");
+     addOperator(Kind::SET_FILTER, "set.filter");
++    addOperator(Kind::SET_ALL, "set.all");
++    addOperator(Kind::SET_SOME, "set.some");
+     addOperator(Kind::SET_FOLD, "set.fold");
+     addOperator(Kind::RELATION_JOIN, "rel.join");
+     addOperator(Kind::RELATION_TABLE_JOIN, "rel.table_join");
+diff --git a/src/printer/enum_to_string.cpp b/src/printer/enum_to_string.cpp
+index 117b99589..a18230b7d 100644
+--- a/src/printer/enum_to_string.cpp
++++ b/src/printer/enum_to_string.cpp
+@@ -92,8 +92,7 @@ const char* toString(cvc5::SkolemId id)
+     case cvc5::SkolemId::SETS_FOLD_COMBINE: return "sets_fold_combine";
+     case cvc5::SkolemId::SETS_FOLD_ELEMENTS: return "sets_fold_elements";
+     case cvc5::SkolemId::SETS_FOLD_UNION: return "sets_fold_union";
+-    case cvc5::SkolemId::SETS_MAP_DOWN_ELEMENT:
+-      return "sets_map_down_element";
++    case cvc5::SkolemId::SETS_MAP_DOWN_ELEMENT: return "sets_map_down_element";
+     case cvc5::SkolemId::NONE: return "none";
+     default: return "?";
+   }
+diff --git a/src/printer/smt2/smt2_printer.cpp b/src/printer/smt2/smt2_printer.cpp
+index ac141e0fc..92b6d2fb7 100644
+--- a/src/printer/smt2/smt2_printer.cpp
++++ b/src/printer/smt2/smt2_printer.cpp
+@@ -1283,6 +1283,8 @@ std::string Smt2Printer::smtKindString(Kind k)
+     case Kind::SET_IS_SINGLETON: return "set.is_singleton";
+     case Kind::SET_MAP: return "set.map";
+     case Kind::SET_FILTER: return "set.filter";
++    case Kind::SET_ALL: return "set.all";
++    case Kind::SET_SOME: return "set.some";
+     case Kind::SET_FOLD: return "set.fold";
+     case Kind::RELATION_JOIN: return "rel.join";
+     case Kind::RELATION_TABLE_JOIN: return "rel.table_join";
+diff --git a/src/theory/sets/kinds b/src/theory/sets/kinds
+index c532e6d67..c63ed0b2e 100644
+--- a/src/theory/sets/kinds
++++ b/src/theory/sets/kinds
+@@ -83,8 +83,16 @@ operator SET_MAP           2  "set map function"
+ # and returns the same set excluding those elements that do not satisfy the predicate
+ operator SET_FILTER        2  "set filter operator"
+ 
++# set.all operator is a predicate that holds iff all elements in a given set satisfy the the given predicate.
++# (set.all p A) receives a predicate p of type (-> T Bool) and a set of type (Set T) and returns Bool
++operator SET_ALL           2  "set all operator"
++
++# set.some operator is a predicate that holds iff at least one element in a given set satisfies the the given predicate.
++# (set.some p A) receives a predicate p of type (-> T Bool) and a set of type (Set T) and returns Bool
++operator SET_SOME           2  "set some operator"
++
+ # set.fold operator combines elements of a set into a single value.
+-# (set.fold f t A) folds the elements of bag A starting with term t and using
++# (set.fold f t A) folds the elements of set A starting with term t and using
+ # the combining function f.
+ #  f: a binary operation of type (-> T1 T2 T2)
+ #  t: an initial value of type T2
+@@ -129,7 +137,7 @@ operator RELATION_JOIN_IMAGE   2  "relation join image"
+ operator RELATION_IDEN 	   	   1  "relation identity"
+ 
+ typerule SET_UNION          ::cvc5::internal::theory::sets::SetsBinaryOperatorTypeRule
+-typerule SET_INTER   ::cvc5::internal::theory::sets::SetsBinaryOperatorTypeRule
++typerule SET_INTER          ::cvc5::internal::theory::sets::SetsBinaryOperatorTypeRule
+ typerule SET_MINUS          ::cvc5::internal::theory::sets::SetsBinaryOperatorTypeRule
+ typerule SET_SUBSET         ::cvc5::internal::theory::sets::SubsetTypeRule
+ typerule SET_MEMBER         ::cvc5::internal::theory::sets::MemberTypeRule
+@@ -145,6 +153,8 @@ typerule SET_IS_SINGLETON   ::cvc5::internal::theory::sets::IsSetTypeRule
+ typerule SET_IS_EMPTY       ::cvc5::internal::theory::sets::IsSetTypeRule
+ typerule SET_MAP            ::cvc5::internal::theory::sets::SetMapTypeRule
+ typerule SET_FILTER         ::cvc5::internal::theory::sets::SetFilterTypeRule
++typerule SET_ALL            ::cvc5::internal::theory::sets::SetAllSomeTypeRule
++typerule SET_SOME           ::cvc5::internal::theory::sets::SetAllSomeTypeRule
+ typerule SET_FOLD           ::cvc5::internal::theory::sets::SetFoldTypeRule
+ 
+ typerule RELATION_JOIN 			::cvc5::internal::theory::sets::RelBinaryOperatorTypeRule
+diff --git a/src/theory/sets/solver_state.cpp b/src/theory/sets/solver_state.cpp
+index b8fd95691..32f55bfd5 100644
+--- a/src/theory/sets/solver_state.cpp
++++ b/src/theory/sets/solver_state.cpp
+@@ -16,6 +16,7 @@
+ #include "theory/sets/solver_state.h"
+ 
+ #include "expr/emptyset.h"
++#include "expr/skolem_manager.h"
+ #include "options/sets_options.h"
+ #include "theory/sets/theory_sets_private.h"
+ 
+@@ -70,20 +71,22 @@ void SolverState::registerEqc(TypeNode tn, Node r)
+ void SolverState::registerTerm(Node r, TypeNode tnn, Node n)
+ {
+   Kind nk = n.getKind();
++  int polarityIndex = r == d_true ? 0 : (r == d_false ? 1 : -1);
+   if (nk == Kind::SET_MEMBER)
+   {
+     if (r.isConst())
+     {
+       Node s = d_ee->getRepresentative(n[1]);
+       Node x = d_ee->getRepresentative(n[0]);
+-      int pindex = r == d_true ? 0 : (r == d_false ? 1 : -1);
+-      if (pindex != -1)
++      if (polarityIndex != -1)
+       {
+-        if (d_pol_mems[pindex][s].find(x) == d_pol_mems[pindex][s].end())
++        if (d_pol_mems[polarityIndex][s].find(x)
++            == d_pol_mems[polarityIndex][s].end())
+         {
+-          d_pol_mems[pindex][s][x] = n;
+-          Trace("sets-debug2") << "Membership[" << x << "][" << s << "] : " << n
+-                               << ", pindex = " << pindex << std::endl;
++          d_pol_mems[polarityIndex][s][x] = n;
++          Trace("sets-debug2")
++              << "Membership[" << x << "][" << s << "] : " << n
++              << ", polarityIndex = " << polarityIndex << std::endl;
+         }
+         if (d_members_index[s].find(x) == d_members_index[s].end())
+         {
+diff --git a/src/theory/sets/theory_sets.cpp b/src/theory/sets/theory_sets.cpp
+index 45f76e6f3..d174da57d 100644
+--- a/src/theory/sets/theory_sets.cpp
++++ b/src/theory/sets/theory_sets.cpp
+@@ -181,12 +181,12 @@ TrustNode TheorySets::ppRewrite(TNode n, std::vector<SkolemLemma>& lems)
+   if (nk == Kind::RELATION_AGGREGATE)
+   {
+     Node ret = SetReduction::reduceAggregateOperator(n);
+-    return TrustNode::mkTrustRewrite(ret, ret, nullptr);
++    return TrustNode::mkTrustRewrite(n, ret, nullptr);
+   }
+   if (nk == Kind::RELATION_PROJECT)
+   {
+     Node ret = SetReduction::reduceProjectOperator(n);
+-    return TrustNode::mkTrustRewrite(ret, ret, nullptr);
++    return TrustNode::mkTrustRewrite(n, ret, nullptr);
+   }
+   return d_internal->ppRewrite(n, lems);
+ }
+diff --git a/src/theory/sets/theory_sets_private.cpp b/src/theory/sets/theory_sets_private.cpp
+index cb9541863..d9459546d 100644
+--- a/src/theory/sets/theory_sets_private.cpp
++++ b/src/theory/sets/theory_sets_private.cpp
+@@ -390,6 +390,7 @@ void TheorySetsPrivate::fullEffortCheck()
+     {
+       continue;
+     }
++
+     // check map up rules
+     checkMapUp();
+     d_im.doPendingLemmas();
+@@ -750,7 +751,6 @@ void TheorySetsPrivate::checkFilterDown()
+   {
+     Node p = term[0];
+     Node A = term[1];
+-
+     const std::map<Node, Node>& positiveMembers =
+         d_state.getMembers(d_state.getRepresentative(term));
+     for (const std::pair<const Node, Node>& pair : positiveMembers)
+@@ -1578,8 +1578,6 @@ bool TheorySetsPrivate::collectModelValues(TheoryModel* m,
+   return true;
+ }
+ 
+-/********************** Helper functions ***************************/
+-/********************** Helper functions ***************************/
+ /********************** Helper functions ***************************/
+ 
+ Valuation& TheorySetsPrivate::getValuation() { return d_external.d_valuation; }
+@@ -1614,7 +1612,8 @@ void TheorySetsPrivate::processCarePairArgs(TNode a, TNode b)
+ 
+ bool TheorySetsPrivate::isHigherOrderKind(Kind k)
+ {
+-  return k == Kind::SET_MAP || k == Kind::SET_FILTER || k == Kind::SET_FOLD;
++  return k == Kind::SET_MAP || k == Kind::SET_FILTER || k == Kind::SET_ALL
++         || k == Kind::SET_SOME || k == Kind::SET_FOLD;
+ }
+ 
+ void TheorySetsPrivate::preRegisterTerm(TNode node)
+diff --git a/src/theory/sets/theory_sets_private.h b/src/theory/sets/theory_sets_private.h
+index 858a5ba1c..61908cef6 100644
+--- a/src/theory/sets/theory_sets_private.h
++++ b/src/theory/sets/theory_sets_private.h
+@@ -89,7 +89,7 @@ class TheorySetsPrivate : protected EnvObj
+   /**
+    * Apply the following rule for filter terms (set.filter p A):
+    * (=>
+-   *   (bag.member x (set.filter p A))
++   *   (set.member x (set.filter p A))
+    *   (and
+    *    (p x)
+    *    (set.member x A)
+@@ -97,7 +97,6 @@ class TheorySetsPrivate : protected EnvObj
+    * )
+    */
+   void checkFilterDown();
+-
+   /**
+    * Apply the following rule for map terms (set.map f A):
+    * Positive member rule:
+diff --git a/src/theory/sets/theory_sets_rewriter.cpp b/src/theory/sets/theory_sets_rewriter.cpp
+index 3b9d56952..6f705e3ac 100644
+--- a/src/theory/sets/theory_sets_rewriter.cpp
++++ b/src/theory/sets/theory_sets_rewriter.cpp
+@@ -378,6 +378,8 @@ RewriteResponse TheorySetsRewriter::postRewrite(TNode node) {
+   case Kind::RELATION_TABLE_JOIN: return postRewriteTableJoin(node); break;
+   case Kind::SET_MAP: return postRewriteMap(node);
+   case Kind::SET_FILTER: return postRewriteFilter(node);
++  case Kind::SET_ALL: return postRewriteAll(node);
++  case Kind::SET_SOME: return postRewriteSome(node);
+   case Kind::SET_FOLD: return postRewriteFold(node);
+ 
+   case Kind::RELATION_TRANSPOSE:
+@@ -829,6 +831,81 @@ RewriteResponse TheorySetsRewriter::postRewriteFilter(TNode n)
+   }
+ }
+ 
++RewriteResponse TheorySetsRewriter::postRewriteAll(TNode n)
++{
++  Assert(n.getKind() == Kind::SET_ALL);
++  NodeManager* nm = nodeManager();
++  Kind k = n[1].getKind();
++  switch (k)
++  {
++    case Kind::SET_EMPTY:
++    {
++      // (set.all p (as set.empty (Set T)) = true)
++      return RewriteResponse(REWRITE_DONE, nm->mkConst(true));
++    }
++    case Kind::SET_SINGLETON:
++    {
++      // (set.all p (set.singleton x)) = (p x)
++      Node ret = nm->mkNode(Kind::APPLY_UF, n[0], n[1][0]);
++      return RewriteResponse(REWRITE_AGAIN_FULL, ret);
++    }
++    case Kind::SET_UNION:
++    {
++      // (set.all p (set.union A B)) =
++      //   (and (set.all p A) (set.all p B))
++      Node a = nm->mkNode(Kind::SET_ALL, n[0], n[1][0]);
++      Node b = nm->mkNode(Kind::SET_ALL, n[0], n[1][1]);
++      Node ret = a.andNode(b);
++      return RewriteResponse(REWRITE_AGAIN_FULL, ret);
++    }
++    default:
++    {
++      // (set.all p A) is rewritten as (set.filter p A) = A
++      Node filter = nm->mkNode(Kind::SET_FILTER, n[0], n[1]);
++      Node all = filter.eqNode(n[1]);
++      return RewriteResponse(REWRITE_DONE, all);
++    }
++  }
++}
++
++RewriteResponse TheorySetsRewriter::postRewriteSome(TNode n)
++{
++  Assert(n.getKind() == Kind::SET_SOME);
++  NodeManager* nm = nodeManager();
++  Kind k = n[1].getKind();
++  switch (k)
++  {
++    case Kind::SET_EMPTY:
++    {
++      // (set.some p (as set.empty (Set T)) = false)
++      return RewriteResponse(REWRITE_DONE, nm->mkConst(false));
++    }
++    case Kind::SET_SINGLETON:
++    {
++      // (set.some p (set.singleton x)) = (p x)
++      Node ret = nm->mkNode(Kind::APPLY_UF, n[0], n[1][0]);
++      return RewriteResponse(REWRITE_AGAIN_FULL, ret);
++    }
++    case Kind::SET_UNION:
++    {
++      // (set.some p (set.union A B)) =
++      //   (or (set.some p A) (set.some p B))
++      Node a = nm->mkNode(Kind::SET_SOME, n[0], n[1][0]);
++      Node b = nm->mkNode(Kind::SET_SOME, n[0], n[1][1]);
++      Node ret = a.orNode(b);
++      return RewriteResponse(REWRITE_AGAIN_FULL, ret);
++    }
++    default:
++    {
++      // (set.some p A) is rewritten as (distinct (set.filter p A) set.empty))
++      Node filter = nm->mkNode(Kind::SET_FILTER, n[0], n[1]);
++      Node empty = nm->mkConst(EmptySet(n[1].getType()));
++      Node some = filter.eqNode(empty).notNode();
++      return RewriteResponse(REWRITE_DONE, some);
++    }
++  }
++}
++
+ RewriteResponse TheorySetsRewriter::postRewriteFold(TNode n)
+ {
+   Assert(n.getKind() == Kind::SET_FOLD);
+diff --git a/src/theory/sets/theory_sets_rewriter.h b/src/theory/sets/theory_sets_rewriter.h
+index 1c23b1128..b450b7de4 100644
+--- a/src/theory/sets/theory_sets_rewriter.h
++++ b/src/theory/sets/theory_sets_rewriter.h
+@@ -120,6 +120,27 @@ class TheorySetsRewriter : public TheoryRewriter
+    *  where p: T -> Bool
+    */
+   RewriteResponse postRewriteFilter(TNode n);
++  /**
++   *  rewrites for n include:
++   *  - (set.all p (as set.empty (Set T)) is rewritten as true
++   *  - (set.all p (set.singleton x)) is rewritten as (p x)
++   *  - (set.all p (set.union A B)) is rewritten as
++   *       (and (set.all p A) (set.all p B))
++   *  - otherwise (set.all p A) is rewritten as (= (set.filter p A) A)
++   *  where p: T -> Bool
++   */
++  RewriteResponse postRewriteAll(TNode n);
++  /**
++   *  rewrites for n include:
++   *  - (set.some p (as set.empty (Set T)) is rewritten as false
++   *  - (set.some p (set.singleton x)) is rewritten as  (p x)
++   *  - (set.some p (set.union A B)) is rewritten as
++   *       (or (set.some p A) (set.some p B))
++   *  - otherwise (set.some p A) is rewritten as
++   *       (distinct (set.filter p A) (as set.empty (Set T)))
++   *  where p: T -> Bool
++   */
++  RewriteResponse postRewriteSome(TNode n);
+   /**
+    *  rewrites for n include:
+    *  - (set.fold f t (as set.empty (Set T))) = t
+diff --git a/src/theory/sets/theory_sets_type_rules.cpp b/src/theory/sets/theory_sets_type_rules.cpp
+index 2a8e894bc..32a0bc834 100644
+--- a/src/theory/sets/theory_sets_type_rules.cpp
++++ b/src/theory/sets/theory_sets_type_rules.cpp
+@@ -561,6 +561,53 @@ TypeNode SetFilterTypeRule::computeType(NodeManager* nodeManager,
+   return setType;
+ }
+ 
++TypeNode SetAllSomeTypeRule::preComputeType(NodeManager* nm, TNode n)
++{
++  return nm->booleanType();
++}
++
++TypeNode SetAllSomeTypeRule::computeType(NodeManager* nodeManager,
++                                         TNode n,
++                                         bool check,
++                                         std::ostream* errOut)
++{
++  Assert(n.getKind() == Kind::SET_ALL || n.getKind() == Kind::SET_SOME);
++  std::string op = n.getKind() == Kind::SET_ALL ? "set.all" : "set.some";
++  TypeNode functionType = n[0].getTypeOrNull();
++  TypeNode setType = n[1].getTypeOrNull();
++  if (check)
++  {
++    if (!setType.isMaybeKind(Kind::SET_TYPE))
++    {
++      if (errOut)
++      {
++        (*errOut) << op
++                  << " operator expects a set in the second "
++                     "argument, a non-set is found";
++      }
++      return TypeNode::null();
++    }
++    if (!checkFunctionTypeFor(n, functionType, setType, errOut))
++    {
++      return TypeNode::null();
++    }
++    if (functionType.isFunction())
++    {
++      TypeNode rangeType = functionType.getRangeType();
++      if (!rangeType.isBoolean() && !rangeType.isFullyAbstract())
++      {
++        if (errOut)
++        {
++          (*errOut) << "Operator " << op
++                    << " expects a function returning Bool.";
++        }
++        return TypeNode::null();
++      }
++    }
++  }
++  return nodeManager->booleanType();
++}
++
+ TypeNode SetFoldTypeRule::preComputeType(NodeManager* nm, TNode n)
+ {
+   return TypeNode::null();
+diff --git a/src/theory/sets/theory_sets_type_rules.h b/src/theory/sets/theory_sets_type_rules.h
+index 0e96cab48..91b9f251a 100644
+--- a/src/theory/sets/theory_sets_type_rules.h
++++ b/src/theory/sets/theory_sets_type_rules.h
+@@ -220,6 +220,21 @@ struct SetFilterTypeRule
+                               std::ostream* errOut);
+ }; /* struct SetFilterTypeRule */
+ 
++/**
++ * Type rule for (set.all p A) and (set.some p A) to make sure p is
++ * a unary predicate of type
++ * (-> T Bool) where A is a set of type (Set T)
++ */
++struct SetAllSomeTypeRule
++{
++  static TypeNode preComputeType(NodeManager* nm, TNode n);
++
++  static TypeNode computeType(NodeManager* nodeManager,
++                              TNode n,
++                              bool check,
++                              std::ostream* errOut);
++}; /* struct SetAllSomeTypeRule */
++
+ /**
+  * Type rule for (set.fold f t A) to make sure f is a binary operation of type
+  * (-> T1 T2 T2), t of type T2, and A is a set of type (Set T1)
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index f1d53f08c..003056f0d 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -2972,6 +2972,9 @@ set(regress_1_tests
+   regress1/seq/issue8148-2-const-mv.smt2
+   regress1/seq/issue8148-const-mv.smt2
+   regress1/seq/issue8936-nth-eager-red.smt2
++  regress1/sets/all1.smt2
++  regress1/sets/all2.smt2
++  regress1/sets/all3.smt2  
+   regress1/sets/choose.cvc.smt2
+   regress1/sets/choose1.smt2
+   regress1/sets/choose2.smt2
+@@ -3075,6 +3078,7 @@ set(regress_1_tests
+   regress1/sets/set-map-test.smt2
+   regress1/sets/set-map-test2.smt2
+   regress1/sets/sharingbug.smt2
++  regress1/sets/some1.smt2
+   regress1/sets/univ-set-uf-elim.smt2
+   regress1/sets/univ-semantics.smt2
+   regress1/simplification_bug4.smt2
+diff --git a/test/regress/cli/regress1/sets/all1.smt2 b/test/regress/cli/regress1/sets/all1.smt2
+new file mode 100644
+index 000000000..4398fdb93
+--- /dev/null
++++ b/test/regress/cli/regress1/sets/all1.smt2
+@@ -0,0 +1,20 @@
++(set-logic HO_ALL)
++(set-info :status sat)
++(define-fun map_fun ((i Int)) Int (+ i 1))
++(define-fun filter_fun ((i Int)) Bool (and (>= i 0) (<= i 10)))
++
++(declare-fun IntSet        () (Set Int))
++(declare-fun FiltMapIntSet () (Set Int))
++
++(declare-fun min_set () Int)
++
++(assert (not (set.is_empty IntSet)))
++
++(assert (= FiltMapIntSet (set.map map_fun (set.filter filter_fun IntSet))))
++
++(assert (= IntSet (set.insert 1 2 3 4 5 (as set.empty (Set Int)))))
++
++; get the minumum of FiltMapIntSet
++(assert (set.member min_set FiltMapIntSet))
++(assert (set.all (lambda ((i Int)) (>= i min_set)) FiltMapIntSet))      
++(check-sat)
+diff --git a/test/regress/cli/regress1/sets/all2.smt2 b/test/regress/cli/regress1/sets/all2.smt2
+new file mode 100644
+index 000000000..d4b3c62d2
+--- /dev/null
++++ b/test/regress/cli/regress1/sets/all2.smt2
+@@ -0,0 +1,20 @@
++; COMMAND-LINE: --finite-model-find -q
++(set-logic HO_ALL)
++(set-info :status sat)
++(define-fun map_fun ((i Int)) Int (+ i 1))
++(define-fun filter_fun ((i Int)) Bool (and (>= i 0) (<= i 10)))
++
++(declare-fun IntSet        () (Set Int))
++(declare-fun FiltMapIntSet () (Set Int))
++
++(declare-fun min_set () Int)
++
++(assert (not (set.is_empty IntSet)))
++
++(assert (= FiltMapIntSet (set.map map_fun (set.filter filter_fun IntSet))))
++
++; get the minumum of FiltMapIntSet
++(assert (set.member min_set FiltMapIntSet))
++(assert (set.all (lambda ((i Int)) (>= i min_set)) FiltMapIntSet))
++
++(check-sat)
+diff --git a/test/regress/cli/regress1/sets/all3.smt2 b/test/regress/cli/regress1/sets/all3.smt2
+new file mode 100644
+index 000000000..00a523322
+--- /dev/null
++++ b/test/regress/cli/regress1/sets/all3.smt2
+@@ -0,0 +1,18 @@
++(set-logic HO_ALL)
++(set-info :status unsat)
++
++(define-fun map_fun ((i Int)) Int (+ i 1))
++(define-fun filter_fun ((i Int)) Bool (and (>= i 0) (<= i 10)))
++
++(declare-fun IntSet        () (Set Int))
++(declare-fun FiltMapIntSet () (Set Int))
++
++(declare-fun min_set () Int)
++
++(assert (not (set.is_empty IntSet)))
++
++(assert (= FiltMapIntSet (set.map map_fun (set.filter filter_fun IntSet))))
++
++(assert (set.member min_set FiltMapIntSet))
++(assert (set.all (lambda ((i Int)) (> i min_set)) FiltMapIntSet))
++(check-sat)
+diff --git a/test/regress/cli/regress1/sets/some1.smt2 b/test/regress/cli/regress1/sets/some1.smt2
+new file mode 100644
+index 000000000..031e3cc86
+--- /dev/null
++++ b/test/regress/cli/regress1/sets/some1.smt2
+@@ -0,0 +1,26 @@
++(set-logic HO_ALL)
++(set-info :status sat)
++(declare-const A (Set Int))
++(declare-const B (Set Int))
++
++(declare-const x Int)
++(declare-const y Int)
++(declare-const z Int)
++
++(assert (distinct x y z))
++
++(assert (set.member x A))
++(assert (set.member y A))
++(assert (set.member z A))
++
++(assert (not (set.is_empty A)))
++
++(assert 
++  (set.all 
++    (lambda ((a Int)) 
++      (set.some 
++        (lambda ((b Int)) (< (* 2 a) b)) 
++        B)) 
++    A))
++
++(check-sat)
+-- 
+2.47.1
+

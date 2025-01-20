@@ -1,0 +1,246 @@
+From 6c6e3652195b9a327a5adc86daabbb89595825ef Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Tue, 8 Oct 2024 09:08:22 -0500
+Subject: [PATCH 113/312] Fix model unsoundness in bounded set quantification
+ (#11268)
+
+This bug was introduced in https://github.com/cvc5/cvc5/pull/2200. The
+PR https://github.com/cvc5/cvc5/pull/10586 modified our handling of
+set+cardinality+quantifiers but did not fix the issue.
+
+In the former PR, we incorrectly computed the cardinality of set values.
+In the latter PR, we no longer introduced set.card terms when finding
+finite bounds for bounded set quantification, to avoid issues of
+incompleteness at the quantifier-free level. However, in doing so, we
+could ignore cardinality for bounds altogether, potentially leading to
+model unsoundness.
+
+This PR keeps cardinality in bounding terms, but eliminates literals of
+the form `(set.card S) < n` eagerly, based on finite unions of
+`set.choose` terms.
+---
+ .../quantifiers/fmf/bounded_integers.cpp      | 82 ++++++++-----------
+ src/theory/sets/normal_form.h                 | 38 +++++++++
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress1/sets/bint-model-unsound.smt2 | 12 +++
+ 4 files changed, 86 insertions(+), 47 deletions(-)
+ create mode 100644 test/regress/cli/regress1/sets/bint-model-unsound.smt2
+
+diff --git a/src/theory/quantifiers/fmf/bounded_integers.cpp b/src/theory/quantifiers/fmf/bounded_integers.cpp
+index 84bc7b9c4..0c29787e2 100644
+--- a/src/theory/quantifiers/fmf/bounded_integers.cpp
++++ b/src/theory/quantifiers/fmf/bounded_integers.cpp
+@@ -32,6 +32,7 @@
+ #include "theory/quantifiers/term_util.h"
+ #include "theory/rep_set_iterator.h"
+ #include "theory/rewriter.h"
++#include "theory/sets/normal_form.h"
+ #include "util/rational.h"
+ 
+ using namespace cvc5::internal::kind;
+@@ -46,7 +47,8 @@ BoundedIntegers::IntRangeDecisionHeuristic::IntRangeDecisionHeuristic(
+       d_range(r),
+       d_ranges_proxied(userContext())
+ {
+-  if (options().quantifiers.fmfBoundLazy)
++  // we require a proxy if the term is set.card
++  if (options().quantifiers.fmfBoundLazy || r.getKind() == Kind::SET_CARD)
+   {
+     SkolemManager* sm = nodeManager()->getSkolemManager();
+     d_proxy_range = isProxy ? r : sm->mkDummySkolem("pbir", r.getType());
+@@ -84,12 +86,30 @@ Node BoundedIntegers::IntRangeDecisionHeuristic::proxyCurrentRangeLemma()
+   d_ranges_proxied[curr] = true;
+   NodeManager* nm = nodeManager();
+   Node currLit = getLiteral(curr);
+-  Node lem = nm->mkNode(
+-      Kind::EQUAL,
+-      currLit,
+-      nm->mkNode(curr == 0 ? Kind::LT : Kind::LEQ,
+-                 d_range,
+-                 nm->mkConstInt(Rational(curr == 0 ? 0 : curr - 1))));
++  Node lit;
++  if (d_range.getKind() == Kind::SET_CARD)
++  {
++    // Instead of introducing (set.card s) < n, we introduce the literal
++    // s = characteristicSet(s, n-1) for n>0 and false for n=0. We do this
++    // to avoid introducing set.card.
++    if (curr == 0)
++    {
++      lit = nodeManager()->mkConst(false);
++    }
++    else
++    {
++      Node cset = sets::NormalForm::getCharacteristicSet(
++          nodeManager(), d_range[0], curr - 1);
++      lit = d_range[0].eqNode(cset);
++    }
++  }
++  else
++  {
++    lit = nm->mkNode(curr == 0 ? Kind::LT : Kind::LEQ,
++                     d_range,
++                     nm->mkConstInt(Rational(curr == 0 ? 0 : curr - 1)));
++  }
++  Node lem = nm->mkNode(Kind::EQUAL, currLit, lit);
+   return lem;
+ }
+ 
+@@ -418,9 +438,8 @@ void BoundedIntegers::checkOwnership(Node f)
+           d_setm_range[f][v] = bound_lit_map[2][v][1];
+           d_setm_range_lit[f][v] = bound_lit_map[2][v];
+           Node cardTerm = nm->mkNode(Kind::SET_CARD, d_setm_range[f][v]);
+-          // Purify the cardinality term, since we don't want to introduce
+-          // cardinality terms. We do minimization on this variable for
+-          // consistency, although it will have no impact on the sets models.
++          // Note that we avoid reasoning about cardinality by eagerly
++          // eliminating set.card for literals as they are introduced.
+           d_range[f][v] = cardTerm;
+           Trace("bound-int") << "Variable " << v
+                              << " is bound because of set membership literal "
+@@ -552,13 +571,6 @@ void BoundedIntegers::checkOwnership(Node f)
+           r = new_range;
+           isProxy = true;
+         }
+-        if (r.getKind()==Kind::SET_CARD)
+-        {
+-          // Purify the cardinality term, since we don't want to introduce
+-          // cardinality terms. We do minimization on this variable for
+-          // consistency, although it will have no impact on the sets models.
+-          r = nm->getSkolemManager()->mkPurifySkolem(r);
+-        }
+         if( !r.isConst() ){
+           if (d_rms.find(r) == d_rms.end())
+           {
+@@ -705,44 +717,20 @@ Node BoundedIntegers::getSetRangeValue( Node q, Node v, RepSetIterator * rsi ) {
+   {
+     return sr;
+   }
+-  NodeManager* nm = nodeManager();
+-  TypeNode srt = sr.getType();
+-  TypeNode tne = srt.getSetElementType();
+-  Node nsr = nm->mkConst(EmptySet(srt));
+-
+   // we can use choice functions for canonical symbolic instantiations
+   unsigned srCard = 0;
+   while (sr.getKind() == Kind::SET_UNION)
+   {
++    Assert(sr[0].getKind() == Kind::SET_SINGLETON);
+     srCard++;
+-    sr = sr[0];
++    sr = sr[1];
+   }
+   Assert(sr.getKind() == Kind::SET_SINGLETON);
+   srCard++;
+-  Node choice_i;
+-  for (unsigned i = 0; i < srCard; i++)
+-  {
+-    if (i == d_setm_choice[sro].size())
+-    {
+-      Node stgt = nsr.getKind() == Kind::SET_EMPTY
+-                      ? sro
+-                      : nm->mkNode(Kind::SET_MINUS, sro, nsr);
+-      choice_i = nm->mkNode(Kind::SET_CHOOSE, stgt);
+-      d_setm_choice[sro].push_back(choice_i);
+-    }
+-    Assert(i < d_setm_choice[sro].size());
+-    choice_i = d_setm_choice[sro][i];
+-    Node sChoiceI = nm->mkNode(Kind::SET_SINGLETON, choice_i);
+-    if (nsr.getKind() == Kind::SET_EMPTY)
+-    {
+-      nsr = sChoiceI;
+-    }
+-    else
+-    {
+-      nsr = nm->mkNode(Kind::SET_UNION, nsr, sChoiceI);
+-    }
+-  }
+-  // turns the concrete model value of sro into a canonical representation
++  Trace("bound-int-rsi") << "...cardinality is " << srCard << std::endl;
++  // get the characteristic set
++  Node nsr = sets::NormalForm::getCharacteristicSet(nodeManager(), sro, srCard);
++  // turns the concrete set value of sro into a canonical representation
+   //   e.g.
+   // singleton(0) union singleton(1)
+   //   becomes
+diff --git a/src/theory/sets/normal_form.h b/src/theory/sets/normal_form.h
+index 8c9ffebc7..f62bd3935 100644
+--- a/src/theory/sets/normal_form.h
++++ b/src/theory/sets/normal_form.h
+@@ -162,6 +162,44 @@ class NormalForm {
+     }
+   }
+ 
++  /**
++   * Get the characeristic set for n of cardinality card.
++   *
++   * This is defined in terms of a union of singleton of choose:
++   *
++   * S0: (as set.empty T)
++   * S1: (set.singleton (set.choose n))
++   * ...
++   * Sk: (set.union (set.singleton (set.choose (set.minus n S{k-1}))) S{k-1})
++   *
++   * @param nm Pointer to the node manager
++   * @param n The base set
++   * @param card The cardinality we are considering.
++   * @return The set as described above.
++   */
++  static Node getCharacteristicSet(NodeManager* nm, const Node& n, size_t card)
++  {
++    if (card == 0)
++    {
++      return nm->mkConst(EmptySet(n.getType()));
++    }
++    Node nsr;
++    for (size_t i = 0; i < card; i++)
++    {
++      Node stgt = nsr.isNull() ? n : nm->mkNode(Kind::SET_MINUS, n, nsr);
++      Node choice_i = nm->mkNode(Kind::SET_CHOOSE, stgt);
++      Node sChoiceI = nm->mkNode(Kind::SET_SINGLETON, choice_i);
++      if (nsr.isNull())
++      {
++        nsr = sChoiceI;
++      }
++      else
++      {
++        nsr = nm->mkNode(Kind::SET_UNION, nsr, sChoiceI);
++      }
++    }
++    return nsr;
++  }
+ };
+ }
+ }
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 60a3c1657..d1d82b240 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -3000,6 +3000,7 @@ set(regress_1_tests
+   regress1/sets/all1.smt2
+   regress1/sets/all2.smt2
+   regress1/sets/all3.smt2
++  regress1/sets/bint-model-unsound.smt2
+   regress1/sets/choose.cvc.smt2
+   regress1/sets/choose1.smt2
+   regress1/sets/choose2.smt2
+diff --git a/test/regress/cli/regress1/sets/bint-model-unsound.smt2 b/test/regress/cli/regress1/sets/bint-model-unsound.smt2
+new file mode 100644
+index 000000000..82442d159
+--- /dev/null
++++ b/test/regress/cli/regress1/sets/bint-model-unsound.smt2
+@@ -0,0 +1,12 @@
++; EXPECT: unsat
++(set-logic ALL)
++(set-option :finite-model-find true)
++(set-option :fmf-bound true)
++(declare-const r (Set (Tuple Int)))
++(declare-const a Int)
++(declare-const b Int)
++(declare-const c Int)
++(assert (forall ((D Int)) (or (< D 0) (not (set.member (tuple D) r)))))
++(assert (set.member (tuple 0) r))
++(assert (set.subset r (set.union (set.singleton (tuple a)) (set.union (set.singleton (tuple b)) (set.singleton (tuple c))))))
++(check-sat)
+-- 
+2.47.1
+

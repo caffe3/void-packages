@@ -1,0 +1,209 @@
+From be0b6896fd56de448917fc970ae2aadf718e7014 Mon Sep 17 00:00:00 2001
+From: Andrew Reynolds <andrew.j.reynolds@gmail.com>
+Date: Wed, 25 Sep 2024 12:39:58 -0500
+Subject: [PATCH 078/312] More fixes for proof configuration in `pp-only` mode
+ (#11229)
+
+Note this now allows full proofs to be returned when
+`proof-mode=pp-only`.
+
+This also means that proofs are available when unsat cores are enabled
+(although they will contain a single trusted SAT_REFUTATION the SAT
+portion by default).
+
+Fixes https://github.com/cvc5/cvc5-projects/issues/743.
+
+Further fixes a potential configuration option where unsat cores would
+mistakenly be based on SAT proofs if the proof mode was explicitly set
+to `pp-only`.
+---
+ src/smt/set_defaults.cpp                      |  6 +-
+ src/smt/solver_engine.cpp                     | 65 ++++++++++++++++---
+ src/smt/solver_engine.h                       |  6 ++
+ test/regress/cli/CMakeLists.txt               |  1 +
+ .../cli/regress0/proofs/no-proof-uc.smt2      |  4 +-
+ .../cli/regress0/proofs/pp-only-proof.smt2    |  5 ++
+ 6 files changed, 73 insertions(+), 14 deletions(-)
+ create mode 100644 test/regress/cli/regress0/proofs/pp-only-proof.smt2
+
+diff --git a/src/smt/set_defaults.cpp b/src/smt/set_defaults.cpp
+index 1645f7ae6..dfb1ef4d9 100644
+--- a/src/smt/set_defaults.cpp
++++ b/src/smt/set_defaults.cpp
+@@ -190,8 +190,10 @@ void SetDefaults::setDefaultsPre(Options& opts)
+                      options::ProofGranularityMode::THEORY_REWRITE,
+                      "enabling proofs");
+     }
+-    // unsat cores are available due to proofs being enabled
+-    if (opts.smt.unsatCoresMode != options::UnsatCoresMode::SAT_PROOF)
++    // unsat cores are available due to proofs being enabled, as long as
++    // SAT proofs are available
++    if (opts.smt.unsatCoresMode != options::UnsatCoresMode::SAT_PROOF
++        && opts.smt.proofMode != options::ProofMode::PP_ONLY)
+     {
+       SET_AND_NOTIFY(smt, produceUnsatCores, true, "enabling proofs");
+       if (options().prop.satSolver == options::SatSolverMode::MINISAT)
+diff --git a/src/smt/solver_engine.cpp b/src/smt/solver_engine.cpp
+index d2933c656..ff28c4b19 100644
+--- a/src/smt/solver_engine.cpp
++++ b/src/smt/solver_engine.cpp
+@@ -715,6 +715,39 @@ TheoryModel* SolverEngine::getAvailableModel(const char* c) const
+   return m;
+ }
+ 
++std::shared_ptr<ProofNode> SolverEngine::getAvailableSatProof()
++{
++  if (d_state->getMode() != SmtMode::UNSAT)
++  {
++    std::stringstream ss;
++    ss << "Cannot get proof unless immediately preceded by UNSAT response.";
++    throw RecoverableModalException(ss.str().c_str());
++  }
++  std::shared_ptr<ProofNode> pePfn;
++  if (d_env->isSatProofProducing())
++  {
++    // get the proof from the prop engine
++    PropEngine* pe = d_smtSolver->getPropEngine();
++    Assert(pe != nullptr);
++    pePfn = pe->getProof();
++    Assert(pePfn != nullptr);
++  }
++  else
++  {
++    const context::CDList<Node>& assertions =
++        d_smtSolver->getPreprocessedAssertions();
++    // if not SAT proof producing, we construct a trusted step here
++    std::vector<std::shared_ptr<ProofNode>> ps;
++    ProofNodeManager* pnm = d_pfManager->getProofNodeManager();
++    for (const Node& a : assertions)
++    {
++      ps.push_back(pnm->mkAssume(a));
++    }
++    pePfn = pnm->mkNode(ProofRule::SAT_REFUTATION, ps, {});
++  }
++  return pePfn;
++}
++
+ QuantifiersEngine* SolverEngine::getAvailableQuantifiersEngine(
+     const char* c) const
+ {
+@@ -1487,15 +1520,17 @@ std::vector<Node> SolverEngine::getLearnedLiterals(modes::LearnedLitType t)
+ void SolverEngine::checkProof()
+ {
+   Assert(d_env->getOptions().smt.produceProofs);
+-  // internal check the proof
+-  PropEngine* pe = d_smtSolver->getPropEngine();
+-  Assert(pe != nullptr);
+-  if (d_env->getOptions().proof.proofCheck == options::ProofCheckMode::EAGER)
++  if (d_env->isSatProofProducing())
+   {
+-    pe->checkProof(d_smtSolver->getAssertions().getAssertionList());
++    // internal check the proof
++    PropEngine* pe = d_smtSolver->getPropEngine();
++    Assert(pe != nullptr);
++    if (d_env->getOptions().proof.proofCheck == options::ProofCheckMode::EAGER)
++    {
++      pe->checkProof(d_smtSolver->getAssertions().getAssertionList());
++    }
+   }
+-  Assert(pe->getProof() != nullptr);
+-  std::shared_ptr<ProofNode> pePfn = pe->getProof();
++  std::shared_ptr<ProofNode> pePfn = getAvailableSatProof();
+   if (d_env->getOptions().smt.checkProofs)
+   {
+     // connect proof to assertions, which will fail if the proof is malformed
+@@ -1667,11 +1702,21 @@ std::vector<std::shared_ptr<ProofNode>> SolverEngine::getProof(
+ {
+   Trace("smt") << "SMT getProof()\n";
+   const Options& opts = d_env->getOptions();
+-  // must be at least SAT proof producing
+-  if (!opts.smt.produceProofs || !d_env->isSatProofProducing())
++  if (!opts.smt.produceProofs)
+   {
+     throw ModalException("Cannot get a proof when proof option is off.");
+   }
++  if (c == modes::ProofComponent::SAT
++      || c == modes::ProofComponent::THEORY_LEMMAS
++      || c == modes::ProofComponent::PREPROCESS)
++  {
++    if (!d_env->isSatProofProducing())
++    {
++      throw ModalException(
++          "Cannot get a proof for this component when SAT solver is not proof "
++          "producing.");
++    }
++  }
+   // The component modes::ProofComponent::PREPROCESS returns
+   // the proof of all preprocessed assertions. It does not require being in an
+   // unsat state.
+@@ -1715,7 +1760,7 @@ std::vector<std::shared_ptr<ProofNode>> SolverEngine::getProof(
+   }
+   else if (c == modes::ProofComponent::FULL)
+   {
+-    ps.push_back(pe->getProof(true));
++    ps.push_back(getAvailableSatProof());
+     connectToPreprocess = true;
+     connectMkOuterScope = true;
+   }
+diff --git a/src/smt/solver_engine.h b/src/smt/solver_engine.h
+index 59e32dd5d..1358bd936 100644
+--- a/src/smt/solver_engine.h
++++ b/src/smt/solver_engine.h
+@@ -971,6 +971,12 @@ class CVC5_EXPORT SolverEngine
+    * this method was called.
+    */
+   theory::TheoryModel* getAvailableModel(const char* c) const;
++  /**
++   * Get the available proof, which is that of the prop engine if SAT
++   * proof producing, or else a dummy proof SAT_REFUTATION whose assumptions
++   * are the preprocessed input formulas.
++   */
++  std::shared_ptr<ProofNode> getAvailableSatProof();
+   /**
+    * Get available quantifiers engine, which throws a modal exception if it
+    * does not exist. This can happen if a quantifiers-specific call (e.g.
+diff --git a/test/regress/cli/CMakeLists.txt b/test/regress/cli/CMakeLists.txt
+index 620f50552..08ab3d0a6 100644
+--- a/test/regress/cli/CMakeLists.txt
++++ b/test/regress/cli/CMakeLists.txt
+@@ -1336,6 +1336,7 @@ set(regress_0_tests
+   regress0/proofs/lfsc-test-1.smt2
+   regress0/proofs/nomerge-alethe-pf.smt2
+   regress0/proofs/no-proof-uc.smt2
++  regress0/proofs/pp-only-proof.smt2
+   regress0/proofs/open-pf-datatypes.smt2
+   regress0/proofs/open-pf-if-unordered-iff.smt2
+   regress0/proofs/open-pf-rederivation.smt2
+diff --git a/test/regress/cli/regress0/proofs/no-proof-uc.smt2 b/test/regress/cli/regress0/proofs/no-proof-uc.smt2
+index 00121eec9..83c3e0d39 100644
+--- a/test/regress/cli/regress0/proofs/no-proof-uc.smt2
++++ b/test/regress/cli/regress0/proofs/no-proof-uc.smt2
+@@ -2,7 +2,7 @@
+ ; DISABLE-TESTER: proof
+ ; COMMAND-LINE: --check-unsat-cores
+ ; EXPECT: unsat
+-; EXPECT: (error "Cannot get a proof when proof option is off.")
++; EXPECT: (error "Cannot get a proof for this component when SAT solver is not proof producing.")
+ ; EXIT: 1
+ (set-logic ALL)
+ (declare-const x Int)
+@@ -13,4 +13,4 @@
+ (assert (< y 2))
+ (assert (not (< (* x y) 2)))
+ (check-sat)
+-(get-proof)
++(get-proof :sat)
+diff --git a/test/regress/cli/regress0/proofs/pp-only-proof.smt2 b/test/regress/cli/regress0/proofs/pp-only-proof.smt2
+new file mode 100644
+index 000000000..d1b963445
+--- /dev/null
++++ b/test/regress/cli/regress0/proofs/pp-only-proof.smt2
+@@ -0,0 +1,5 @@
++; EXPECT: unsat
++(set-logic ALL)
++(set-option :proof-mode pp-only)
++(set-option :check-proofs true)
++(check-sat-assuming (false))
+-- 
+2.47.1
+

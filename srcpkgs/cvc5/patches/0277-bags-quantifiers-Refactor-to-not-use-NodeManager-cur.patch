@@ -1,0 +1,440 @@
+From ff422314df3aff355c1a9f8d416db66fb1264be9 Mon Sep 17 00:00:00 2001
+From: Daniel Larraz <daniel-larraz@users.noreply.github.com>
+Date: Tue, 7 Jan 2025 18:16:38 -0600
+Subject: [PATCH 277/312] bags/quantifiers: Refactor to not use
+ NodeManager::currentNM() (#11498)
+
+This PR introduces some calls to `NodeManager::currentNM()`, which will
+be removed in subsequent PRs.
+---
+ src/expr/elim_witness_converter.cpp                  |  3 ++-
+ src/theory/bags/bag_solver.cpp                       |  2 +-
+ src/theory/bags/infer_info.cpp                       |  2 +-
+ src/theory/bags/inference_generator.cpp              |  8 ++++----
+ src/theory/bags/inference_generator.h                |  2 +-
+ src/theory/bags/theory_bags.cpp                      |  2 +-
+ src/theory/inference_id.cpp                          |  2 +-
+ src/theory/inference_id.h                            |  2 +-
+ src/theory/inference_manager_buffered.h              |  5 +++++
+ src/theory/quantifiers/conjecture_generator.cpp      |  4 ++--
+ src/theory/quantifiers/fmf/full_model_check.cpp      |  7 ++++---
+ src/theory/quantifiers/fmf/full_model_check.h        |  2 +-
+ src/theory/quantifiers/instantiate.cpp               |  2 +-
+ src/theory/quantifiers/mbqi_fast_sygus.cpp           |  5 ++---
+ src/theory/quantifiers/mbqi_fast_sygus.h             |  2 +-
+ src/theory/quantifiers/quantifiers_attributes.cpp    | 11 +++++------
+ src/theory/quantifiers/quantifiers_attributes.h      |  6 +++---
+ .../quantifiers/sygus/ce_guided_single_inv.cpp       |  2 +-
+ .../quantifiers/sygus/transition_inference.cpp       | 12 ++++++------
+ src/theory/quantifiers/sygus/transition_inference.h  |  6 ++++--
+ src/theory/strings/infer_proof_cons.cpp              |  5 +++--
+ 21 files changed, 50 insertions(+), 42 deletions(-)
+
+diff --git a/src/expr/elim_witness_converter.cpp b/src/expr/elim_witness_converter.cpp
+index 83f0c5745..277a95867 100644
+--- a/src/expr/elim_witness_converter.cpp
++++ b/src/expr/elim_witness_converter.cpp
+@@ -38,7 +38,8 @@ Node ElimWitnessNodeConverter::postConvert(Node n)
+     // must mark that the quantified formula cannot be eliminated by rewriting,
+     // so that the form of the quantified formula is preserved for the
+     // introduction below.
+-    Node psan = theory::quantifiers::QuantAttributes::mkAttrPreserveStructure();
++    Node psan =
++        theory::quantifiers::QuantAttributes::mkAttrPreserveStructure(nm);
+     Node ipl = nm->mkNode(Kind::INST_PATTERN_LIST, psan);
+     nchildren.push_back(ipl);
+     // make the quantified formula
+diff --git a/src/theory/bags/bag_solver.cpp b/src/theory/bags/bag_solver.cpp
+index 5d3377484..e60a3d550 100644
+--- a/src/theory/bags/bag_solver.cpp
++++ b/src/theory/bags/bag_solver.cpp
+@@ -38,7 +38,7 @@ BagSolver::BagSolver(Env& env,
+                      TermRegistry& tr)
+     : EnvObj(env),
+       d_state(s),
+-      d_ig(&s, &im),
++      d_ig(env.getNodeManager(), &s, &im),
+       d_im(im),
+       d_termReg(tr),
+       d_mapCache(userContext())
+diff --git a/src/theory/bags/infer_info.cpp b/src/theory/bags/infer_info.cpp
+index 678fcd04c..8e0cbd522 100644
+--- a/src/theory/bags/infer_info.cpp
++++ b/src/theory/bags/infer_info.cpp
+@@ -38,7 +38,7 @@ TrustNode InferInfo::processLemma(LemmaProperty& p)
+ 
+ Node InferInfo::getLemma() const
+ {
+-  NodeManager* nm = NodeManager::currentNM();
++  NodeManager* nm = d_im->getNodeManager();
+   std::vector<Node> nodes;
+   Node premises = nm->mkAnd(d_premises);
+   Node lemma = nm->mkNode(Kind::IMPLIES, premises, d_conclusion);
+diff --git a/src/theory/bags/inference_generator.cpp b/src/theory/bags/inference_generator.cpp
+index e0be79f7b..a71686b69 100644
+--- a/src/theory/bags/inference_generator.cpp
++++ b/src/theory/bags/inference_generator.cpp
+@@ -36,11 +36,11 @@ namespace cvc5::internal {
+ namespace theory {
+ namespace bags {
+ 
+-InferenceGenerator::InferenceGenerator(SolverState* state, InferenceManager* im)
+-    : d_state(state), d_im(im)
++InferenceGenerator::InferenceGenerator(NodeManager* nm,
++                                       SolverState* state,
++                                       InferenceManager* im)
++    : d_nm(nm), d_sm(d_nm->getSkolemManager()), d_state(state), d_im(im)
+ {
+-  d_nm = NodeManager::currentNM();
+-  d_sm = d_nm->getSkolemManager();
+   d_true = d_nm->mkConst(true);
+   d_zero = d_nm->mkConstInt(Rational(0));
+   d_one = d_nm->mkConstInt(Rational(1));
+diff --git a/src/theory/bags/inference_generator.h b/src/theory/bags/inference_generator.h
+index 77c0df79e..03ee04445 100644
+--- a/src/theory/bags/inference_generator.h
++++ b/src/theory/bags/inference_generator.h
+@@ -35,7 +35,7 @@ class SolverState;
+ class InferenceGenerator
+ {
+  public:
+-  InferenceGenerator(SolverState* state, InferenceManager* im);
++  InferenceGenerator(NodeManager* nm, SolverState* state, InferenceManager* im);
+ 
+   /**
+    * @param n a node of the form (bag.count e A)
+diff --git a/src/theory/bags/theory_bags.cpp b/src/theory/bags/theory_bags.cpp
+index 2ee1dba61..c38bd34db 100644
+--- a/src/theory/bags/theory_bags.cpp
++++ b/src/theory/bags/theory_bags.cpp
+@@ -37,7 +37,7 @@ TheoryBags::TheoryBags(Env& env, OutputChannel& out, Valuation valuation)
+     : Theory(THEORY_BAGS, env, out, valuation),
+       d_state(env, valuation),
+       d_im(env, *this, d_state),
+-      d_ig(&d_state, &d_im),
++      d_ig(env.getNodeManager(), &d_state, &d_im),
+       d_notify(*this, d_im),
+       d_statistics(statisticsRegistry()),
+       d_rewriter(nodeManager(), env.getRewriter(), &d_statistics.d_rewrites),
+diff --git a/src/theory/inference_id.cpp b/src/theory/inference_id.cpp
+index f17e8fdb4..bf34a5764 100644
+--- a/src/theory/inference_id.cpp
++++ b/src/theory/inference_id.cpp
+@@ -580,7 +580,7 @@ std::ostream& operator<<(std::ostream& out, InferenceId i)
+   return out;
+ }
+ 
+-Node mkInferenceIdNode(InferenceId i)
++Node mkInferenceIdNode(NodeManager* nm, InferenceId i)
+ {
+   return NodeManager::currentNM()->mkConstInt(
+       Rational(static_cast<uint32_t>(i)));
+diff --git a/src/theory/inference_id.h b/src/theory/inference_id.h
+index dbd2e36f0..23240cf6a 100644
+--- a/src/theory/inference_id.h
++++ b/src/theory/inference_id.h
+@@ -1010,7 +1010,7 @@ const char* toString(InferenceId i);
+ std::ostream& operator<<(std::ostream& out, InferenceId i);
+ 
+ /** Make node from inference id */
+-Node mkInferenceIdNode(InferenceId i);
++Node mkInferenceIdNode(NodeManager* nm, InferenceId i);
+ 
+ /** get an inference identifier from a node, return false if we fail */
+ bool getInferenceId(TNode n, InferenceId& i);
+diff --git a/src/theory/inference_manager_buffered.h b/src/theory/inference_manager_buffered.h
+index 59e75b149..b887745e0 100644
+--- a/src/theory/inference_manager_buffered.h
++++ b/src/theory/inference_manager_buffered.h
+@@ -168,6 +168,11 @@ class InferenceManagerBuffered : public TheoryInferenceManager
+    */
+   void notifyInConflict() override;
+ 
++  /**
++   * Returns the associated node manager
++   */
++  NodeManager* getNodeManager() const { return nodeManager(); }
++
+  protected:
+   /** A set of pending inferences to be processed as lemmas */
+   std::vector<std::unique_ptr<TheoryInference>> d_pendingLem;
+diff --git a/src/theory/quantifiers/conjecture_generator.cpp b/src/theory/quantifiers/conjecture_generator.cpp
+index 591435495..26dc2d51b 100644
+--- a/src/theory/quantifiers/conjecture_generator.cpp
++++ b/src/theory/quantifiers/conjecture_generator.cpp
+@@ -74,7 +74,7 @@ Node OpArgIndex::getGroundTerm( ConjectureGenerator * s, std::vector< TNode >& a
+     args2.push_back( d_ops[0] );
+   }
+   args2.insert(args2.end(), args.begin(), args.end());
+-  return NodeManager::currentNM()->mkNode(d_op_terms[0].getKind(), args2);
++  return s->nodeManager()->mkNode(d_op_terms[0].getKind(), args2);
+ }
+ 
+ void OpArgIndex::getGroundTerms( ConjectureGenerator * s, std::vector< TNode >& terms ) {
+@@ -1826,7 +1826,7 @@ Node TermGenerator::getTerm( TermGenEnv * s ) {
+           children.push_back( nc );
+         }
+       }
+-      return NodeManager::currentNM()->mkNode( s->d_func_kind[f], children );
++      return s->d_cg->nodeManager()->mkNode(s->d_func_kind[f], children);
+     }
+   }else{
+     Assert(false);
+diff --git a/src/theory/quantifiers/fmf/full_model_check.cpp b/src/theory/quantifiers/fmf/full_model_check.cpp
+index 5bdb64394..2cdc348d6 100644
+--- a/src/theory/quantifiers/fmf/full_model_check.cpp
++++ b/src/theory/quantifiers/fmf/full_model_check.cpp
+@@ -224,7 +224,8 @@ void Def::basic_simplify( FirstOrderModelFmc * m ) {
+   d_status.clear();
+ }
+ 
+-void Def::simplify(FullModelChecker * mc, FirstOrderModelFmc * m) {
++void Def::simplify(NodeManager* nm, FullModelChecker* mc, FirstOrderModelFmc* m)
++{
+   Trace("fmc-simplify") << "Simplify definition, #cond = " << d_cond.size() << std::endl;
+   basic_simplify( m );
+   Trace("fmc-simplify") << "post-basic simplify, #cond = " << d_cond.size() << std::endl;
+@@ -543,7 +544,7 @@ bool FullModelChecker::processBuildModel(TheoryModel* m){
+     }
+ 
+     Trace("fmc-model-simplify") << "Simplifying " << op << "..." << std::endl;
+-    fm->d_models[op]->simplify( this, fm );
++    fm->d_models[op]->simplify(nodeManager(), this, fm);
+ 
+     if (TraceIsOn("fmc-model"))
+     {
+@@ -1098,7 +1099,7 @@ void FullModelChecker::doCheck(FirstOrderModelFmc * fm, Node f, Def & d, Node n
+       Trace("fmc-debug") << "Simplify the definition..." << std::endl;
+       d.debugPrint("fmc-debug", Node::null(), this);
+     }
+-    d.simplify(this, fm);
++    d.simplify(nodeManager(), this, fm);
+     Trace("fmc-debug") << "Done simplifying" << std::endl;
+   }
+   if (TraceIsOn("fmc-debug"))
+diff --git a/src/theory/quantifiers/fmf/full_model_check.h b/src/theory/quantifiers/fmf/full_model_check.h
+index a4f77218d..e6971ccef 100644
+--- a/src/theory/quantifiers/fmf/full_model_check.h
++++ b/src/theory/quantifiers/fmf/full_model_check.h
+@@ -75,7 +75,7 @@ public:
+   bool addEntry( FirstOrderModelFmc * m, Node c, Node v);
+   Node evaluate( FirstOrderModelFmc * m, std::vector<Node>& inst );
+   int getGeneralizationIndex( FirstOrderModelFmc * m, std::vector<Node>& inst );
+-  void simplify( FullModelChecker * mc, FirstOrderModelFmc * m );
++  void simplify(NodeManager* nm, FullModelChecker* mc, FirstOrderModelFmc* m);
+   void debugPrint(const char * tr, Node op, FullModelChecker * m);
+ };/* class Def */
+ 
+diff --git a/src/theory/quantifiers/instantiate.cpp b/src/theory/quantifiers/instantiate.cpp
+index 2edbc2ddf..3e1f96e29 100644
+--- a/src/theory/quantifiers/instantiate.cpp
++++ b/src/theory/quantifiers/instantiate.cpp
+@@ -565,7 +565,7 @@ Node Instantiate::getInstantiation(Node q,
+     // to track which trigger caused an instantiation.
+     if (id != InferenceId::UNKNOWN)
+     {
+-      pfTerms.push_back(mkInferenceIdNode(id));
++      pfTerms.push_back(mkInferenceIdNode(nodeManager(), id));
+       if (!pfArg.isNull())
+       {
+         pfTerms.push_back(pfArg);
+diff --git a/src/theory/quantifiers/mbqi_fast_sygus.cpp b/src/theory/quantifiers/mbqi_fast_sygus.cpp
+index 1ca3f953f..951af8465 100644
+--- a/src/theory/quantifiers/mbqi_fast_sygus.cpp
++++ b/src/theory/quantifiers/mbqi_fast_sygus.cpp
+@@ -83,9 +83,8 @@ void MVarInfo::initialize(Env& env,
+   d_senum.reset(new SygusTermEnumerator(env, tng));
+ }
+ 
+-Node MVarInfo::getEnumeratedTerm(size_t i)
++Node MVarInfo::getEnumeratedTerm(NodeManager* nm, size_t i)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   size_t nullCount = 0;
+   while (i >= d_enum.size())
+   {
+@@ -252,7 +251,7 @@ bool MbqiFastSygus::constructInstantiation(
+     bool successEnum;
+     do
+     {
+-      Node ret = vi.getEnumeratedTerm(cindex);
++      Node ret = vi.getEnumeratedTerm(nodeManager(), cindex);
+       cindex++;
+       Node retc;
+       if (!ret.isNull())
+diff --git a/src/theory/quantifiers/mbqi_fast_sygus.h b/src/theory/quantifiers/mbqi_fast_sygus.h
+index 93d0b39e6..904563d77 100644
+--- a/src/theory/quantifiers/mbqi_fast_sygus.h
++++ b/src/theory/quantifiers/mbqi_fast_sygus.h
+@@ -56,7 +56,7 @@ class MVarInfo
+    * continue the sygus enumeration if i is greater than the number of terms
+    * enumerated so far.
+    */
+-  Node getEnumeratedTerm(size_t i);
++  Node getEnumeratedTerm(NodeManager* nm, size_t i);
+ 
+  private:
+   /** The underlying sygus enumerator utility */
+diff --git a/src/theory/quantifiers/quantifiers_attributes.cpp b/src/theory/quantifiers/quantifiers_attributes.cpp
+index e19e082c6..17a41ff24 100644
+--- a/src/theory/quantifiers/quantifiers_attributes.cpp
++++ b/src/theory/quantifiers/quantifiers_attributes.cpp
+@@ -434,24 +434,23 @@ Node QuantAttributes::getQuantIdNumNode( Node q ) {
+   }
+ }
+ 
+-Node QuantAttributes::mkAttrPreserveStructure()
++Node QuantAttributes::mkAttrPreserveStructure(NodeManager* nm)
+ {
+-  Node nattr = mkAttrInternal(AttrType::ATTR_PRESERVE_STRUCTURE);
++  Node nattr = mkAttrInternal(nm, AttrType::ATTR_PRESERVE_STRUCTURE);
+   PreserveStructureAttribute psa;
+   nattr[0].setAttribute(psa, true);
+   return nattr;
+ }
+ 
+-Node QuantAttributes::mkAttrQuantifierElimination()
++Node QuantAttributes::mkAttrQuantifierElimination(NodeManager* nm)
+ {
+-  Node nattr = mkAttrInternal(AttrType::ATTR_QUANT_ELIM);
++  Node nattr = mkAttrInternal(nm, AttrType::ATTR_QUANT_ELIM);
+   QuantElimAttribute qea;
+   nattr[0].setAttribute(qea, true);
+   return nattr;
+ }
+-Node QuantAttributes::mkAttrInternal(AttrType at)
++Node QuantAttributes::mkAttrInternal(NodeManager* nm, AttrType at)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   SkolemManager* sm = nm->getSkolemManager();
+   // use internal skolem id so that this method is deterministic
+   Node id = nm->mkConstInt(Rational(static_cast<uint32_t>(at)));
+diff --git a/src/theory/quantifiers/quantifiers_attributes.h b/src/theory/quantifiers/quantifiers_attributes.h
+index 5bb8e7f33..e7e33dc03 100644
+--- a/src/theory/quantifiers/quantifiers_attributes.h
++++ b/src/theory/quantifiers/quantifiers_attributes.h
+@@ -246,9 +246,9 @@ class QuantAttributes
+   Node getQuantIdNumNode( Node q );
+ 
+   /** Make the instantiation attribute that marks "quantifier elimination" */
+-  static Node mkAttrQuantifierElimination();
++  static Node mkAttrQuantifierElimination(NodeManager* nm);
+   /** Make the instantiation attribute that marks to perserve its structure */
+-  static Node mkAttrPreserveStructure();
++  static Node mkAttrPreserveStructure(NodeManager* nm);
+   /**
+    * Set instantiation level attribute for all subterms without an instantiation
+    * level in n to level.
+@@ -275,7 +275,7 @@ class QuantAttributes
+     ATTR_QUANT_ELIM
+   };
+   /** Make attribute internal, helper for mkAttrX methods above. */
+-  static Node mkAttrInternal(AttrType at);
++  static Node mkAttrInternal(NodeManager* nm, AttrType at);
+   /** cache of attributes */
+   std::map< Node, QAttributes > d_qattr;
+   /** function definitions */
+diff --git a/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp b/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp
+index dab0d0cc7..2323ea231 100644
+--- a/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp
++++ b/src/theory/quantifiers/sygus/ce_guided_single_inv.cpp
+@@ -216,7 +216,7 @@ Result CegSingleInv::solve()
+   if (siq.getKind() == Kind::FORALL)
+   {
+     // get the INST_ATTRIBUTE term marking quantifier elimination
+-    n_attr = QuantAttributes::mkAttrQuantifierElimination();
++    n_attr = QuantAttributes::mkAttrQuantifierElimination(nm);
+     n_attr = nm->mkNode(Kind::INST_PATTERN_LIST, n_attr);
+     siq = nm->mkNode(Kind::FORALL, siq[0], siq[1], n_attr);
+   }
+diff --git a/src/theory/quantifiers/sygus/transition_inference.cpp b/src/theory/quantifiers/sygus/transition_inference.cpp
+index f4f13ed49..41fe63dec 100644
+--- a/src/theory/quantifiers/sygus/transition_inference.cpp
++++ b/src/theory/quantifiers/sygus/transition_inference.cpp
+@@ -42,10 +42,10 @@ bool DetTrace::DetTraceTrie::add(Node loc, const std::vector<Node>& val)
+   return false;
+ }
+ 
+-Node DetTrace::DetTraceTrie::constructFormula(const std::vector<Node>& vars,
++Node DetTrace::DetTraceTrie::constructFormula(NodeManager* nm,
++                                              const std::vector<Node>& vars,
+                                               unsigned index)
+ {
+-  NodeManager* nm = NodeManager::currentNM();
+   if (index == vars.size())
+   {
+     return nm->mkConst(true);
+@@ -56,7 +56,7 @@ Node DetTrace::DetTraceTrie::constructFormula(const std::vector<Node>& vars,
+     Node eq = vars[index].eqNode(p.first);
+     if (index < vars.size() - 1)
+     {
+-      Node conc = p.second.constructFormula(vars, index + 1);
++      Node conc = p.second.constructFormula(nm, vars, index + 1);
+       disj.push_back(nm->mkNode(Kind::AND, eq, conc));
+     }
+     else
+@@ -81,9 +81,9 @@ bool DetTrace::increment(Node loc, std::vector<Node>& vals)
+   return false;
+ }
+ 
+-Node DetTrace::constructFormula(const std::vector<Node>& vars)
++Node DetTrace::constructFormula(NodeManager* nm, const std::vector<Node>& vars)
+ {
+-  return d_trie.constructFormula(vars);
++  return d_trie.constructFormula(nm, vars);
+ }
+ 
+ void DetTrace::print(const char* c) const
+@@ -582,7 +582,7 @@ TraceIncStatus TransitionInference::incrementTrace(DetTrace& dt, bool fwd)
+ 
+ Node TransitionInference::constructFormulaTrace(DetTrace& dt) const
+ {
+-  return dt.constructFormula(d_vars);
++  return dt.constructFormula(nodeManager(), d_vars);
+ }
+ 
+ }  // namespace quantifiers
+diff --git a/src/theory/quantifiers/sygus/transition_inference.h b/src/theory/quantifiers/sygus/transition_inference.h
+index e9b41c716..bc0d81185 100644
+--- a/src/theory/quantifiers/sygus/transition_inference.h
++++ b/src/theory/quantifiers/sygus/transition_inference.h
+@@ -59,7 +59,7 @@ class DetTrace
+    * Construct the formula that this trace represents with respect to variables
+    * in vars. For details, see DetTraceTrie::constructFormula below.
+    */
+-  Node constructFormula(const std::vector<Node>& vars);
++  Node constructFormula(NodeManager* nm, const std::vector<Node>& vars);
+   /** Debug print this trace on trace message c */
+   void print(const char* c) const;
+ 
+@@ -83,7 +83,9 @@ class DetTrace
+      * and vars is [x,y,z], then this method returns:
+      *   ( x=1 ^ y=2 ^ z=3 ) V ( x=2 ^ y=3 ^ z=4 ).
+      */
+-    Node constructFormula(const std::vector<Node>& vars, unsigned index = 0);
++    Node constructFormula(NodeManager* nm,
++                          const std::vector<Node>& vars,
++                          unsigned index = 0);
+   };
+   /** The above trie data structure for this class */
+   DetTraceTrie d_trie;
+diff --git a/src/theory/strings/infer_proof_cons.cpp b/src/theory/strings/infer_proof_cons.cpp
+index 0ac030ff0..180dda798 100644
+--- a/src/theory/strings/infer_proof_cons.cpp
++++ b/src/theory/strings/infer_proof_cons.cpp
+@@ -100,9 +100,10 @@ void InferProofCons::packArgs(Node conc,
+                               const std::vector<Node>& exp,
+                               std::vector<Node>& args)
+ {
++  NodeManager* nm = NodeManager::currentNM();
+   args.push_back(conc);
+-  args.push_back(mkInferenceIdNode(infer));
+-  args.push_back(NodeManager::currentNM()->mkConst(isRev));
++  args.push_back(mkInferenceIdNode(nm, infer));
++  args.push_back(nm->mkConst(isRev));
+   // The vector exp is stored as arguments; its flatten form are premises. We
+   // need both since the grouping of exp is important, e.g. { (and a b), c }
+   // is different from { a, b, c } in the convert routine, since positions
+-- 
+2.47.1
+
