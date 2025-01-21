@@ -1,0 +1,123 @@
+--- fbgemm-1.0.0/CMakeLists.txt.old	2025-01-24 07:25:34.850046638 +0000
++++ fbgemm-1.0.0/CMakeLists.txt	2025-01-24 07:25:49.366018757 +0000
+@@ -247,6 +247,14 @@
+ message(WARNING "CMAKE_CXX_FLAGS_RELEASE is ${CMAKE_CXX_FLAGS_RELEASE}")
+ message(WARNING "==========")
+ 
++if(ASMJIT_STATIC)
++  set(CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_STATIC_LIBRARY_SUFFIX})
++endif()
++
++find_package(asmjit)
++
++if(NOT asmjit_FOUND)
++
+ if(NOT TARGET asmjit)
+   # Download asmjit from github if ASMJIT_SRC_DIR is not specified.
+   if(NOT DEFINED ASMJIT_SRC_DIR)
+@@ -280,6 +288,23 @@
+   endif()
+ endif()
+ 
++else()
++
++target_include_directories(fbgemm_generic BEFORE
++      PRIVATE "${ASMJIT_SRC_DIR}/src")
++target_include_directories(fbgemm_avx2 BEFORE
++      PRIVATE "${ASMJIT_SRC_DIR}/src")
++target_include_directories(fbgemm_avx512 BEFORE
++      PRIVATE "${ASMJIT_SRC_DIR}/src")
++target_include_directories(fbgemm_autovec BEFORE
++      PRIVATE "${ASMJIT_SRC_DIR}/src")
++
++endif()
++
++find_package(cpuinfo)
++
++if(NOT cpuinfo_FOUND)
++
+ if(NOT TARGET cpuinfo)
+   #Download cpuinfo from github if CPUINFO_SOURCE_DIR is not specified.
+   if(NOT DEFINED CPUINFO_SOURCE_DIR)
+@@ -298,29 +323,34 @@
+   set_property(TARGET cpuinfo PROPERTY POSITION_INDEPENDENT_CODE ON)
+ endif()
+ 
++else()
++
+ target_include_directories(fbgemm_generic BEFORE
+-      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}>
+-      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}/include>
+-      PRIVATE "${ASMJIT_SRC_DIR}/src"
+       PRIVATE "${CPUINFO_SOURCE_DIR}/include")
++target_include_directories(fbgemm_avx2 BEFORE
++      PRIVATE "${CPUINFO_SOURCE_DIR}/include")
++target_include_directories(fbgemm_avx512 BEFORE
++      PRIVATE "${CPUINFO_SOURCE_DIR}/include")
++target_include_directories(fbgemm_autovec BEFORE
++      PRIVATE "${CPUINFO_SOURCE_DIR}/include")
++
++endif()
++
++target_include_directories(fbgemm_generic BEFORE
++      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}>
++      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}/include>)
+ 
+ target_include_directories(fbgemm_avx2 BEFORE
+       PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}>
+-      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}/include>
+-      PRIVATE "${ASMJIT_SRC_DIR}/src"
+-      PRIVATE "${CPUINFO_SOURCE_DIR}/include")
++      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}/include>)
+ 
+ target_include_directories(fbgemm_avx512 BEFORE
+       PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}>
+-      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}/include>
+-      PRIVATE "${ASMJIT_SRC_DIR}/src"
+-      PRIVATE "${CPUINFO_SOURCE_DIR}/include")
++      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}/include>)
+ 
+ target_include_directories(fbgemm_autovec BEFORE
+       PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}>
+-      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}/include>
+-      PRIVATE "${ASMJIT_SRC_DIR}/src"
+-      PRIVATE "${CPUINFO_SOURCE_DIR}/include")
++      PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}/include>)
+ 
+ if(FBGEMM_LIBRARY_TYPE STREQUAL "default")
+   add_library(fbgemm
+@@ -364,12 +394,19 @@
+     PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}>
+     PUBLIC $<BUILD_INTERFACE:${FBGEMM_SOURCE_DIR}/include>)
+ 
+-target_link_libraries(fbgemm
+-  $<BUILD_INTERFACE:asmjit>
+-  $<BUILD_INTERFACE:cpuinfo>)
+-add_dependencies(fbgemm
+-  asmjit
+-  cpuinfo)
++if(asmjit_FOUND)
++  target_link_libraries(fbgemm ${asmjit_LIBRARIES})
++else()
++  target_link_libraries(fbgemm $<BUILD_INTERFACE:asmjit>)
++  add_dependencies(fbgemm asmjit)
++endif()
++
++if(cpuinfo_FOUND)
++  target_link_libraries(fbgemm ${cpuinfo_LIBRARIES})
++else()
++  target_link_libraries(fbgemm $<BUILD_INTERFACE:cpuinfo>)
++  add_dependencies(fbgemm cpuinfo)
++endif()
+ 
+ if(OpenMP_FOUND)
+   target_link_libraries(fbgemm OpenMP::OpenMP_CXX)
+@@ -388,7 +425,7 @@
+ 
+ install(
+   EXPORT fbgemmLibraryConfig
+-  DESTINATION share/cmake/fbgemm
++  DESTINATION ${CMAKE_INSTALL_DATADIR}/cmake/fbgemm
+   FILE fbgemmLibraryConfig.cmake)
+ 
+ if(MSVC)
