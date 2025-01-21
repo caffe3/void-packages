@@ -1,0 +1,32 @@
+# Template file for 'pthreadpool-git'
+pkgname=pthreadpool-git
+version=0.1.20240616
+revision=1
+_commit=560c60d342a76076f0557a3946924c6478470044
+build_style=cmake
+configure_args="-DBUILD_SHARED_LIBS=ON -DPTHREADPOOL_BUILD_BENCHMARKS=OFF -DPTHREADPOOL_BUILD_TESTS=OFF"
+hostmakedepends="git"
+makedepends="fxdiv-git"
+short_desc="Portable thread pool implementation for C/C++"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="BSD-2-Clause"
+homepage="https://github.com/Maratyszcza/pthreadpool"
+
+do_fetch() {
+	git clone https://github.com/Maratyszcza/pthreadpool ${wrksrc}
+	cd ${wrksrc}
+	git checkout ${_commit}
+}
+
+post_install() {
+	vlicense LICENSE
+}
+
+pthreadpool-git-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove "usr/lib/*.so"
+	}
+}
