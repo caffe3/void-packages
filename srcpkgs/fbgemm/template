@@ -1,0 +1,62 @@
+# Template file for 'fbgemm'
+pkgname=fbgemm
+version=1.0.0
+revision=1
+build_style=cmake
+configure_args="-DFBGEMM_BUILD_TESTS=OFF -DFBGEMM_BUILD_BENCHMARKS=OFF"
+hostmakedepends="python3"
+makedepends="libgomp-devel"
+short_desc="Low-precision matrix-matrix multiplication library for inference"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="BSD-3-Clause"
+homepage="https://github.com/pytorch/FBGEMM"
+distfiles="https://github.com/pytorch/FBGEMM/archive/refs/tags/v${version}.tar.gz"
+checksum=
+
+if [ "$CROSS_BUILD" ]; then
+	export cmake_crossopts="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_HOST_SYSTEM_NAME=Linux"
+fi
+
+do_configure() {
+
+	cmake -B build-shared -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-FBGEMM_LIBRARY_TYPE=shared \
+		$configure_args \
+		$cmake_crossopts
+
+
+	cmake -B build-static -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-FBGEMM_LIBRARY_TYPE=static \
+		$configure_args \
+		$cmake_crossopts
+}
+
+do_build() {
+	ninja -C build-shared
+	ninja -C build-static
+}
+
+do_install() {
+	DESTDIR=$DESTDIR ninja install -C build-static
+	DESTDIR=$DESTDIR ninja install -C build-shared
+}
+
+post_install() {
+	vlicense LICENSE
+}
+
+fbgemm-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/lib/cmake
+		vmove "usr/lib/*.a"
+	}
+}
