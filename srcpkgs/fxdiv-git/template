@@ -1,0 +1,23 @@
+# Template file for 'fxdiv-git'
+pkgname=fxdiv-git
+version=20201209
+revision=1
+_commit=63058eff77e11aa15bf531df5dd34395ec3017c8
+create_wrksrc=yes
+build_style=fetch
+hostmakedepends="git"
+short_desc="C/C++ header-only library for division via fixed-point multiplication"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="MIT"
+homepage="https://github.com/Maratyszcza/FXdiv"
+
+do_fetch() {
+	git clone https://github.com/Maratyszcza/FXdiv ${wrksrc}
+	cd ${wrksrc}
+	git checkout ${_commit}
+}
+
+do_install() {
+	vinstall include/fxdiv.h 644 usr/include
+	vlicense LICENSE
+}
