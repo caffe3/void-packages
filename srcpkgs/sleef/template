@@ -1,0 +1,63 @@
+# Template file for 'libsleef'
+pkgname=sleef
+version=3.7.0
+revision=1
+build_style=cmake
+makedepends="libgomp-devel"
+configure_args="-DSLEEF_BUILD_DFT=ON -DSLEEF_BUILD_QUAD=ON -DSLEEF_BUILD_SCALAR_LIB=ON -DSLEEF_BUILD_TESTS=OFF"
+checkdepends="mpfr-devel openssl-devel fftw-devel"
+short_desc="SIMD Library for Evaluating Elementary Functions"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="Boost"
+homepage="https://sleef.org"
+distfiles="https://github.com/shibatch/sleef/archive/refs/tags/3.7.tar.gz"
+checksum=1fb094c1ba4c9f6ba16013715d6fdbd5b893c68e1737b6115ba31e27807de591
+
+if [ "$CROSS_BUILD" ]; then
+	export cmake_crossopts="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_HOST_SYSTEM_NAME=Linux"
+fi
+
+do_configure() {
+
+	cmake -B build-shared -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DSLEEF_BUILD_SHARED_LIBS=ON \
+		$configure_args \
+		$cmake_crossopts
+
+
+	cmake -B build-static -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DSLEEF_BUILD_SHARED_LIBS=OFF \
+		$configure_args \
+		$cmake_crossopts
+}
+
+do_build() {
+	ninja -C build-shared
+	ninja -C build-static
+}
+
+do_install() {
+	DESTDIR=$DESTDIR ninja install -C build-static
+	DESTDIR=$DESTDIR ninja install -C build-shared
+}
+
+post_install() {
+	vlicense LICENSE.txt LICENSE
+}
+
+sleef-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/lib/cmake
+		vmove usr/lib/pkgconfig
+		vmove "usr/lib/*.a"
+	}
+}
