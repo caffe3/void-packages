@@ -4,15 +4,14 @@ pkgname=magma
 version=2.8.0
 revision=1
 archs="x86_64*"
-build_style=gnu-makefile
-make_install_args="prefix=/usr"
-hostmakedepends="cuda${_cudaver/./}-compiler gcc-fortran python perl"
+build_style=cmake
+configure_args+=" -DCMAKE_BUILD_TYPE=Release"
+configure_args+=" -DMAGMA_ENABLE_CUDA=ON"
+configure_args+=" -DCUDAToolkit_ROOT=/opt/cuda-${_cudaver}"
+configure_args+=" -DCMAKE_CUDA_COMPILER=/opt/cuda-${_cudaver}/bin/nvcc"
+hostmakedepends="cuda-compiler gcc-fortran python perl"
 makedepends="libgomp-devel openblas-devel"
-makedepends+=" cuda${_cudaver/./}-crt"
-makedepends+=" cuda${_cudaver/./}-cudart-devel"
-makedepends+=" libcublas${_cudaver/./}-devel"
-makedepends+=" libcusparse${_cudaver/./}-devel"
-makedepends+=" cuda${_cudaver/./}-profiler-api"
+makedepends+=" cuda-crt cuda-cudart-devel libcublas-devel libcusparse-devel cuda-profiler-api"
 short_desc="Matrix algebra on GPU and multi-core architectures"
 maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
 license="BSD-3-Clause"
@@ -20,9 +19,61 @@ homepage="https://icl.utk.edu/magma/"
 distfiles="https://github.com/icl-utk-edu/magma/archive/refs/tags/v${version}.tar.gz"
 checksum=ceec5c4465619be650c4581cb3b3fca152f16256da7afc917e2ddc8e858d9e7f
 
+build_options="sm_50 sm_52 sm_53 sm_60 sm_61 sm_62 sm_70 sm_72 sm_80 sm_86 sm_87 sm_89 sm_90 sm_90a"
+build_options_default="sm_80 sm_86 sm_89 sm_90 sm_90a"
+
+configure_args+=" -DCMAKE_CUDA_ARCHITECTURES="\
+"$(vopt_if sm_50 '50-real;')"\
+"$(vopt_if sm_52 '52-real;')"\
+"$(vopt_if sm_53 '53-real;')"\
+"$(vopt_if sm_60 '60-real;')"\
+"$(vopt_if sm_61 '61-real;')"\
+"$(vopt_if sm_62 '62-real;')"\
+"$(vopt_if sm_70 '70-real;')"\
+"$(vopt_if sm_72 '72-real;')"\
+"$(vopt_if sm_80 '80-real;')"\
+"$(vopt_if sm_86 '86-real;')"\
+"$(vopt_if sm_87 '87-real;')"\
+"$(vopt_if sm_89 '89-real;')"\
+"$(vopt_if sm_90 '90-real;')"\
+"$(vopt_if sm_90a '90a-real;')"
+
+if [ "$CROSS_BUILD" ]; then
+	export cmake_crossopts="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_HOST_SYSTEM_NAME=Linux"
+fi
+
 pre_configure() {
-	cp ${FILESDIR}/make.inc ${wrksrc}/.
+	printf 'BACKEND = cuda\nFORT = gfortran\nGPU_TARGET = %s\n' "${build_options}" > make.inc
 	make generate
+}
+
+do_configure() {
+	cmake -B build-shared -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=ON \
+		$configure_args \
+		$cmake_crossopts
+
+
+	cmake -B build-static -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=OFF \
+		$configure_args \
+		$cmake_crossopts
+}
+
+do_build() {
+	ninja -C build-shared
+	ninja -C build-static
+}
+
+do_install() {
+	DESTDIR=$DESTDIR ninja install -C build-static
+	DESTDIR=$DESTDIR ninja install -C build-shared
 }
 
 magma-devel_package() {
