@@ -18,12 +18,11 @@ if [ "$CROSS_BUILD" ]; then
 fi
 
 do_configure() {
-
 	cmake -B build-shared -G Ninja \
 		-DCMAKE_INSTALL_PREFIX=/usr \
 		-DCMAKE_INSTALL_LIBDIR=lib \
 		-DCMAKE_BUILD_TYPE=Release \
-		-FBGEMM_LIBRARY_TYPE=shared \
+		-DFBGEMM_LIBRARY_TYPE=shared \
 		$configure_args \
 		$cmake_crossopts
 
@@ -32,7 +31,7 @@ do_configure() {
 		-DCMAKE_INSTALL_PREFIX=/usr \
 		-DCMAKE_INSTALL_LIBDIR=lib \
 		-DCMAKE_BUILD_TYPE=Release \
-		-FBGEMM_LIBRARY_TYPE=static \
+		-DFBGEMM_LIBRARY_TYPE=static \
 		$configure_args \
 		$cmake_crossopts
 }
