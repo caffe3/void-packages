@@ -49,7 +49,7 @@ do_install() {
 }
 
 post_install() {
-	vlicense LICENSE
+	vlicense LICENSE.txt LICENSE
 }
 
 sleef-devel_package() {
