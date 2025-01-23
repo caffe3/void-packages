@@ -1,0 +1,66 @@
+# Template file for 'cpuinfo-torch-git'
+pkgname=cpuinfo-torch-git
+version=20250110
+revision=1
+_commit=8a1772a0c5c447df2d18edf33ec4603a8c9c04a6
+build_style=cmake
+configure_args="-DCMAKE_INSTALL_DATADIR=lib -DCPUINFO_BUILD_UNIT_TESTS=OFF -DCPUINFO_BUILD_MOCK_TESTS=OFF -DCPUINFO_BUILD_BENCHMARKS=OFF"
+hostmakedepends="git"
+short_desc="CPU INFOrmation library"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="BSD-2-Clause"
+homepage="https://github.com/pytorch/cpuinfo"
+
+if [ "$CROSS_BUILD" ]; then
+	export cmake_crossopts="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_HOST_SYSTEM_NAME=Linux"
+fi
+
+do_fetch() {
+	git clone https://github.com/pytorch/cpuinfo ${wrksrc}
+	cd ${wrksrc}
+	git checkout ${_commit}
+}
+
+do_configure() {
+	cmake -B build-shared -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCPUINFO_LIBRARY_TYPE=shared \
+		-DCPUINFO_RUNTIME_TYPE=shared \
+		$configure_args \
+		$cmake_crossopts
+
+	cmake -B build-static -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCPUINFO_LIBRARY_TYPE=static \
+		-DCPUINFO_RUNTIME_TYPE=static \
+		$configure_args \
+		$cmake_crossopts
+}
+
+do_build() {
+	ninja -C build-shared
+	ninja -C build-static
+}
+
+do_install() {
+	DESTDIR=$DESTDIR ninja install -C build-static
+	DESTDIR=$DESTDIR ninja install -C build-shared
+}
+
+post_install() {
+	vlicense LICENSE
+}
+
+cpuinfo-torch-git-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/lib/pkgconfig
+		vmove "usr/lib/*.a"
+	}
+}
