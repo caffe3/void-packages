@@ -1,0 +1,68 @@
+# Template file for 'asmjit-git'
+pkgname=asmjit-git
+version=20250123
+revision=1
+_commit=e1b20711cc40c29ec4918b54e328ace96470f6e5
+build_style=cmake
+configure_args="-DCMAKE_INSTALL_DATADIR=lib -DASMJIT_TEST=OFF -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG"
+hostmakedepends="git"
+short_desc="Machine code generation for C++"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="Zlib"
+homepage="https://asmjit.com"
+
+if [ "$CROSS_BUILD" ]; then
+	export cmake_crossopts="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_HOST_SYSTEM_NAME=Linux"
+fi
+
+do_fetch() {
+	git clone https://github.com/asmjit/asmjit ${wrksrc}
+	cd ${wrksrc}
+	git checkout ${_commit}
+}
+
+pre_configure() {
+	vsed -i 's/-O2//' ${wrksrc}/CMakeLists.txt
+}
+
+do_configure() {
+	cmake -B build-shared -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DASMJIT_STATIC=OFF \
+		$configure_args \
+		$cmake_crossopts
+
+	cmake -B build-static -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DASMJIT_STATIC=ON \
+		$configure_args \
+		$cmake_crossopts
+}
+
+do_build() {
+	ninja -C build-shared
+	ninja -C build-static
+}
+
+do_install() {
+	DESTDIR=$DESTDIR ninja install -C build-static
+	DESTDIR=$DESTDIR ninja install -C build-shared
+}
+
+post_install() {
+	vlicense LICENSE.md
+}
+
+asmjit-git-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/lib/cmake
+		vmove "usr/lib/*.a"
+	}
+}
