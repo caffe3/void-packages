@@ -1,0 +1,25 @@
+# Template file for 'symfpu-cvc5-git-devel'
+pkgname=symfpu-cvc5-git-devel
+version=20230627
+revision=1
+_gitrev="e6ac3af9c2c574498ea171c957425b407625448b"
+wrksrc="symfpu"
+hostmakedepends="git"
+short_desc="IEEE-754/SMT-LIB floating-point implementation for cvc5"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="BSD-3-Clause"
+homepage="https://github.com/cvc5/symfpu"
+provides="symfpu-devel-${version}_${revision}"
+
+do_fetch() {
+	git clone https://github.com/cvc5/symfpu ${wrksrc}
+	cd ${wrksrc}
+	git checkout ${_gitrev}
+}
+
+do_install() {
+	vmkdir usr/include/symfpu
+	vcopy "core" usr/include/symfpu
+	vcopy "utils" usr/include/symfpu
+	vlicense LICENSE
+}
