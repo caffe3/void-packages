@@ -1,0 +1,31 @@
+# Template file for 'python3-triton'
+pkgname=python3-triton
+version=3.2.0
+revision=1
+_commit=053ced9ba16e4bfd56b780ae7daf5a1454541a04
+build_style=python3-pep517
+build_wrksrc=python
+hostmakedepends="python3-setuptools cmake ninja python3-wheel git"
+makedepends="python3-devel python3-pybind11 zlib-devel"
+depends="python3"
+short_desc="Triton compiler"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="MIT"
+homepage="https://github.com/triton-lang/triton"
+nopie=yes
+
+do_fetch() {
+	git clone https://github.com/openai/triton ${wrksrc}
+	cd ${wrksrc}
+	git checkout ${_commit}
+	git submodule update --init
+}
+
+pre_configure() {
+  # use system versions
+	vsed -i 's/"\(cmake\|ninja\)[^"]\+",\? *//g' pyproject.toml
+}
+
+post_install() {
+    vlicense ../LICENSE
+}

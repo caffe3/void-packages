@@ -1,0 +1,80 @@
+From e635ba4d0d20ff315c70d45e7382f5d9dbea80de Mon Sep 17 00:00:00 2001
+From: Tai Chi Minh Ralph Eastwood <caffe@disroot.org>
+Date: Mon, 27 Jan 2025 13:23:12 +0100
+Subject: [PATCH] Fix path handling in setup.py
+
+---
+ python/setup.py | 15 +++++++--------
+ 1 file changed, 7 insertions(+), 8 deletions(-)
+
+diff --git a/python/setup.py b/python/setup.py
+index 725ba0213..45e1b1d8e 100644
+--- a/python/setup.py
++++ b/python/setup.py
+@@ -47,7 +47,7 @@ class BackendInstaller:
+     def prepare(backend_name: str, backend_src_dir: str = None, is_external: bool = False):
+         # Initialize submodule if there is one for in-tree backends.
+         if not is_external:
+-            root_dir = os.path.join(os.pardir, "third_party")
++            root_dir = os.path.join(Path(__file__).parent.parent, "third_party")
+             assert backend_name in os.listdir(
+                 root_dir), f"{backend_name} is requested for install but not present in {root_dir}"
+ 
+@@ -71,7 +71,7 @@ class BackendInstaller:
+         for file in ["compiler.py", "driver.py"]:
+             assert os.path.exists(os.path.join(backend_path, file)), f"${file} does not exist in ${backend_path}"
+ 
+-        install_dir = os.path.join(os.path.dirname(__file__), "triton", "backends", backend_name)
++        install_dir = os.path.join(Path(__file__).parent, "triton", "backends", backend_name)
+         package_data = [f"{os.path.relpath(p, backend_path)}/*" for p, _, _, in os.walk(backend_path)]
+ 
+         language_package_data = []
+@@ -278,7 +278,6 @@ def download_and_copy(name, src_path, dst_path, variable, version, url_func):
+     triton_cache_path = get_triton_cache_path()
+     if variable in os.environ:
+         return
+-    base_dir = os.path.dirname(__file__)
+     system = platform.system()
+     try:
+         arch = {"x86_64": "64", "arm64": "aarch64", "aarch64": "aarch64"}[platform.machine()]
+@@ -287,7 +286,7 @@ def download_and_copy(name, src_path, dst_path, variable, version, url_func):
+     supported = {"Linux": "linux", "Darwin": "linux"}
+     url = url_func(supported[system], arch, version)
+     tmp_path = os.path.join(triton_cache_path, "nvidia", name)  # path to cache the download
+-    dst_path = os.path.join(base_dir, os.pardir, "third_party", "nvidia", "backend", dst_path)  # final binary path
++    dst_path = os.path.join(Path(__file__).parent.parent, "third_party", "nvidia", "backend", dst_path)  # final binary path
+     platform_name = "sbsa-linux" if arch == "aarch64" else "x86_64-linux"
+     src_path = src_path(platform_name, version) if callable(src_path) else src_path
+     src_path = os.path.join(tmp_path, src_path)
+@@ -312,7 +311,7 @@ def download_and_copy(name, src_path, dst_path, variable, version, url_func):
+ 
+ 
+ def get_base_dir():
+-    return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
++    return os.path.abspath(Path(__file__).parent.parent)
+ 
+ 
+ def get_cmake_dir():
+@@ -572,7 +571,7 @@ def add_link_to_backends():
+         if backend.language_dir:
+             # Link the contents of each backend's `language` directory into
+             # `triton.language.extra`.
+-            extra_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "triton", "language", "extra"))
++            extra_dir = os.path.abspath(os.path.join(Path(__file__).parent, "triton", "language", "extra"))
+             for x in os.listdir(backend.language_dir):
+                 src_dir = os.path.join(backend.language_dir, x)
+                 install_dir = os.path.join(extra_dir, x)
+@@ -584,8 +583,8 @@ def add_link_to_backends():
+ 
+ 
+ def add_link_to_proton():
+-    proton_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "third_party", "proton", "proton"))
+-    proton_install_dir = os.path.join(os.path.dirname(__file__), "triton", "profiler")
++    proton_dir = os.path.abspath(os.path.join(Path(__file__).parent.parent, "third_party", "proton", "proton"))
++    proton_install_dir = os.path.join(Path(__file__).parent, "triton", "profiler")
+     if os.path.islink(proton_install_dir):
+         os.unlink(proton_install_dir)
+     if os.path.exists(proton_install_dir):
+-- 
+2.47.1
+
