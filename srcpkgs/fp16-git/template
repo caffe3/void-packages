@@ -1,0 +1,22 @@
+# Template file for 'fp16-git'
+pkgname=fp16-git
+version=20240620
+revision=1
+_commit=98b0a46bce017382a6351a19577ec43a715b6835
+build_style=cmake
+configure_args="-DFP16_BUILD_BENCHMARKS=OFF -DFP16_BUILD_TESTS=OFF"
+hostmakedepends="git"
+short_desc="Conversion to/from half-precision floating point formats"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="MIT"
+homepage="https://github.com/Maratyszcza/fp16"
+
+do_fetch() {
+	git clone https://github.com/Maratyszcza/fp16 ${wrksrc}
+	cd ${wrksrc}
+	git checkout ${_commit}
+}
+
+post_install() {
+	vlicense LICENSE
+}
