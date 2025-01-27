@@ -1,0 +1,78 @@
+# Template file for 'gloo-git'
+_cudaver=12.6
+pkgname=gloo-git
+version=20241203
+revision=1
+_commit=dc507d1eb822c4396aaca284efff498aba33c7dc
+build_style=cmake
+configure_args+=" -DCUDAToolkit_ROOT=/opt/cuda-${_cudaver}"
+configure_args+=" -DGLOO_USE_CUDA_TOOLKIT=ON"
+configure_args+=" -DCMAKE_CUDA_COMPILER=/opt/cuda-${_cudaver}/bin/nvcc"
+configure_args+=" -DBUILD_TEST=OFF -DBUILD_BENCHMARK=OFF -DUSE_REDIS=ON -DUSE_IBVERBS=ON -DUSE_NCCL=ON -DUSE_CUDA=ON -DUSE_LIBUV=ON"
+hostmakedepends="git pkg-config"
+makedepends="libuv-devel nccl-devel cuda-minimal-build rdma-core-devel hiredis-devel"
+short_desc="Collective communications library with various primitives for multi-machine training"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="BSD-3-Clause"
+homepage="https://github.com/facebookincubator/gloo"
+
+if [ "$CROSS_BUILD" ]; then
+	export cmake_crossopts="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_HOST_SYSTEM_NAME=Linux"
+fi
+
+do_fetch() {
+	git clone https://github.com/facebookincubator/gloo ${wrksrc}
+	cd ${wrksrc}
+	git checkout ${_commit}
+}
+
+pre_configure() {
+	vsed -i 's/std=c++11/std=c++17/' CMakeLists.txt
+}
+
+do_configure() {
+	cmake -B build-shared -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=ON \
+		-Dlibuv_LIBRARY=/usr/lib/libuv.so \
+		$configure_args \
+		$cmake_crossopts
+
+	vsed -i 's/-fPIC//' CMakeLists.txt
+
+	cmake -B build-static -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=OFF \
+    -DCUDA_USE_STATIC_CUDA_RUNTIME=ON \
+		-Dlibuv_LIBRARY=/usr/lib/libuv.a \
+		$configure_args \
+		$cmake_crossopts
+}
+
+do_build() {
+	ninja -C build-shared
+	ninja -C build-static
+}
+
+do_install() {
+	DESTDIR=$DESTDIR ninja install -C build-static
+	DESTDIR=$DESTDIR ninja install -C build-shared
+}
+
+post_install() {
+	vlicense LICENSE
+}
+
+gloo-git-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/share/cmake
+		vmove "usr/lib/*.a"
+	}
+}

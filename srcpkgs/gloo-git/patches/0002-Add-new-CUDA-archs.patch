@@ -1,0 +1,25 @@
+From 4aca9574dab8d876ede452f038c0c4a878ab1fe5 Mon Sep 17 00:00:00 2001
+From: Tai Chi Minh Ralph Eastwood <caffe@disroot.org>
+Date: Mon, 27 Jan 2025 07:21:07 +0100
+Subject: [PATCH 2/2] Add new CUDA archs
+
+---
+ cmake/Cuda.cmake | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/cmake/Cuda.cmake b/cmake/Cuda.cmake
+index d2ca212..a8310ee 100644
+--- a/cmake/Cuda.cmake
++++ b/cmake/Cuda.cmake
+@@ -161,6 +161,8 @@ elseif(GLOO_CUDA_VERSION VERSION_LESS 11.0)
+   set(gloo_known_gpu_archs "35 50 52 60 61 70 75")
+ elseif(GLOO_CUDA_VERSION VERSION_LESS 12.0)
+   set(gloo_known_gpu_archs "35 50 52 60 61 70 75 80 86")
++elseif(GLOO_CUDA_VERSION VERSION_LESS 13.0)
++  set(gloo_known_gpu_archs "50 52 60 61 70 75 80 86 87 89 90 90a")
+ endif()
+ 
+ list(APPEND gloo_cuda_DEPENDENCY_LIBS ${GLOO_CUDA_LIBRARIES})
+-- 
+2.47.1
+
