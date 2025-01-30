@@ -1,0 +1,822 @@
+# Template file for 'cuda'
+pkgname=cuda
+_driverver=560.35.05
+version=12.6.3
+revision=1
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="custom:NVIDIA Proprietary"
+homepage="https://developer.nvidia.com/cuda-zone"
+short_desc="NVIDIA's GPU programming toolkit"
+
+archs="x86_64"
+nostrip=yes
+nopie=yes
+repository=nonfree
+create_wrksrc=yes
+hostmakedepends="tar xmlstarlet"
+
+build_style=meta
+
+_pkg="cuda_${version}_${_driverver}_linux"
+distfiles="https://developer.download.nvidia.com/compute/cuda/${version}/local_installers/${_pkg}.run"
+checksum=81d60e48044796d7883aa8a049afe6501b843f2c45639b3703b2378de30d55d3
+skip_extraction="cuda_${version}_${_driverver}_linux.run"
+
+_cudaver=${version}
+_cudadir="opt/cuda-${version%.*}"
+_nsightcomputever=2024.3.2.2
+_nsightsystemsver=2024.5.1.113
+python_version=3
+
+do_extract() {
+	sh "${XBPS_SRCDISTDIR}/${pkgname}-${version}/${_pkg}.run" --target "${wrksrc}" --noexec
+}
+
+do_configure() {
+	vsed -i "/.*unsupported GNU version.*/d"   builds/cuda_nvcc/targets/x86_64-linux/include/crt/host_config.h
+	vsed -i "/.*unsupported clang version.*/d" builds/cuda_nvcc/targets/x86_64-linux/include/crt/host_config.h
+}
+
+_desktop_files=(
+	nsight
+	nsight-compute
+	nsight-systems
+	nvvp
+)
+
+do_build() {
+	for desktop in "${_desktop_files[@]}"; do
+		xml sel -T -t -m "//desktopFile[@filename='$desktop']" \
+			-o "[Desktop Entry]" -n \
+			-o "Type=Application" -n \
+			-o "Name=NVIDIA " -v "@name" -n \
+			-o "GenericName=NVIDIA " -v "@name" -n \
+			-o "Icon=/${_cudadir}/" -v "concat(translate(substring-before(substring-before(@iconPath,'/'),'-20'),'-','_'), '/', substring-after(@iconPath,'/'))" -n \
+			-o "Exec=/${_cudadir}/" -v "concat(translate(substring-before(substring-before(@execPath,'/'),'-20'),'-','_'), '/', substring-after(@execPath,'/'))" -n \
+			-o "TryExec=/${_cudadir}/" -v "concat(translate(substring-before(substring-before(@tryExecPath,'/'),'-20'),'-','_'), '/', substring-after(@tryExecPath,'/'))" -n \
+			-o "Keywords=" -v "@keywords" -n \
+			-o "X-AppInstall-Keywords=" -v "@keywords" -n \
+			-o "X-GNOME-Keywords=" -v "@keywords" -n \
+			-o "Terminal=No" -n \
+			-o "Categories=" -v "@categories" \
+		"${wrksrc}/manifests/cuda_x86_64.xml" > ${desktop}.desktop
+	done
+
+	echo "export PATH=${_cudadir}:\${PATH}" > "${wrksrc}/cuda.sh"
+	echo "export PATH=${_cudadir}/nsight-compute-${_nsightcomputever%.*}:\${PATH}" > "${wrksrc}/nsight-compute.sh"
+	echo "export PATH=${_cudadir}/nsight-systems-${_nsightsystemsver%.*}:\${PATH}" > "${wrksrc}/nsight-systems.sh"
+
+	find ${wrksrc}/builds -name 'libstdc++.so.6' -exec rm {} \;
+
+	cat <<-_EOF > "${wrksrc}/cuda.conf"
+	/${_cudadir}/lib64
+	/${_cudadir}/nvvm/lib64
+	/${_cudadir}/extras/CUPTI/lib64
+	_EOF
+}
+
+do_install() {
+	_builds=(
+		cuda_cccl
+		cuda_cudart
+		cuda_cuobjdump
+		cuda_cupti
+		cuda_cuxxfilt
+		cuda_demo_suite
+		cuda_documentation
+		cuda_gdb
+		cuda_nsight
+		cuda_nvcc
+		cuda_nvdisasm
+		cuda_nvml_dev
+		cuda_nvprof
+		cuda_nvprune
+		cuda_nvrtc
+		cuda_nvtx
+		cuda_nvvp
+		cuda_opencl
+		cuda_profiler_api
+		cuda_sanitizer_api
+		libcublas
+		libcufft
+		libcufile
+		libcurand
+		libcusolver
+		libcusparse
+		libnpp
+		libnvfatbin
+		libnvjitlink
+		libnvjpeg
+	)
+
+	vmkdir "${_cudadir}/bin"
+
+	for build in "${_builds[@]}"; do
+		vcopy ${wrksrc}/builds/$build/* "${_cudadir}"
+	done
+
+	vcopy ${wrksrc}/builds/nsight_compute "${_cudadir}/nsight-compute-${_nsightcomputever%.*}"
+	vcopy ${wrksrc}/builds/nsight_systems "${_cudadir}/nsight-systems-${_nsightsystemsver%.*}"
+	vcopy "${wrksrc}/builds/integration/nsight-compute/*" "${_cudadir}/bin"
+	vcopy "${wrksrc}/builds/integration/nsight-systems/*" "${_cudadir}/bin"
+
+	vinstall ${wrksrc}/cuda.sh 644 etc/profile.d
+	vinstall ${wrksrc}/nsight-systems.sh 644 etc/profile.d
+	vinstall ${wrksrc}/nsight-compute.sh 644 etc/profile.d
+	vinstall ${wrksrc}/cuda.conf 644 etc/ld.so.conf.d
+
+	vmkdir usr/share/applications
+	for desktop in "${_desktop_files[@]}"; do
+		vinstall ${desktop}.desktop 644 usr/share/applications
+	done
+	vlicense builds/EULA.txt
+
+	rm -f ${DESTDIR}/${_cudadir}/bin/cuda-uninstaller
+	rm -f ${DESTDIR}/${_cudadir}/bin/cuda-gdb-python3.{8,9,10,12}-tui
+	rm -f ${DESTDIR}/${_cudadir}/bin/gds-${version%.*}/changelog
+	rm -f ${DESTDIR}/${_cudadir}/extras/cuda-gdb-*.tar.gz
+	rm -rf ${DESTDIR}/${_cudadir}/gds-*
+	rm -f ${DESTDIR}/${_cudadir}/cublas_version.txt
+
+	ln -s lib64 ${DESTDIR}/${_cudadir}/lib
+	ln -s nsight-compute-${_nsightcomputever%.*} ${DESTDIR}/${_cudadir}/nsight-compute
+	ln -s nsight-systems-${_nsightsystemsver%.*} ${DESTDIR}/${_cudadir}/nsight-systems
+}
+
+cuda-common_package() {
+	short_desc+=" - common files"
+	alternatives="cuda:${_cudadir%-*}:${_cudadir} cuda-${version%%.*}:${_cudadir%%.*}:${_cudadir}"
+	pkg_install() {
+		vmove etc/profile.d/cuda.sh
+		vmove etc/ld.so.conf.d/cuda.conf
+		vmove ${_cudadir}/include
+		vmove ${_cudadir}/lib64
+		vmove ${_cudadir}/lib
+		vmove ${_cudadir}/EULA.txt
+		vmove ${_cudadir}/LICENSE
+		vmove usr/share/licenses/cuda
+	}
+}
+
+cuda-cccl_package() {
+	short_desc+=" - CUDA C++ Core Compute Libraries"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/include/cub
+		vmove ${_cudadir}/targets/x86_64-linux/include/cuda
+		vmove ${_cudadir}/targets/x86_64-linux/include/nv
+		vmove ${_cudadir}/targets/x86_64-linux/include/thrust
+		vmove ${_cudadir}/targets/x86_64-linux/lib/cmake
+	}
+}
+
+cuda-cudart-devel_package() {
+	short_desc+=" - CUDA Runtime (cudart) - development files"
+	depends="cuda-cudart>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		_cudart_include_files=(
+			builtin_types.h
+			channel_descriptor.h
+			common_functions.h
+			cooperative_groups
+			cooperative_groups.h
+			cuComplex.h
+			cuda.h
+			cudaEGL.h
+			cudaEGLTypedefs.h
+			cudaGL.h
+			cudaGLTypedefs.h
+			cudaProfilerTypedefs.h
+			cudaTypedefs.h
+			cudaVDPAU.h
+			cudaVDPAUTypedefs.h
+			cuda_awbarrier.h
+			cuda_awbarrier_helpers.h
+			cuda_awbarrier_primitives.h
+			cuda_bf16.h
+			cuda_bf16.hpp
+			cuda_device_runtime_api.h
+			cuda_egl_interop.h
+			cuda_fp16.h
+			cuda_fp16.hpp
+			cuda_fp8.h
+			cuda_fp8.hpp
+			cuda_gl_interop.h
+			cuda_occupancy.h
+			cuda_pipeline.h
+			cuda_pipeline_helpers.h
+			cuda_pipeline_primitives.h
+			cuda_runtime.h
+			cuda_runtime_api.h
+			cuda_surface_types.h
+			cuda_texture_types.h
+			cuda_vdpau_interop.h
+			cudart_platform.h
+			device_atomic_functions.h
+			device_atomic_functions.hpp
+			device_double_functions.h
+			device_functions.h
+			device_launch_parameters.h
+			device_types.h
+			driver_functions.h
+			driver_types.h
+			host_config.h
+			host_defines.h
+			library_types.h
+			math_constants.h
+			math_functions.h
+			mma.h
+			nvfunctional
+			sm_20_atomic_functions.h
+			sm_20_atomic_functions.hpp
+			sm_20_intrinsics.h
+			sm_20_intrinsics.hpp
+			sm_30_intrinsics.h
+			sm_30_intrinsics.hpp
+			sm_32_atomic_functions.h
+			sm_32_atomic_functions.hpp
+			sm_32_intrinsics.h
+			sm_32_intrinsics.hpp
+			sm_35_atomic_functions.h
+			sm_35_intrinsics.h
+			sm_60_atomic_functions.h
+			sm_60_atomic_functions.hpp
+			sm_61_intrinsics.h
+			sm_61_intrinsics.hpp
+			surface_functions.h
+			surface_indirect_functions.h
+			surface_types.h
+			texture_fetch_functions.h
+			texture_indirect_functions.h
+			texture_types.h
+			vector_functions.h
+			vector_functions.hpp
+			vector_types.h
+		)
+		for _file in "${_cudart_include_files[@]}"; do
+			vmove ${_cudadir}/targets/x86_64-linux/include/${_file}
+		done
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libcudadevrt.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libcudart.so
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libcudart_static.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libculibos.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/stubs/libcuda.so
+	}
+}
+
+cuda-nvml-devel_package() {
+	short_desc+=" - CUDA NVML Headers - development files"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/nvml
+		vmove ${_cudadir}/targets/x86_64-linux/include/nvml.h
+		vmove ${_cudadir}/targets/x86_64-linux/lib/stubs/libnvidia-ml.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/stubs/libnvidia-ml.so
+	}
+}
+
+cuda-nvrtc-devel_package() {
+	short_desc+=" - CUDA NVRTC - development files"
+	depends="cuda-nvrtc>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/include/nvrtc.h
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvrtc-builtins.so
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvrtc-builtins_static.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvrtc.so
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvrtc_static.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/stubs/libnvrtc.so
+	}
+}
+
+cuda-opencl-devel_package() {
+	short_desc+=" - CUDA OpenCL - development files"
+	depends="cuda-opencl>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/include/CL
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libOpenCL.so
+	}
+}
+
+cuda-profiler-api_package() {
+	short_desc+=" - CUDA Profiler API Headers"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/include/cudaProfiler.h
+		vmove ${_cudadir}/targets/x86_64-linux/include/cuda_profiler_api.h
+	}
+}
+
+libcublas-devel_package() {
+	short_desc+=" - CUDA cuBLAS - development files"
+	depends="libcublas>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/src/fortran.c
+		vmove ${_cudadir}/src/fortran.h
+		vmove ${_cudadir}/src/fortran_common.h
+		vmove ${_cudadir}/src/fortran_thunking.c
+		vmove ${_cudadir}/src/fortran_thunking.h
+		vmove "${_cudadir}/targets/x86_64-linux/include/cublas*.h"
+		vmove ${_cudadir}/targets/x86_64-linux/include/nvblas.h
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcublas*.so"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcublas*_static.a"
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvblas.so
+		vmove "${_cudadir}/targets/x86_64-linux/lib/stubs/libcublas*.so"
+	}
+}
+
+libcufft-devel_package() {
+	short_desc+=" - CUDA cuFFT - development files"
+	depends="libcufft>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/include/cudalibxt.h
+		vmove "${_cudadir}/targets/x86_64-linux/include/cufft*.h"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcufft*.so"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcufft*_static*.a"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/stubs/libcufft*.so"
+	}
+}
+
+libcufile-devel_package() {
+	short_desc+=" - GPUDirect Storage (cufile) - development files"
+	depends="libcufile>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/gds
+		vmove ${_cudadir}/targets/x86_64-linux/include/cufile.h
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcufile*.so"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcufile*.a"
+	}
+}
+
+libcurand-devel_package() {
+	short_desc+=" - CUDA cuRAND - development files"
+	depends="libcurand>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/include/curand*.h"
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libcurand.so
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libcurand_static.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/stubs/libcurand.so
+	}
+}
+
+libcusolver-devel_package() {
+	short_desc+=" - CUDA cuSOLVER - development files"
+	depends="libcusolver>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/include/cusolver*.h"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcusolver*.so"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcusolver*.a"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libmetis_static.a"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/stubs/libcusolver*.so"
+	}
+}
+
+libcusparse-devel_package() {
+	short_desc+=" - CUDA cuSPARSE - development files"
+	depends="libcusparse>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/src/cusparse_fortran.c
+		vmove ${_cudadir}/src/cusparse_fortran.h
+		vmove ${_cudadir}/src/cusparse_fortran_common.h
+		vmove "${_cudadir}/targets/x86_64-linux/include/cusparse*.h"
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libcusparse.so
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libcusparse_static.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/stubs/libcusparse.so
+	}
+}
+
+libnpp-devel_package() {
+	short_desc+=" - CUDA NPP - development files"
+	depends="libnpp>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/include/npp*.h"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libnpp*.so"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libnpp*_static.a"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/stubs/libnpp*.so"
+	}
+}
+
+libnvfatbin-devel_package() {
+	short_desc+=" - Fatbin interaction library - development files"
+	depends="libnvfatbin>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/include/nvFatbin.h
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvfatbin.so
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvfatbin_static.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/stubs/libnvfatbin.so
+		vmove ${_cudadir}/pkg-config/nvfatbin-12.6.pc
+	}
+}
+
+libnvjitlink-devel_package() {
+	short_desc+=" - JIT Linker Library - development files"
+	depends="libnvjitlink>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/include/nvJitLink.h
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvJitLink.so
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvJitLink_static.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/stubs/libnvJitLink.so
+		vmove ${_cudadir}/pkg-config/nvjitlink-12.6.pc
+	}
+}
+
+libnvjpeg-devel_package() {
+	short_desc+=" - CUDA nvJPEG - development files"
+	depends="libnvjpeg>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/include/nvjpeg.h
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvjpeg.so
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvjpeg_static.a
+		vmove ${_cudadir}/targets/x86_64-linux/lib/stubs/libnvjpeg.so
+	}
+}
+
+cuda-cudart_package() {
+	short_desc+=" - CUDA Runtime (cudart)"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libcudart.so.*
+	}
+}
+
+cuda-nvrtc_package() {
+	short_desc+=" - CUDA NVRTC"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvrtc*.so.*
+	}
+}
+
+cuda-opencl_package() {
+	short_desc+=" - CUDA OpenCL"
+	depends="cuda-common>=${_cudaver}_${revision} nvidia-opencl>=${_driverver}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libOpenCL.so.*
+	}
+}
+
+libcublas_package() {
+	short_desc+=" - CUDA cuBLAS"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcublas.so.*"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcublasLt.so.*"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libnvblas.so.*"
+	}
+}
+
+libcufft_package() {
+	short_desc+=" - CUDA cuFFT"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcufft.so.*"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcufftw.so.*"
+	}
+}
+
+libcufile_package() {
+	short_desc+=" - GPUDirect Storage (cufile)"
+	depends="cuda-common>=${_cudaver}_${revision} rdma-core"
+	nostrip=yes
+	pkg_install() {
+		vlicense builds/libcufile/gds-12.6/copyright
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcufile.so.*"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcufile_rdma.so.*"
+	}
+}
+
+libcurand_package() {
+	short_desc+=" - CUDA cuRAND"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcurand.so.*"
+	}
+}
+
+libcusolver_package() {
+	short_desc+=" - CUDA cuSOLVER"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcusolver.so.*"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcusolverMg.so.*"
+	}
+}
+
+libcusparse_package() {
+	short_desc+=" - CUDA cuSPARSE"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcusparse.so.*"
+	}
+}
+
+libnpp_package() {
+	short_desc+=" - CUDA NPP"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libnpp*.so.*"
+	}
+}
+
+libnvfatbin_package() {
+	short_desc+=" - Fatbin interaction library"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libnvfatbin.so.*"
+	}
+}
+
+libnvjitlink_package() {
+	short_desc+=" - JIT Linker Library"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libnvJitLink.so.*"
+	}
+}
+
+libnvjpeg_package() {
+	short_desc+=" - CUDA nvJPEG"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libnvjpeg.so.*"
+	}
+}
+
+cuda-cupti_package() {
+	short_desc+=" - CUPTI"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/extras/CUPTI
+	}
+}
+
+cuda-gdb_package() {
+	short_desc+=" - CUDA GDB"
+	depends="cuda-common>=${_cudaver}_${revision} nvdisasm cuda-cuobjdump"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/cuda-gdb
+		vmove ${_cudadir}/bin/cuda-gdb-minimal
+		vmove ${_cudadir}/bin/cuda-gdb-python3.11-tui
+		vmove ${_cudadir}/bin/cuda-gdbserver
+		vmove ${_cudadir}/extras/Debugger
+		vmove ${_cudadir}/share/gdb
+	}
+}
+
+nvdisasm_package() {
+	short_desc+=" - CUDA nvdisasm"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/nvdisasm
+	}
+}
+
+nvprof_package() {
+	short_desc+=" - CUDA nvprof"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/nvprof
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libaccinj64.so*"
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libcuinj64.so*"
+	}
+}
+
+nvtx_package() {
+	short_desc+=" - CUDA NVTX"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/lib/libnvToolsExt.so.*"
+	}
+}
+
+nvtx-devel_package() {
+	short_desc+=" - CUDA NVTX - development files"
+	depends="nvtx>=${version}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove "${_cudadir}/targets/x86_64-linux/include/nvToolsExt*.h"
+		vmove ${_cudadir}/targets/x86_64-linux/include/nvtx3
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvToolsExt.so
+	}
+}
+
+compute-sanitizer_package() {
+	short_desc+=" - CUDA Compute Sanitizer API"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/compute-sanitizer
+	}
+}
+
+nsight_package() {
+	short_desc+=" - Nsight Eclipse Plugins"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/nsight_ee_plugins_manage.sh
+		vmove ${_cudadir}/nsightee_plugins
+		vmove usr/share/applications/nsight.desktop
+	}
+}
+
+nvvp_package() {
+	short_desc+=" - CUDA NVVP"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/computeprof
+		vmove ${_cudadir}/bin/nvvp
+		vmove ${_cudadir}/libnvvp
+		vmove usr/share/applications/nvvp.desktop
+	}
+}
+
+nsight-compute_package() {
+	short_desc+=" - Nsight Compute"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vlicense builds/nsight_compute/EULA.txt
+		vmove etc/profile.d/nsight-compute.sh
+		vmove ${_cudadir}/nsight-compute-${_nsightcomputever%.*}
+		vmove ${_cudadir}/nsight-compute
+		vmove usr/share/applications/nsight-compute.desktop
+	}
+}
+
+cuda-nsight-compute-integration_package() {
+	short_desc+=" - Nsight Compute"
+	depends="nsight-compute"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/ncu
+		vmove ${_cudadir}/bin/ncu-ui
+	}
+}
+
+nsight-systems_package() {
+	short_desc+=" - Nsight Systems"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vlicense builds/nsight_systems/EULA.txt
+		vmove etc/profile.d/nsight-systems.sh
+		vmove ${_cudadir}/nsight-systems-${_nsightsystemsver%.*}
+		vmove ${_cudadir}/nsight-systems
+		vmove usr/share/applications/nsight-systems.desktop
+	}
+}
+
+cuda-nsight-systems-integration_package() {
+	short_desc+=" - Nsight Systems"
+	depends="nsight-systems"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/nsight-sys
+		vmove ${_cudadir}/bin/nsys
+		vmove ${_cudadir}/bin/nsys-ui
+	}
+}
+
+cuda-cuobjdump_package() {
+	short_desc+=" - cuobjdump"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/cuobjdump
+	}
+}
+
+cuda-cuxxfilt_package() {
+	short_desc+=" - CUDA cu++filt"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/cu++filt
+		vmove ${_cudadir}/targets/x86_64-linux/include/nv_decode.h
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libcufilt.a
+	}
+}
+
+cuda-nvcc_package() {
+	short_desc+=" - CUDA NVCC"
+	depends="cuda-common>=${_cudaver}_${revision} gcc"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/__nvcc_device_query
+		vmove ${_cudadir}/bin/bin2c
+		vmove ${_cudadir}/bin/cudafe++
+		vmove ${_cudadir}/bin/fatbinary
+		vmove ${_cudadir}/bin/nvcc
+		vmove ${_cudadir}/bin/nvcc.profile
+		vmove ${_cudadir}/bin/nvlink
+		vmove ${_cudadir}/bin/ptxas
+		vmove ${_cudadir}/targets/x86_64-linux/include/fatbinary_section.h
+		vmove ${_cudadir}/targets/x86_64-linux/include/nvPTXCompiler.h
+		vmove ${_cudadir}/targets/x86_64-linux/lib/libnvptxcompiler_static.a
+	}
+}
+
+cuda-nvvm_package() {
+	short_desc+=" - CUDA NVCC"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/nvvm
+	}
+}
+
+cuda-crt_package() {
+	short_desc+=" - CUDA NVCC"
+	depends="cuda-cudart-devel"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/crt
+		vmove ${_cudadir}/targets/x86_64-linux/include/crt
+	}
+}
+
+cuda-nvprune_package() {
+	short_desc+=" - CUDA nvprune"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	pkg_install() {
+		vmove ${_cudadir}/bin/nvprune
+	}
+}
+
+cuda-demo-suite_package() {
+	short_desc+=" - CUDA Demo Suite"
+	depends="cuda-common>=${_cudaver}_${revision} libstdc++"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/extras/demo_suite
+	}
+}
+
+cuda-documentation_package() {
+	short_desc+=" - CUDA Documentation"
+	depends="cuda-common>=${_cudaver}_${revision}"
+	nostrip=yes
+	noshlibprovides=yes
+	pkg_install() {
+		vmove ${_cudadir}/CUDA_Toolkit_Release_Notes.txt
+		vmove ${_cudadir}/DOCS
+		vmove ${_cudadir}/README
+		vmove ${_cudadir}/tools
+	}
+}
