@@ -1,0 +1,63 @@
+# Template file for 'ucx'
+pkgname=ucx
+version=1.18.0
+revision=1
+build_style=gnu-configure
+configure_args="
+ --with-cuda=/opt/cuda-12.6
+ --with-verbs
+ --with-rc
+ --with-ud
+ --with-dc
+ --with-mlx5-dv
+ --enable-mt"
+hostmakedepends="automake libtool pkg-config cuda-nvcc"
+makedepends="rdma-core-devel zlib-devel libzstd-devel cuda-crt cuda-nvml-devel libgomp-devel"
+short_desc="Unified Communication X for data-centric and high-performance applications"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="BSD-3-Clause"
+homepage="https://openucx.org/"
+distfiles="https://github.com/openucx/ucx/archive/refs/tags/v${version}.tar.gz"
+distfiles="https://github.com/openucx/ucx/releases/download/v${version}/ucx-${version}.tar.gz"
+checksum=fa75070f5fa7442731b4ef5fc9549391e147ed3d859afeb1dad2d4513b39dc33
+
+post_install() {
+	vlicense LICENSE
+}
+
+ucx-xpmem() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - XPMEM support"
+	pkg_install() {
+		vmove "usr/lib/ucx/*xpmem*"
+	}
+}
+
+ucx-cuda() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - CUDA support"
+	pkg_install() {
+		vmove "usr/lib/ucx/*xpmem*"
+		vmove "usr/lib/ucx/libucx_perftest_cuda.*"
+		vmove "usr/lib/ucx/libuc*_cuda.*"
+	}
+}
+
+ucx-gdrcopy() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - CUDA support"
+	pkg_install() {
+		vmove "usr/lib/ucx/libuct_cuda_gdrcopy.*"
+	}
+}
+
+ucx-devel_package() {
+	depends="${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/lib/pkgconfig
+		vmove "usr/lib/*.so"
+		vmove "usr/lib/*.a"
+	}
+}
