@@ -1,0 +1,70 @@
+# Template file for 'bitwuzla'
+pkgname=bitwuzla
+version=0.7.0
+revision=1
+build_style=meson
+configure_args="-Ddefault_library=shared -Dpython=true -Ddocs=false
+ -Dfpexp=true -Dkissat=false -Dtesting=disabled --buildtype=release"
+hostmakedepends="cmake pkg-config git python3-Cython python3-devel python3-pytest"
+# doxygen python3-Sphinx python3-breathe python3-pytest python3-sphinx_rtd_theme python3-sphinx-tabs python3-sphinxcontrib-bibtex
+makedepends="gmpxx-devel gmp-devel cadical-devel symfpu-cvc5-git-devel gtest-devel python3-devel"
+short_desc="SMT solver for bit-vectors, FP, arrays and uninterpreted functions"
+maintainer="Tai Chi Minh Ralph Eastwood <caffe@disroot.org>"
+license="MIT"
+homepage="https://bitwuzla.github.io"
+distfiles="https://github.com/bitwuzla/bitwuzla/archive/refs/tags/${version}.tar.gz"
+checksum="4a388aa935fab5fe3e61494f94c1110653ac11e07f1cf29593d6fdba30238afa"
+python_version=3
+make_check=no
+
+post_install() {
+	vlicense COPYING
+	vdoc CONTRIBUTING.md
+	vdoc NEWS.md
+}
+
+#bitwuzla-doc_package() {
+#	short_desc+=" - documentation"
+#	pkg_install() {
+#		cd "${wrksrc}/build/docs"
+#		# Install documentation files
+#		vmkdir usr/share/doc/bitwuzla/html
+#		for f in $(find . \
+#			-not -path "./.*" \
+#			-not -path "./_sources*" \
+#			-not -path "./conf.py" \
+#			-not -path "./cli_usage.txt" \
+#			-not -path "./c/xml*" \
+#			-not -path "./c/Doxyfile" \
+#			-not -path "./cpp/xml*" \
+#			-not -path "./cpp/Doxyfile"); do
+#			vinstall "$f" 644 usr/share/doc/bitwuzla/html
+#		done
+#		vinstall "cli_usage.txt" 644 usr/share/doc/bitwuzla
+#		vlicense "${wrksrc}/COPYING"
+#		vdoc "${wrksrc}/CONTRIBUTING.md"
+#	}
+#}
+
+bitwuzla-libs_package() {
+	short_desc+=" - runtime libraries"
+	pkg_install() {
+		vmove usr/lib/*.so*
+	}
+}
+
+bitwuzla-devel_package() {
+	depends="${sourcepkg}-libs>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+	}
+}
+
+bitwuzla-python_package() {
+	depends="python3 ${sourcepkg}>=${version}"
+	short_desc+=" - Python bindings"
+	pkg_install() {
+		vmove "${py3_lib}"
+	}
+}
