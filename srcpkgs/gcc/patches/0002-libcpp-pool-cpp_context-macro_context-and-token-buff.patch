@@ -1,0 +1,170 @@
+From a0c941c3b83a874b007937cf653e8692b0807224 Mon Sep 17 00:00:00 2001
+From: Tai Chi Minh Ralph Eastwood <caffe@disroot.org>
+Date: Fri, 13 Feb 2026 07:32:29 +0100
+Subject: [PATCH 2/3] libcpp: pool cpp_context, macro_context, and token
+ buffers for reuse
+
+Add freelists for cpp_context and macro_context to cpp_reader, and
+release token buffers to the existing free_buffs chain instead of
+permanently freeing them.  This eliminates the malloc/free pair that
+previously occurred on every macro expansion push/pop cycle.
+
+- next_context() pulls from context_freelist before calling XNEW
+- _cpp_pop_context() returns contexts and macro_contexts to freelists
+  instead of calling free(), and returns token buffers via
+  _cpp_release_buff instead of _cpp_free_buff
+- push_extended_tokens_context() pulls from mc_freelist before XNEW
+- cpp_destroy() frees both freelists at cleanup
+
+For metalang99-style workloads with thousands of rapid context
+push/pop cycles, this significantly reduces allocator pressure.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ libcpp/init.cc    | 15 +++++++++++++++
+ libcpp/internal.h | 11 ++++++++++-
+ libcpp/macro.cc   | 38 ++++++++++++++++++++++++++++++--------
+ 3 files changed, 55 insertions(+), 9 deletions(-)
+
+diff --git a/libcpp/init.cc b/libcpp/init.cc
+index a480d1d4a26..80b01892b52 100644
+--- a/libcpp/init.cc
++++ b/libcpp/init.cc
+@@ -401,6 +401,21 @@ cpp_destroy (cpp_reader *pfile)
+       free (context);
+     }
+ 
++  for (context = pfile->context_freelist; context; context = contextn)
++    {
++      contextn = context->next;
++      free (context);
++    }
++
++  {
++    macro_context *mc, *mcn;
++    for (mc = pfile->mc_freelist; mc; mc = mcn)
++      {
++	mcn = mc->next_free;
++	free (mc);
++      }
++  }
++
+   if (pfile->comments.entries)
+     {
+       for (i = 0; i < pfile->comments.count; i++)
+diff --git a/libcpp/internal.h b/libcpp/internal.h
+index 017e980a964..a2bec4b4d2f 100644
+--- a/libcpp/internal.h
++++ b/libcpp/internal.h
+@@ -159,7 +159,7 @@ struct tokenrun
+ /* This describes some additional data that is added to the macro
+    token context of type cpp_context, when -ftrack-macro-expansion is
+    on.  */
+-typedef struct
++typedef struct macro_context_st
+ {
+   /* The node of the macro we are referring to.  */
+   cpp_hashnode *macro_node;
+@@ -172,6 +172,8 @@ typedef struct
+      to iterate over the virtual locations while we iterate over the
+      tokens they belong to.  */
+   location_t *cur_virt_loc;
++  /* Link for the freelist in cpp_reader.  */
++  struct macro_context_st *next_free;
+ } macro_context;
+ 
+ /* The kind of tokens carried by a cpp_context.  */
+@@ -449,6 +451,13 @@ struct cpp_reader
+   struct cpp_context base_context;
+   struct cpp_context *context;
+ 
++  /* Free list of cpp_context structures for reuse.  Avoids
++     malloc/free per macro expansion during heavy preprocessing.  */
++  struct cpp_context *context_freelist;
++
++  /* Free list of macro_context structures for reuse.  */
++  struct macro_context_st *mc_freelist;
++
+   /* If in_directive, the directive if known.  */
+   const struct directive *directive;
+ 
+diff --git a/libcpp/macro.cc b/libcpp/macro.cc
+index 166f2493e76..d3bc76a7c2d 100644
+--- a/libcpp/macro.cc
++++ b/libcpp/macro.cc
+@@ -2565,7 +2565,15 @@ next_context (cpp_reader *pfile)
+ 
+   if (result == 0)
+     {
+-      result = XNEW (cpp_context);
++      /* Try to recycle from the freelist before allocating.  */
++      if (pfile->context_freelist)
++	{
++	  result = pfile->context_freelist;
++	  pfile->context_freelist = result->next;
++	}
++      else
++	result = XNEW (cpp_context);
++
+       memset (result, 0, sizeof (cpp_context));
+       result->prev = pfile->context;
+       result->next = 0;
+@@ -2642,10 +2650,17 @@ push_extended_tokens_context (cpp_reader *pfile,
+   context->tokens_kind = TOKENS_KIND_EXTENDED;
+   context->buff = token_buff;
+ 
+-  m = XNEW (macro_context);
++  if (pfile->mc_freelist)
++    {
++      m = pfile->mc_freelist;
++      pfile->mc_freelist = m->next_free;
++    }
++  else
++    m = XNEW (macro_context);
+   m->macro_node = macro;
+   m->virt_locs = virt_locs;
+   m->cur_virt_loc = virt_locs;
++  m->next_free = NULL;
+   context->c.mc = m;
+   FIRST (context).ptoken = first;
+   LAST (context).ptoken = first + count;
+@@ -2968,7 +2983,9 @@ _cpp_pop_context (cpp_reader *pfile)
+ 	      free (mc->virt_locs);
+ 	      mc->virt_locs = NULL;
+ 	    }
+-	  free (mc);
++	  /* Return to freelist instead of freeing.  */
++	  mc->next_free = pfile->mc_freelist;
++	  pfile->mc_freelist = mc;
+ 	  context->c.mc = NULL;
+ 	}
+       else
+@@ -2996,15 +3013,20 @@ _cpp_pop_context (cpp_reader *pfile)
+ 
+   if (context->buff)
+     {
+-      /* Decrease memory peak consumption by freeing the memory used
+-	 by the context.  */
+-      _cpp_free_buff (context->buff);
++      /* Return the buffer to the free list for reuse rather than
++	 permanently freeing it.  This trades slightly higher peak
++	 memory for significantly reduced malloc/free traffic during
++	 heavy macro expansion (e.g. metalang99-style workloads).  */
++      _cpp_release_buff (pfile, context->buff);
+     }
+ 
+   pfile->context = context->prev;
+-  /* Decrease peak memory consumption by freeing the context.  */
+   pfile->context->next = NULL;
+-  free (context);
++
++  /* Return to freelist instead of freeing.  Avoids malloc/free
++     churn during heavy macro expansion.  */
++  context->next = pfile->context_freelist;
++  pfile->context_freelist = context;
+ }
+ 
+ /* Return TRUE if we reached the end of the set of tokens stored in
+-- 
+2.51.2
+

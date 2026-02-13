@@ -1,0 +1,52 @@
+From c114d33fbda6258fef1f8ba5b0123e3b4b3d4819 Mon Sep 17 00:00:00 2001
+From: Tai Chi Minh Ralph Eastwood <caffe@disroot.org>
+Date: Fri, 13 Feb 2026 07:32:38 +0100
+Subject: [PATCH 3/3] libcpp: improve hash finalizer for better distribution
+
+Replace the trivial HT_HASHFINISH(r, len) = r + len with an avalanche
+mixing function (xor-shift-multiply).  This ensures that differences
+in the low-order bits of the hash accumulator -- such as those from
+the trailing digits of identifiers sharing a long common prefix
+(e.g. ML99_PRIV_REC_0 through ML99_PRIV_REC_1023) -- are distributed
+across all bits, reducing hash table collision chains.
+
+The new finalizer uses a well-known integer hash mixing constant
+(0x45d9f3b) and is implemented as a portable static inline function
+wrapped by the existing macro interface.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ libcpp/include/symtab.h | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/libcpp/include/symtab.h b/libcpp/include/symtab.h
+index 659ee0184e1..8af1db20cea 100644
+--- a/libcpp/include/symtab.h
++++ b/libcpp/include/symtab.h
+@@ -88,7 +88,22 @@ inline hashnode ht_lookup (cpp_hash_table *ht, const ht_identifier &id,
+ }
+ 
+ #define HT_HASHSTEP(r, c) ((r) * 67 + ((c) - 113));
+-#define HT_HASHFINISH(r, len) ((r) + (len))
++
++/* Finalize the hash with an avalanche mixing step.  This ensures that
++   differences in the low-order bits of the accumulator (e.g. from
++   trailing characters of identifiers sharing a long common prefix like
++   ML99_PRIV_REC_0 .. ML99_PRIV_REC_1023) are distributed across all
++   bits, reducing hash table collisions.  */
++static inline unsigned int
++ht_hashfinish (unsigned int r, unsigned int len)
++{
++  unsigned int h = r + len;
++  h ^= h >> 16;
++  h *= 0x45d9f3bU;
++  h ^= h >> 16;
++  return h;
++}
++#define HT_HASHFINISH(r, len) ht_hashfinish ((r), (len))
+ 
+ /* For all nodes in TABLE, make a callback.  The callback takes
+    TABLE->PFILE, the node, and a PTR, and the callback sequence stops
+-- 
+2.51.2
+

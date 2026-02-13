@@ -1,0 +1,133 @@
+From 9f82b04c4ee2dcef224d050d29239095fee91b38 Mon Sep 17 00:00:00 2001
+From: Tai Chi Minh Ralph Eastwood <caffe@disroot.org>
+Date: Fri, 13 Feb 2026 07:32:10 +0100
+Subject: [PATCH 1/3] libcpp: add fast path for token pasting of identifiers
+
+Add paste_tokens_fast() that bypasses the full lexer round-trip
+(cpp_push_buffer / _cpp_clean_line / _cpp_lex_direct / _cpp_pop_buffer)
+for the common case where ## produces a valid C identifier.  Instead,
+it concatenates the raw spellings, validates all characters are ISIDNUM
+with an ISIDST start, computes the hash inline, and looks up the
+hashnode directly via ht_lookup_with_hash.
+
+This is the highest-impact optimization for metalang99-style workloads
+where every reduction step dispatches through ## (e.g. ML99_PRIV_REC_##N).
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ libcpp/macro.cc | 92 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 92 insertions(+)
+
+diff --git a/libcpp/macro.cc b/libcpp/macro.cc
+index c29a34302b6..166f2493e76 100644
+--- a/libcpp/macro.cc
++++ b/libcpp/macro.cc
+@@ -1021,6 +1021,94 @@ stringify_arg (cpp_reader *pfile, const cpp_token **first, unsigned int count)
+   return new_string_token (pfile, dest - len, len);
+ }
+ 
++/* Fast path for pasting two tokens that produce a valid identifier.
++   Avoids the full lexer round-trip (push_buffer/lex_direct/pop_buffer)
++   for the common case of IDENT ## IDENT, IDENT ## NUMBER, or
++   NUMBER ## IDENT where the result is a valid C identifier.
++   Returns true and updates *PLHS on success; false to fall through
++   to the general lexer-based path.  */
++static bool
++paste_tokens_fast (cpp_reader *pfile, const cpp_token **plhs,
++		   const cpp_token *rhs)
++{
++  const unsigned char *lhs_str, *rhs_str;
++  unsigned int lhs_len, rhs_len;
++  unsigned char buf[256];
++
++  /* Get raw string and length for the LHS token.  */
++  if ((*plhs)->type == CPP_NAME)
++    {
++      cpp_hashnode *sp = (*plhs)->val.node.spelling;
++      lhs_str = NODE_NAME (sp);
++      lhs_len = NODE_LEN (sp);
++    }
++  else if ((*plhs)->type == CPP_NUMBER)
++    {
++      lhs_str = (*plhs)->val.str.text;
++      lhs_len = (*plhs)->val.str.len;
++    }
++  else
++    return false;
++
++  /* Get raw string and length for the RHS token.  */
++  if (rhs->type == CPP_NAME)
++    {
++      cpp_hashnode *sp = rhs->val.node.spelling;
++      rhs_str = NODE_NAME (sp);
++      rhs_len = NODE_LEN (sp);
++    }
++  else if (rhs->type == CPP_NUMBER)
++    {
++      rhs_str = rhs->val.str.text;
++      rhs_len = rhs->val.str.len;
++    }
++  else
++    return false;
++
++  unsigned int total_len = lhs_len + rhs_len;
++
++  /* Bail if the result is too long for the stack buffer.  */
++  if (total_len == 0 || total_len >= sizeof (buf))
++    return false;
++
++  /* Concatenate the spellings.  */
++  memcpy (buf, lhs_str, lhs_len);
++  memcpy (buf + lhs_len, rhs_str, rhs_len);
++
++  /* The result must start with an identifier-start character;
++     otherwise it would be a CPP_NUMBER or something exotic that
++     needs the full lexer.  */
++  if (!ISIDST (buf[0]))
++    return false;
++
++  /* Validate that all characters are identifier characters.  */
++  for (unsigned int i = 1; i < total_len; i++)
++    if (!ISIDNUM (buf[i]))
++      return false;
++
++  /* Compute the hash incrementally.  */
++  unsigned int hash = 0;
++  for (unsigned int i = 0; i < total_len; i++)
++    hash = HT_HASHSTEP (hash, buf[i]);
++  hash = HT_HASHFINISH (hash, total_len);
++
++  /* Look up or create the identifier in the hash table.  */
++  cpp_hashnode *node
++    = CPP_HASHNODE (ht_lookup_with_hash (pfile->hash_table,
++					 buf, total_len, hash, HT_ALLOC));
++
++  /* Construct the result token.  */
++  pfile->cur_token = _cpp_temp_token (pfile);
++  cpp_token *lhs = pfile->cur_token;
++  lhs->type = CPP_NAME;
++  lhs->val.node.node = node;
++  lhs->val.node.spelling = node;
++  lhs->flags = (*plhs)->flags & (PREV_WHITE | PREV_FALLTHROUGH);
++  lhs->src_loc = (*plhs)->src_loc;
++  *plhs = lhs;
++  return true;
++}
++
+ /* Try to paste two tokens.  On success, return nonzero.  In any
+    case, PLHS is updated to point to the pasted token, which is
+    guaranteed to not have the PASTE_LEFT flag set.  LOCATION is
+@@ -1029,6 +1117,10 @@ static bool
+ paste_tokens (cpp_reader *pfile, location_t location,
+ 	      const cpp_token **plhs, const cpp_token *rhs)
+ {
++  /* Fast path: avoid the full lexer round-trip for identifier pastes.  */
++  if (rhs->type != CPP_PADDING && paste_tokens_fast (pfile, plhs, rhs))
++    return true;
++
+   unsigned char *buf, *end, *lhsend;
+   cpp_token *lhs;
+   unsigned int len;
+-- 
+2.51.2
+
